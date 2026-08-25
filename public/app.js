@@ -53,13 +53,14 @@ function clasificarTextoLibre(t){
   return 'normal';
 }
 
-// Dos modelos 3D reales verificados (glTF de Khronos, dominio público) que
-// usamos como GENÉRICOS mientras no exista el escaneo real de cada plato de
-// Rabieta. Esto SÍ es 3D real: se gira, se acerca, y en Android abre AR de
-// verdad. Lo que no es real todavía es que sea la foto exacta del plato.
+// UN solo modelo 3D real verificado (glTF de Khronos, dominio público) que
+// usamos como GENÉRICO en TODOS los platos, mientras no exista el escaneo
+// real de cada plato de Rabieta. Esto SÍ es 3D real: se gira, se acerca, y
+// con el botón de cámara abre AR de verdad en Android. Lo que no es real
+// todavía es que sea la foto exacta del plato — por eso siempre el mismo
+// modelo genérico (la palta), para que no parezca un error random.
 const MODELOS_3D_GENERICOS = [
   { url:'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/Avocado/glTF-Binary/Avocado.glb', nombre:'palta (modelo genérico)' },
-  { url:'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/IridescentDishWithOlives/glTF-Binary/IridescentDishWithOlives.glb', nombre:'fuente con aceitunas (modelo genérico)' },
 ];
 
 let MENU_DATA = null;
@@ -221,21 +222,46 @@ function renderModal(){
     root.innerHTML = `<div class="modal-bg" onclick="closeModal(event)">
       <div class="modal modal-3d" onclick="event.stopPropagation()">
         <div class="stage3d-real">
-          <model-viewer src="${modelo.url}" camera-controls auto-rotate auto-rotate-delay="300"
-            ar ar-modes="scene-viewer webxr" shadow-intensity="1" exposure="1"
+          <model-viewer id="mv3d" src="${modelo.url}" camera-controls auto-rotate auto-rotate-delay="300"
+            ar ar-modes="scene-viewer webxr quick-look" shadow-intensity="1" exposure="1"
             style="width:100%;height:100%;background:transparent;"></model-viewer>
         </div>
         <div class="body3d">
           <span class="badge-preview">3D real · modelo genérico, todavía no es el escaneo del plato</span>
           <h3>${state.modal.nombre}</h3>
-          <p>Esto ya es 3D de verdad: arrastrá para girarlo, pellizcá para acercarlo, y si estás en Android tocá el ícono de la esquina para verlo con la cámara en tu propia mesa (realidad aumentada). Lo único pendiente es reemplazar este modelo genérico (${modelo.nombre}) por el escaneo 3D real de <b>${state.modal.nombre}</b> — eso requiere fotografiar el plato con un servicio de escaneo, es un paso de producción aparte.</p>
-          <button class="btn primary block" onclick="closeModal()">Entendido</button>
+          <p>Activá la cámara, enfocá tu mesa, y el plato aparece ahí arriba en tamaño real — como si ya te lo hubieran servido. También podés arrastrar acá abajo para girarlo sin cámara.</p>
+          <button class="btn callout block" onclick="activarAR()">${ic('cube')} Ver en mi mesa con la cámara</button>
+          <p class="ar-fineprint">Funciona con cámara en Android (Chrome). En iPhone y en la compu se ve girando en pantalla por ahora. Lo único pendiente de verdad es reemplazar este modelo genérico — ${modelo.nombre} — por el escaneo 3D real de <b>${state.modal.nombre}</b> — eso es un paso de producción aparte.</p>
+          <button class="btn dark block" onclick="closeModal()">Cerrar</button>
         </div>
+      </div></div>`;
+  } else if(state.modal.type==='confirm-mozo'){
+    root.innerHTML = `<div class="modal-bg" onclick="closeModal(event)">
+      <div class="modal" onclick="event.stopPropagation()">
+        <div class="icon">${ic('bell')}</div>
+        <h3>¿Llamar al mozo?</h3>
+        <p>Se le va a avisar al mozo que la <b>Mesa ${state.clienteMesa}</b> necesita atención. Confirmá solo si de verdad lo necesitás, así no camina de mesa en mesa por un toque sin querer.</p>
+        <div style="display:flex;gap:10px;">
+          <button class="btn ghost" style="flex:1;" onclick="closeModal()">Cancelar</button>
+          <button class="btn callout" style="flex:1;" onclick="confirmarLlamarMozo()">Sí, llamar</button>
+        </div>
+      </div></div>`;
+  } else if(state.modal.type==='mozo-enviado'){
+    root.innerHTML = `<div class="modal-bg" onclick="closeModal(event)">
+      <div class="modal" onclick="event.stopPropagation()">
+        <div class="icon">${ic('checkring')}</div>
+        <h3>Aviso enviado</h3>
+        <p>Tu llamado fue recibido. Un mozo se va a acercar a la <b>Mesa ${state.clienteMesa}</b> en breve.</p>
+        <button class="btn primary block" onclick="closeModal()">Entendido</button>
       </div></div>`;
   }
 }
 function openModal3d(id, nombre){ state.modal = {type:'3d', id, nombre}; render(); }
 function closeModal(e){ state.modal=null; render(); }
+function activarAR(){
+  const mv = document.getElementById('mv3d');
+  if(mv && mv.activateAR) mv.activateAR();
+}
 
 /* ---------------- CLIENTE ---------------- */
 function platosDestacadosData(){ return [...CANDIDATOS_3D].map(id=>findProducto(id)).filter(Boolean); }
@@ -300,7 +326,7 @@ function viewCliente(){
       ${productos.length ? productos.map(p=>dishCardHtml(p)).join('') : '<div class="empty">Ningún producto de esta categoría es apto Sin TACC.</div>'}
     </div>
     <div class="action-row">
-      <button class="btn dark" onclick="llamarMozo()">${ic('bell')} Llamar al mozo</button>
+      <button class="btn callout" onclick="llamarMozo()">${ic('bell')} Llamar al mozo</button>
       <button class="btn dark" onclick="pedirCuenta()">${ic('receipt')} Pedir la cuenta</button>
       <button class="btn critical" onclick="toggleHelp()">${ic('help')} Necesito ayuda</button>
     </div>
@@ -317,7 +343,7 @@ function dishCardHtml(p){
   const esCombo = p.tipo==='combo';
   const precio = precioBase(p);
   const esDestacado = CANDIDATOS_3D.has(p.id);
-  return `<div class="dish">
+  const cuerpo = `
     <div class="row1"><strong>${p.nombre}</strong>
       ${precio===null && !p.variantes ? '<span class="price pending">A confirmar</span>' : `<span class="price">${p.variantes?'desde '+money(precio):money(precio)}</span>`}
     </div>
@@ -330,7 +356,14 @@ function dishCardHtml(p){
     </div>
     ${esDestacado?`<button class="btn-3d" onclick="openModal3d('${p.id}','${p.nombre.replace(/'/g,"\\'")}')">${ic('cube')} Ver en 3D</button>`:''}
     ${expanded ? dishDetailHtml(p) : `<div style="margin-top:8px;"><button class="btn dark sm" onclick="toggleDish('${p.id}')">Agregar al pedido</button></div>`}
-  </div>`;
+  `;
+  if(p.imagen){
+    return `<div class="dish"><div class="dish-row">
+      <img class="dish-thumb" src="${p.imagen}" alt="${p.nombre}">
+      <div class="dish-body">${cuerpo}</div>
+    </div></div>`;
+  }
+  return `<div class="dish">${cuerpo}</div>`;
 }
 function dishDetailHtml(p){
   let variantePicker = '';
@@ -379,7 +412,13 @@ function enviarPedido(){
   state.clienteCart = [];
   render();
 }
-function llamarMozo(){ send({type:'llamar_mozo', mesa:state.clienteMesa}); }
+function llamarMozo(){ state.modal = {type:'confirm-mozo'}; render(); }
+function confirmarLlamarMozo(){
+  send({type:'llamar_mozo', mesa:state.clienteMesa});
+  state.modal = {type:'mozo-enviado'};
+  render();
+  setTimeout(()=>{ if(state.modal && state.modal.type==='mozo-enviado'){ state.modal=null; render(); } }, 4500);
+}
 function pedirCuenta(){ send({type:'pedir_cuenta', mesa:state.clienteMesa}); }
 function enviarAyuda(id,label,prioridad){ send({type:'ayuda', mesa:state.clienteMesa, categoria:id, label, prioridad}); state.clienteHelpOpen=false; render(); }
 function enviarAyudaLibre(){
