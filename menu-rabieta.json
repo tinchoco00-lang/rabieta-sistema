@@ -116,7 +116,9 @@
           "id": "papas-rabieta",
           "nombre": "Papas Rabieta",
           "descripcion": "Papas fritas con queso cheddar, cubitos de jamón ahumado, verdeo y panceta crocante",
-          "precio": 2700
+          "precio": 2700,
+          "candidato_destacado": true,
+          "imagen": "/img/platos/papas-rabieta.jpg"
         },
         {
           "id": "papas-veggie",
@@ -166,14 +168,16 @@
           "nombre": "Burger Bacon",
           "descripcion": "Blend de carnes Rabieta doble, braseado con mermelada de cebollas y barbacoa, bacon, cheddar y pepinillos; con papas fritas",
           "precio": 3300,
-          "candidato_destacado": true
+          "candidato_destacado": true,
+          "imagen": "/img/platos/burger-bacon.jpg"
         },
         {
           "id": "burger-rabieta",
           "nombre": "Burger Rabieta",
           "descripcion": "Blend de carnes Rabieta doble con cheddar, bacon, lechuga y tomate; con papas fritas",
           "precio": 3400,
-          "candidato_destacado": true
+          "candidato_destacado": true,
+          "imagen": "/img/platos/burger-rabieta.jpg"
         },
         {
           "id": "doble-cheeseburger",
@@ -283,6 +287,33 @@
           "nombre": "Milhojas de Verduras",
           "descripcion": "Asadas con mozzarella, rúcula y tomates cherry confitados",
           "precio": 2400
+        },
+        {
+          "id": "milanesa-ojo-bife",
+          "nombre": "Milanesa de Ojo de Bife",
+          "descripcion": "Milanesa de ojo de bife con hueso, acompañada de ensalada Caesar con palta, papas fritas y huevo ranchero",
+          "precio": null,
+          "candidato_destacado": true,
+          "imagen": "/img/platos/milanesa-ojo-bife.jpg",
+          "nota_menu": "Producto nuevo — no estaba en la carta transcripta original. Falta confirmar precio con el local."
+        },
+        {
+          "id": "pastel-pastores",
+          "nombre": "Pastel de los Pastores",
+          "descripcion": "Ragout de ternera picada y braseada, puré duquesa gratinado con pan rallado",
+          "precio": null,
+          "candidato_destacado": true,
+          "imagen": "/img/platos/pastel-pastores.jpg",
+          "nota_menu": "Producto nuevo — no estaba en la carta transcripta original. Falta confirmar precio con el local."
+        },
+        {
+          "id": "chicken-parmesan",
+          "nombre": "Chicken Parmesan",
+          "descripcion": "Milanesa de suprema con mac and cheese y ensalada de rúcula y parmesano",
+          "precio": null,
+          "candidato_destacado": true,
+          "imagen": "/img/platos/chicken-parmesan.jpg",
+          "nota_menu": "Producto nuevo — no estaba en la carta transcripta original. Falta confirmar precio con el local."
         }
       ]
     },
@@ -331,7 +362,27 @@
           "id": "pizza-rucula",
           "nombre": "Rúcula",
           "descripcion": "Jamón crudo, rúcula, escamas de queso sardo",
-          "precio": 2600
+          "precio": 2600,
+          "candidato_destacado": true,
+          "imagen": "/img/platos/pizza-rucula.jpg"
+        },
+        {
+          "id": "pizza-six-cheese",
+          "nombre": "Six Cheese",
+          "descripcion": "Pizza de masa madre con queso parmesano, muzzarella, queso azul, pepato, gruyere, dambo y nueces",
+          "precio": null,
+          "candidato_destacado": true,
+          "imagen": "/img/platos/pizza-six-cheese.jpg",
+          "nota_menu": "Producto nuevo — no estaba en la carta transcripta original. Falta confirmar precio con el local."
+        },
+        {
+          "id": "pizza-asado",
+          "nombre": "Pizza de Asado",
+          "descripcion": "Pizza de masa madre con asado braseado, muzzarella, parmesano y albahaca",
+          "precio": null,
+          "candidato_destacado": true,
+          "imagen": "/img/platos/pizza-asado.jpg",
+          "nota_menu": "Producto nuevo — no estaba en la carta transcripta original. Falta confirmar precio con el local."
         }
       ]
     },
@@ -370,7 +421,8 @@
           "nombre": "Brownie",
           "descripcion": "Servido con ganache de chocolate semiamargo, helado de americana, salsa toffee y garrapiñada de nuez",
           "precio": 1800,
-          "candidato_destacado": true
+          "candidato_destacado": true,
+          "imagen": "/img/platos/brownie.jpg"
         },
         {
           "id": "tiramisu",
@@ -395,7 +447,8 @@
           "nombre": "Copa Helada Rabieta",
           "descripcion": "Helado de americana, brownie, Oreo, frutos secos y rojos con ganache de chocolate",
           "precio": 2300,
-          "candidato_destacado": true
+          "candidato_destacado": true,
+          "imagen": "/img/platos/copa-helada-rabieta.jpg"
         },
         {
           "id": "helado",
