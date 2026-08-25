@@ -8,6 +8,31 @@
    dos celulares distintos ven lo mismo en vivo.
    ========================================================= */
 
+/* ================= ÍCONOS (línea fina, sin emojis) =================
+   Rabieta es un bar con onda, no una vidriera de juguetería: nada de
+   emojis de colores. Un solo set de íconos de línea, en el color de
+   texto de cada lugar (currentColor), tamaño 1em. */
+const ICONS = {
+  ring:      '<circle cx="12" cy="12" r="7"/>',
+  bell:      '<path d="M12 4a5 5 0 0 0-5 5v3.2L5 16h14l-2-3.8V9a5 5 0 0 0-5-5Z"/><path d="M10 19a2 2 0 0 0 4 0"/>',
+  receipt:   '<path d="M6 3h12v18l-2.5-1.5L13 21l-2.5-1.5L8 21l-2-1.5Z"/><line x1="8.5" y1="8" x2="15.5" y2="8"/><line x1="8.5" y1="12" x2="15.5" y2="12"/>',
+  help:      '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="4" x2="12" y2="9"/><line x1="12" y1="15" x2="12" y2="20"/><line x1="4" y1="12" x2="9" y2="12"/><line x1="15" y1="12" x2="20" y2="12"/>',
+  flame:     '<path d="M12 3c1 2.5-3 4-3 8a3 3 0 0 0 6 0c0-1-.5-1.8-1-2 .8 2.6-1 4.3-2 4.3-2.2 0-4.3-1.8-4.3-4.8C7.7 5.3 10.2 4 12 3Z"/>',
+  user:      '<circle cx="12" cy="8" r="3.4"/><path d="M5 20c1-4 4-6 7-6s6 2 7 6"/>',
+  briefcase: '<rect x="4" y="8" width="16" height="11" rx="1.5"/><path d="M9 8V6a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/><line x1="4" y1="13" x2="20" y2="13"/>',
+  chart:     '<line x1="5" y1="20" x2="5" y2="12"/><line x1="12" y1="20" x2="12" y2="7"/><line x1="19" y1="20" x2="19" y2="15"/>',
+  wheat:     '<path d="M12 4v16"/><path d="M12 7c2 0 3 .9 3 1.9s-1 1.9-3 1.9"/><path d="M12 7c-2 0-3 .9-3 1.9s1 1.9 3 1.9"/><path d="M12 10.8c2 0 3 .9 3 1.9s-1 1.9-3 1.9"/><path d="M12 10.8c-2 0-3 .9-3 1.9s1 1.9 3 1.9"/>',
+  cube:      '<path d="M12 3.2 19.5 7.5v9L12 20.8 4.5 16.5v-9Z"/><path d="M4.7 7.6 12 12l7.3-4.4"/><line x1="12" y1="12" x2="12" y2="20.8"/>',
+  plate:     '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.3"/>',
+  lock:      '<rect x="5" y="11" width="14" height="9" rx="1.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  sound:     '<path d="M4 9.2v5.6h3.6l4.9 3.7V5.5l-4.9 3.7Z"/><path d="M15.8 9.3a4 4 0 0 1 0 5.4"/><path d="M18.3 7a7.5 7.5 0 0 1 0 10"/>',
+  clipboard: '<rect x="5" y="4" width="14" height="17" rx="1.5"/><rect x="9" y="2.3" width="6" height="3" rx="1"/><line x1="8" y1="10.2" x2="16" y2="10.2"/><line x1="8" y1="14.2" x2="16" y2="14.2"/>',
+  refresh:   '<path d="M4 12a8 8 0 0 1 14-5"/><polyline points="18 3 18 8 13 8"/><path d="M20 12a8 8 0 0 1-14 5"/><polyline points="6 21 6 16 11 16"/>',
+  warning:   '<path d="M12 4 21 19H3Z"/><line x1="12" y1="9.5" x2="12" y2="14"/><circle cx="12" cy="16.6" r="0.9" fill="currentColor" stroke="none"/>',
+  checkring: '<circle cx="12" cy="12" r="8"/><polyline points="8.3 12.2 10.8 14.7 15.8 9.2"/>',
+};
+function ic(name, cls){ return `<svg class="i-ic${cls?' '+cls:''}" viewBox="0 0 24 24">${ICONS[name]||''}</svg>`; }
+
 const PEDIDO_ESTADOS = ['enviado','preparando','listo','entregado'];
 const PEDIDO_LABELS = {enviado:'Recibido', preparando:'En preparación', listo:'Listo', entregado:'Entregado'};
 const MOZOS = ['Martín','Sofía','Lucas'];
@@ -170,14 +195,14 @@ function renderStaffNav(){
   const nav = document.getElementById('staffNav');
   if(!nav) return;
   const roles = [
-    {id:'mozo',label:'Mozo',icon:'🧍'},
-    {id:'cocina',label:'Cocina (KDS)',icon:'🔥'},
-    {id:'encargado',label:'Encargado',icon:'🧑‍💼'},
-    {id:'dueno',label:'Dueño',icon:'📊'},
+    {id:'mozo',label:'Mozo',icon:'user'},
+    {id:'cocina',label:'Cocina (KDS)',icon:'flame'},
+    {id:'encargado',label:'Encargado',icon:'briefcase'},
+    {id:'dueno',label:'Dueño',icon:'chart'},
   ];
   const n = todasAlertasAbiertas().length;
   nav.innerHTML = roles.map(r=>`<button class="${state.role===r.id?'active':''}" onclick="setRole('${r.id}')">
-    <span>${r.icon}</span><span>${r.label}</span><span class="dot ${n>0?'show':''}"></span></button>`).join('');
+    <span>${ic(r.icon)}</span><span>${r.label}</span><span class="dot ${n>0?'show':''}"></span></button>`).join('');
 }
 function setRole(id){ state.role=id; render(); }
 
@@ -218,11 +243,11 @@ function banner3dHtml(){
   const platos = platosDestacadosData();
   if(!platos.length) return '';
   return `<div class="banner3d">
-    <div class="head"><div class="ico">🧊</div>
+    <div class="head"><div class="ico">${ic('cube')}</div>
       <div class="txt"><strong>Mirá tu plato en 3D antes de pedir</strong><span>Tocá cualquiera de estos ${platos.length} platos — un solo toque</span></div></div>
     <div class="tiles3d">
       ${platos.map(p=>`<button onclick="openModal3d('${p.id}','${p.nombre.replace(/'/g,"\\'")}')">
-        <span class="em">🍽️</span><span class="nm">${p.nombre}</span><span class="cta">Ver en 3D</span></button>`).join('')}
+        <span class="em">${ic('plate')}</span><span class="nm">${p.nombre}</span><span class="cta">Ver en 3D</span></button>`).join('')}
     </div></div>`;
 }
 
@@ -266,7 +291,7 @@ function viewCliente(){
     ${pedidoStatusHtml}${alertHtml}
 
     <div class="filter-chips">
-      <button class="${state.clienteFiltroSinTacc?'active':''}" onclick="toggleFiltroSinTacc()">🌾 Sin TACC</button>
+      <button class="${state.clienteFiltroSinTacc?'active':''}" onclick="toggleFiltroSinTacc()">${ic('wheat')} Sin TACC</button>
     </div>
     <div class="cat-tabs">
       ${MENU_DATA.categorias.map(c=>`<button class="${c.id===state.clienteCat?'active':''}" onclick="setCat('${c.id}')">${c.nombre}</button>`).join('')}
@@ -275,9 +300,9 @@ function viewCliente(){
       ${productos.length ? productos.map(p=>dishCardHtml(p)).join('') : '<div class="empty">Ningún producto de esta categoría es apto Sin TACC.</div>'}
     </div>
     <div class="action-row">
-      <button class="btn dark" onclick="llamarMozo()">🔔 Llamar al mozo</button>
-      <button class="btn dark" onclick="pedirCuenta()">🧾 Pedir la cuenta</button>
-      <button class="btn critical" onclick="toggleHelp()">🆘 Necesito ayuda</button>
+      <button class="btn dark" onclick="llamarMozo()">${ic('bell')} Llamar al mozo</button>
+      <button class="btn dark" onclick="pedirCuenta()">${ic('receipt')} Pedir la cuenta</button>
+      <button class="btn critical" onclick="toggleHelp()">${ic('help')} Necesito ayuda</button>
     </div>
     ${state.clienteHelpOpen ? helpPanelHtml() : ''}
     ${state.clienteCart.length ? `<div class="cart-bar">
@@ -299,11 +324,11 @@ function dishCardHtml(p){
     ${p.descripcion ? `<div class="desc">${p.descripcion}</div>` : ''}
     <div class="tags">
       ${esDestacado?'<span class="tag destacado">★ Plato destacado</span>':''}
-      ${p.filtro_dietario&&p.filtro_dietario.includes('sin_tacc')?'<span class="tag celiaco">🌾 Sin TACC</span>':''}
+      ${p.filtro_dietario&&p.filtro_dietario.includes('sin_tacc')?`<span class="tag celiaco">${ic('wheat')} Sin TACC</span>`:''}
       ${esCombo?'<span class="tag">Combo plato + bebida</span>':''}
       ${p.para_compartir?'<span class="tag">Para compartir</span>':''}
     </div>
-    ${esDestacado?`<button class="btn-3d" onclick="openModal3d('${p.id}','${p.nombre.replace(/'/g,"\\'")}')">🧊 Ver en 3D</button>`:''}
+    ${esDestacado?`<button class="btn-3d" onclick="openModal3d('${p.id}','${p.nombre.replace(/'/g,"\\'")}')">${ic('cube')} Ver en 3D</button>`:''}
     ${expanded ? dishDetailHtml(p) : `<div style="margin-top:8px;"><button class="btn dark sm" onclick="toggleDish('${p.id}')">Agregar al pedido</button></div>`}
   </div>`;
 }
@@ -406,7 +431,7 @@ function viewMozo(){
   const misAlertas = todasAlertasAbiertas().filter(x=>x.mesa.mozo===state.mozoActivo);
   return `<h1 class="view-title">MOZO</h1>
     <p class="view-sub">Sos: <select onchange="cambiarMozo(this.value)">${MOZOS.map(m=>`<option ${m===state.mozoActivo?'selected':''}>${m}</option>`).join('')}</select></p>
-    <div class="section-h">🔔 Tus alertas (${misAlertas.length})</div>
+    <div class="section-h">${ic('bell')} Tus alertas (${misAlertas.length})</div>
     ${misAlertas.length ? misAlertas.map(({mesa,alerta})=>alertRowHtml(mesa,alerta,true)).join('') : '<div class="empty">Sin alertas pendientes.</div>'}
     <div class="section-h">Tus mesas</div>
     <div class="mesa-grid">${misMesas.length ? misMesas.map(m=>mesaTileHtml(m)).join('') : '<div class="empty">Sin mesas activas.</div>'}</div>`;
@@ -422,7 +447,7 @@ function alertRowHtml(mesa,a,acciones){
   const edad = timeAgoSec(a.creadoTs);
   return `<div class="alert-row ${a.escalado?'escalado':''}">
     <div><div class="msg">Mesa ${mesa.numero} — ${a.label}${a.mensaje?`: "${a.mensaje}"`:''}</div>
-    <div class="meta"><span class="pill ${a.prioridad}">${a.prioridad.toUpperCase()}</span> hace ${fmtSec(edad)} ${a.escalado?' · ⚠ ESCALADO':''} ${a.estado==='atencion'?' · en atención':''}</div></div>
+    <div class="meta"><span class="pill ${a.prioridad}">${a.prioridad.toUpperCase()}</span> hace ${fmtSec(edad)} ${a.escalado?` · ${ic('warning')} ESCALADO`:''} ${a.estado==='atencion'?' · en atención':''}</div></div>
     ${acciones?`<div class="actions">${a.estado==='recibido'?`<button class="btn dark sm" onclick="marcarAtencion(${a.id})">En atención</button>`:''}
       <button class="btn good sm" onclick="resolverAlerta(${a.id})">Resolver</button></div>`:''}</div>`;
 }
@@ -435,7 +460,7 @@ function viewEncargado(){
   const escaladas = todas.filter(x=>x.alerta.escalado);
   return `<h1 class="view-title">ENCARGADO</h1><p class="view-sub">Centro de control del salón — ${MESAS_TOTAL} mesas (placeholder, confirmar número real con el local).</p>
     ${escaladas.length ? `<div class="card" style="border-color:var(--critical);margin-bottom:16px;">
-      <div style="font-weight:800;color:#ff9797;font-size:13px;margin-bottom:8px;">⚠ ${escaladas.length} alerta(s) escalada(s)</div>
+      <div style="font-weight:800;color:#ff9797;font-size:13px;margin-bottom:8px;">${ic('warning')} ${escaladas.length} alerta(s) escalada(s)</div>
       ${escaladas.map(({mesa,alerta})=>alertRowHtml(mesa,alerta,true)).join('')}</div>` : ''}
     <div class="section-h">Plano de salón</div>
     <div class="mesa-grid">${state.mesas.map(m=>{
@@ -445,9 +470,9 @@ function viewEncargado(){
         ${alertasAbiertas(m).length?`<span class="pill ${prio}">${alertasAbiertas(m).length} alerta(s)</span>`:`<span class="pill ${m.ocupada?'ocupada':'libre'}">${m.ocupada?'Ocupada':'Libre'}</span>`}</div>`;
     }).join('')}</div>
     <div class="section-h">Cola de alertas</div>
-    ${todas.length ? todas.map(({mesa,alerta})=>alertRowHtml(mesa,alerta,true)).join('') : '<div class="empty">No hay alertas abiertas. 🎉</div>'}
+    ${todas.length ? todas.map(({mesa,alerta})=>alertRowHtml(mesa,alerta,true)).join('') : `<div class="empty">${ic('checkring')} No hay alertas abiertas.</div>`}
     <div class="section-h">Administración</div>
-    <button class="btn ghost sm" onclick="resetTodo()">↺ Reiniciar todo (afecta a todos los dispositivos conectados)</button>`;
+    <button class="btn ghost sm" onclick="resetTodo()">${ic('refresh')} Reiniciar todo (afecta a todos los dispositivos conectados)</button>`;
 }
 function resetTodo(){
   if(confirm('Esto reinicia el estado para TODOS los dispositivos conectados ahora mismo (mesas, pedidos, alertas). ¿Confirmás?')) send({type:'reset_demo'});
@@ -462,7 +487,7 @@ function viewDueno(){
   const productosPendientes = todosLosProductos().filter(p=>precioBase(p)===null).length;
   return `<h1 class="view-title">DUEÑO</h1>
     <p class="view-sub">Panel de negocio. ${productosPendientes} productos todavía sin precio confirmado — se excluyen del cálculo de ventas.</p>
-    <div class="mock-banner">📋 Este dashboard usa datos reales de la carta y pedidos reales de esta sesión — pero no hay caja/POS conectado, así que "ventas" es sólo lo pedido desde este sistema hoy.</div>
+    <div class="mock-banner">${ic('clipboard')} Este dashboard usa datos reales de la carta y pedidos reales de esta sesión — pero no hay caja/POS conectado, así que "ventas" es sólo lo pedido desde este sistema hoy.</div>
     <div class="grid cols-4">
       ${statTile('Ventas (hoy, este sistema)', money(ventasDemo), 'pedidos por esta app', null)}
       ${statTile('Mesas ocupadas', mesasOcupadas+' / '+MESAS_TOTAL, null, null)}

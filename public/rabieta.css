@@ -1,22 +1,24 @@
 
   :root{
-    --bg:#07070a;
-    --bg-panel:#111115;
-    --bg-elevated:#17171c;
-    --bg-elevated-2:#1e1e24;
-    --line: rgba(232,210,155,0.09);
-    --line-strong: rgba(232,210,155,0.20);
-    --ink-1:#f4efe4;
-    --ink-2:#b6ac9a;
-    --ink-muted:#79705f;
-    --red:#c7a13d;
-    --red-dark:#9c7d2c;
-    --red-soft: rgba(199,161,61,0.14);
-    --ink-on-gold:#191204;
-    --gold:#e6c35e;
-    --gold-deep:#8a6a22;
+    /* Paleta ajustada a la identidad real de Rabieta (neón ámbar cálido
+       sobre madera oscura — no el "dorado champagne" frío de antes). */
+    --bg:#0c0906;
+    --bg-panel:#17110b;
+    --bg-elevated:#1e1610;
+    --bg-elevated-2:#251b12;
+    --line: rgba(240,180,110,0.10);
+    --line-strong: rgba(240,180,110,0.22);
+    --ink-1:#f5ede0;
+    --ink-2:#c3ac93;
+    --ink-muted:#8a7863;
+    --red:#e0762f;
+    --red-dark:#a8501a;
+    --red-soft: rgba(224,118,47,0.14);
+    --ink-on-gold:#1c0f04;
+    --gold:#ee8f3f;
+    --gold-deep:#a85a1e;
     --good:#4caf6d;
-    --warning:#e0a233;
+    --warning:#e2a72e;
     --critical:#b8433f;
     --radius:14px;
   }
@@ -24,17 +26,24 @@
   html,body{margin:0;padding:0;}
   body{
     background:
-      radial-gradient(ellipse at top, rgba(230,195,94,0.07), transparent 60%),
+      radial-gradient(ellipse at top, rgba(238,143,63,0.08), transparent 60%),
       var(--bg);
     color:var(--ink-1);
     font-family:'Inter',system-ui,-apple-system,sans-serif;
     -webkit-font-smoothing:antialiased;
   }
+  /* íconos de línea (reemplazan los emojis) */
+  .i-ic{width:1em;height:1em;display:inline-block;vertical-align:-0.15em;
+    fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
   .display{font-family:'Cormorant Garamond',Georgia,serif; font-weight:600; letter-spacing:.02em;}
   #shell{max-width:1180px;margin:0 auto;padding:0 0 70px;}
 
   header.top{
-    background:linear-gradient(180deg, #1a1613, #141210);
+    background:
+      linear-gradient(180deg, rgba(12,9,6,0.88), rgba(12,9,6,0.96)),
+      url('/img/hero-barra.jpg');
+    background-size:cover;
+    background-position:center 28%;
     border-bottom:1px solid var(--line);
     padding:16px 20px;
     display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;
@@ -68,6 +77,7 @@
     padding:9px 15px;border-radius:999px;font-size:13px;font-weight:600;cursor:pointer;
     display:flex;align-items:center;gap:7px;font-family:'Inter';
   }
+  nav.roles button .i-ic{width:15px;height:15px;}
   nav.roles button.active{background:linear-gradient(135deg, var(--gold), var(--gold-deep));color:var(--ink-on-gold);border-color:var(--gold);}
   nav.roles .staff-label{width:100%;font-size:10px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.12em;font-weight:700;padding:8px 4px 2px;display:flex;align-items:center;gap:6px;}
   nav.roles .staff-label::after{content:"";flex:1;height:1px;background:var(--line-strong);}
