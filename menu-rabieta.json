@@ -169,7 +169,7 @@
           "descripcion": "Blend de carnes Rabieta doble, braseado con mermelada de cebollas y barbacoa, bacon, cheddar y pepinillos; con papas fritas",
           "precio": 3300,
           "candidato_destacado": true,
-          "imagen": "/img/platos/burger-bacon.jpg"
+          "nota_menu": "Falta la foto real de este plato — se sacó la foto porque era la misma que Burger Rabieta (no corresponde a este plato)."
         },
         {
           "id": "burger-rabieta",
