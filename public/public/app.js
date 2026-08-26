@@ -1,3 +1,4 @@
+/* RABIETA-BUILD-2026-08-26-SPLASH — si ves esta línea acá arriba en GitHub, subiste la versión correcta. */
 /* =========================================================
    RABIETA — cliente real, conectado por WebSocket al servidor
    (server.js). Esta es la MISMA lógica de vistas del prototipo
