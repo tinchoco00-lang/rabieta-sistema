@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="es-AR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Rabieta — Mesa</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@400;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/rabieta.css">
+<script type="module" src="https://unpkg.com/@google/model-viewer@3.5.0/dist/model-viewer.min.js"></script>
+</head>
+<body>
+<div class="page-bg"></div>
+<div id="shell">
+  <header class="top">
+    <div class="brand">
+      <div class="mark"><svg class="i-ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/></svg></div>
+      <div><div class="name">RABIETA</div><div class="sub">Lomas de Zamora · Cerveza artesanal &amp; cocina de bodegón</div></div>
+    </div>
+    <div class="note">Sistema real conectado en vivo.</div>
+  </header>
+  <main><div id="app"></div></main>
+</div>
+<div id="modalRoot"></div>
+
+<script src="/app.js"></script>
+<script>
+  (function(){
+    const params = new URLSearchParams(location.search);
+    const mesaN = parseInt(params.get('mesa'), 10);
+    if(!mesaN){
+      document.getElementById('app').innerHTML = `<div class="empty">
+        Este link no tiene número de mesa. Probá abrir con <code>?mesa=1</code> al final de la URL
+        (en producción, cada QR de mesa ya trae su propio número).</div>`;
+    } else {
+      state.role = 'cliente';
+      state.clienteMesa = mesaN;
+      document.getElementById('app').innerHTML = '<div class="empty">Conectando con el local…</div>';
+      let menuOk=false, estadoOk=false;
+      function tryRender(){
+        if(menuOk && estadoOk){ if(!state.clienteCat) state.clienteCat = MENU_DATA.categorias[0].id; render(); }
+      }
+      conectar(function(){ estadoOk=true; tryRender(); });
+      fetch('/api/menu').then(r=>r.json()).then(menu=>{
+        MENU_DATA = menu;
+        CANDIDATOS_3D = new Set();
+        MENU_DATA.categorias.forEach(c=>c.productos.forEach(p=>{ if(p.candidato_destacado) CANDIDATOS_3D.add(p.id); }));
+        menuOk = true; tryRender();
+      });
+    }
+  })();
+</script>
+</body>
+</html>
