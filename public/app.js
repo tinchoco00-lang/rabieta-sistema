@@ -1,3 +1,4 @@
+/* RABIETA-BUILD-2026-08-26-SPLASH — si ves esta línea acá arriba en GitHub, subiste la versión correcta. */
 /* =========================================================
    RABIETA — cliente real, conectado por WebSocket al servidor
    (server.js). Esta es la MISMA lógica de vistas del prototipo
@@ -73,7 +74,7 @@ let state = {
   clockMs:0, mesas:[],
   // ui local, no viene del servidor:
   role:null, clienteMesa:null, clienteCat:null, clienteFiltroSinTacc:false,
-  clienteCart:[], clienteExpand:null, clienteHelpOpen:false,
+  clienteCart:[], clienteExpand:null, clienteHelpOpen:false, clienteSplashDismissed:false,
   mozoActivo:MOZOS[0], modal:null,
 };
 
@@ -183,11 +184,24 @@ function render(){
   if(clockEl) clockEl.textContent = String(Math.floor(state.clockMs/60)).padStart(2,'0')+':'+String(state.clockMs%60).padStart(2,'0');
   const app = document.getElementById('app');
   if(!app) return;
+  // El servidor manda un "tick" de reloj cada 1 segundo, y eso dispara este
+  // render() aunque nada haya cambiado para el cliente. Como reescribimos
+  // todo el HTML de adentro, sin esto cualquier scroll horizontal (las
+  // pestañas de categorías, el carrusel de "ver en 3D") se resetea solo al
+  // toque de haber empezado a deslizar. Guardamos y restauramos esa
+  // posición para que el swipe no se corte.
+  const scrollPos = [];
+  app.querySelectorAll('.cat-tabs, .tiles3d').forEach(el=>{ scrollPos.push([el.className, el.scrollLeft]); });
   if(state.role==='cliente') app.innerHTML = viewCliente();
   else if(state.role==='cocina') app.innerHTML = viewCocina();
   else if(state.role==='mozo') app.innerHTML = viewMozo();
   else if(state.role==='encargado') app.innerHTML = viewEncargado();
   else if(state.role==='dueno') app.innerHTML = viewDueno();
+  const restoreTargets = app.querySelectorAll('.cat-tabs, .tiles3d');
+  restoreTargets.forEach(el=>{
+    const match = scrollPos.find(([cls])=>cls===el.className);
+    if(match) el.scrollLeft = match[1];
+  });
   renderStaffNav();
   renderModal();
 }
@@ -273,13 +287,50 @@ function banner3dHtml(){
       <div class="txt"><strong>Mirá tu plato en 3D antes de pedir</strong><span>Tocá cualquiera de estos ${platos.length} platos — un solo toque</span></div></div>
     <div class="tiles3d">
       ${platos.map(p=>`<button onclick="openModal3d('${p.id}','${p.nombre.replace(/'/g,"\\'")}')">
-        <span class="em">${ic('plate')}</span><span class="nm">${p.nombre}</span><span class="cta">Ver en 3D</span></button>`).join('')}
+        ${p.imagen ? `<img class="tile3d-img" src="${p.imagen}" alt="${p.nombre}">` : `<span class="em">${ic('plate')}</span>`}
+        <span class="nm">${p.nombre}</span><span class="cta">Ver en 3D</span></button>`).join('')}
     </div></div>`;
 }
+
+function splashHtml(mesa){
+  const platos = platosDestacadosData();
+  const destacado = platos.find(p=>p.id==='burger-rabieta' && p.imagen) || platos.find(p=>p.imagen);
+  // Si todavía no cargó el menú (o ningún destacado tiene foto todavía) no mostramos
+  // un splash vacío ni marcamos como "visto" — probamos de nuevo en el próximo render.
+  if(!destacado) return '';
+  return `<div class="splash">
+    <div class="splash-top">
+      <span class="badge-mesa">MESA ${mesa.numero}</span>
+      <button class="splash-bell" onclick="llamarMozo()" title="Llamar al mozo">${ic('bell')}</button>
+    </div>
+    <div class="splash-copy">
+      <div class="splash-eyebrow">Antes de pedir</div>
+      <h1 class="splash-h1">Se come primero<br>con los ojos.</h1>
+      <p class="splash-sub">Mirá el plato real antes de pedir — girálo en 3D, o pasá directo a la carta completa.</p>
+    </div>
+    <div class="splash-arrow">
+      <svg viewBox="0 0 56 64"><path d="M28 4 C 16 18, 40 30, 26 44"/><path d="M16 40 L 26 52 L 36 41"/></svg>
+    </div>
+    <div class="splash-stage">
+      ${destacado.imagen ? `<img class="splash-stage-img" src="${destacado.imagen}" alt="${destacado.nombre}">` : ''}
+      <div class="splash-stage-scrim"></div>
+      <div class="splash-stage-tag">Plato destacado de hoy</div>
+      <div class="splash-stage-name">${destacado.nombre}</div>
+      <button class="btn callout splash-3d-btn" onclick="openModal3d('${destacado.id}','${destacado.nombre.replace(/'/g,"\\'")}')">${ic('cube')} Girá este plato en 3D</button>
+    </div>
+    <button class="splash-skip" onclick="dismissSplash()">Ver toda la carta →</button>
+  </div>`;
+}
+function dismissSplash(){ state.clienteSplashDismissed = true; render(); }
 
 function viewCliente(){
   const mesa = findMesa(state.clienteMesa);
   if(!mesa) return `<div class="empty">Este link no tiene una mesa válida asignada.</div>`;
+  if(!MENU_DATA) return `<div class="empty">Conectando con el local…</div>`;
+  if(!state.clienteSplashDismissed){
+    const splash = splashHtml(mesa);
+    if(splash) return splash;
+  }
   let productos = MENU_DATA.categorias.find(c=>c.id===state.clienteCat).productos;
   if(state.clienteFiltroSinTacc) productos = productos.filter(p=>p.filtro_dietario && p.filtro_dietario.includes('sin_tacc'));
 
