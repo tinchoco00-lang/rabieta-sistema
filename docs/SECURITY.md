@@ -18,6 +18,16 @@ El valor de `STAFF_PIN` puede suministrarse mediante el entorno. Los secretos nu
 
 Estas protecciones estan cubiertas por pruebas automatizadas nativas de Node.js. Deben volver a ejecutarse con `npm test` y `npm run check` después de cada cambio relevante.
 
+## Resuelto en la Mision 004
+
+- `POST /api/staff-login` y `POST /api/action` tienen rate limiting en memoria y devuelven `429` al superar el límite.
+- Los límites se configuran con `RATE_LIMIT_WINDOW_MS`, `STAFF_LOGIN_RATE_LIMIT_MAX` y `API_ACTION_RATE_LIMIT_MAX`.
+- Por defecto se usa la IP del socket. `X-Forwarded-For` solo se considera cuando el proxy inmediato está listado explícitamente en `TRUSTED_PROXY_IPS`; no se debe configurar esa lista sin conocer las IP reales del proxy autorizado.
+- Cada respuesta incluye `X-Request-Id`. Los logs estructurados registran ruta, método, status y duración sin incluir bodies, PIN, tokens ni `DATABASE_URL`.
+- `GET /healthz` informa solamente que el proceso responde, sin exponer estado operativo.
+- `POST /api/staff-logout` revoca inmediatamente el Bearer token presentado.
+- Los errores inesperados devuelven una respuesta genérica con requestId y nunca incluyen stack traces.
+
 ## Pendiente
 
 Estos riesgos describen el codigo actual. Se registran para orientar trabajo futuro; no estan solucionados por esta documentacion.

@@ -26,6 +26,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { URL } = require('url');
 const { createPersistence } = require('./persistence');
+const { createClientIpResolver, createRateLimiters, errorFields, logEvent } = require('./operational');
 
 const MENU_DATA = JSON.parse(fs.readFileSync(path.join(__dirname, 'menu-rabieta.json'), 'utf8'));
 const MESAS_TOTAL = MENU_DATA._meta.mesas.placeholder_sugerido; // ver _meta.mesas — número real pendiente de confirmar con el local
@@ -63,6 +64,8 @@ MENU_DATA.categorias.forEach(categoria => {
   categoria.productos.forEach(producto => PRODUCTOS.set(producto.id, producto));
 });
 const persistence = createPersistence();
+const resolveClientIp = createClientIpResolver();
+const rateLimiters = createRateLimiters();
 
 let uidCounter = 1;
 function uid() { return uidCounter++; }
@@ -256,6 +259,8 @@ function startClock() {
       const previousState = structuredClone(state);
       let operationalChange = false;
       pruneExpiredStaffTokens();
+      rateLimiters.login.prune();
+      rateLimiters.action.prune();
       state.clockMs++;
       state.mesas.forEach(m => {
         if (m.pedido && m.pedido.estado === 'enviado' && (state.clockMs - m.pedido.enviadoTs) > 6) {
@@ -278,7 +283,7 @@ function startClock() {
         }
       }
       broadcast();
-    }).catch(error => console.error('No se pudo persistir un cambio automático:', error.message));
+    }).catch(error => logEvent('error', 'automatic_persistence_error', errorFields(error)));
   }, 1000);
 }
 
@@ -329,8 +334,11 @@ function readJsonBody(req, cb) {
 }
 
 function sendJson(res, status, payload) {
+  const responsePayload = status >= 400 && res.requestId
+    ? { ...payload, requestId: res.requestId }
+    : payload;
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
-  res.end(JSON.stringify(payload));
+  res.end(JSON.stringify(responsePayload));
 }
 
 function acceptsJson(req) {
@@ -352,6 +360,14 @@ function extractBearerToken(req) {
   return token;
 }
 
+function applyRateLimit(req, res, limiter, scope) {
+  const result = limiter.check(`${scope}:${req.clientIp}`);
+  if (result.allowed) return true;
+  res.setHeader('Retry-After', String(result.retryAfterSeconds));
+  sendJson(res, 429, { ok: false, error: 'Demasiadas solicitudes' });
+  return false;
+}
+
 function serveStatic(req, res) {
   let urlPath = decodeURIComponent(new URL(req.url, 'http://internal').pathname);
   if (urlPath === '/' || urlPath === '') urlPath = '/mesa.html';
@@ -364,15 +380,20 @@ function serveStatic(req, res) {
   });
 }
 
-const server = http.createServer((req, res) => {
+function handleHttpRequest(req, res) {
   const u = new URL(req.url, 'http://internal');
 
+  if (u.pathname === '/healthz' && req.method === 'GET') {
+    sendJson(res, 200, { ok: true });
+    return;
+  }
   if (u.pathname === '/api/menu' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(MENU_DATA));
     return;
   }
   if (u.pathname === '/api/staff-login' && req.method === 'POST') {
+    if (!applyRateLimit(req, res, rateLimiters.login, 'staff-login')) return;
     if (!acceptsJson(req)) { sendJson(res, 415, { ok: false, error: 'Content-Type debe ser application/json' }); return; }
     readJsonBody(req, (error, body) => {
       if (error) { sendJson(res, error.status, { ok: false, error: error.error }); return; }
@@ -388,7 +409,15 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+  if (u.pathname === '/api/staff-logout' && req.method === 'POST') {
+    const token = extractBearerToken(req);
+    if (!token) { sendJson(res, 401, { ok: false, error: 'Autenticación requerida' }); return; }
+    STAFF_TOKENS.delete(token);
+    sendJson(res, 200, { ok: true });
+    return;
+  }
   if (u.pathname === '/api/action' && req.method === 'POST') {
+    if (!applyRateLimit(req, res, rateLimiters.action, 'action')) return;
     if (!acceptsJson(req)) { sendJson(res, 415, { ok: false, error: 'Content-Type debe ser application/json' }); return; }
     readJsonBody(req, (error, body) => {
       if (error) { sendJson(res, error.status, { ok: false, error: error.error }); return; }
@@ -407,14 +436,14 @@ const server = http.createServer((req, res) => {
           await persistence.save(state);
         } catch (error) {
           state = previousState;
-          console.error('No se pudo persistir la acción:', error.message);
+          logEvent('error', 'action_persistence_error', { requestId: req.requestId, ...errorFields(error) });
           sendJson(res, 503, { ok: false, error: 'Persistencia no disponible' });
           return;
         }
         broadcast();
         sendJson(res, 200, { ok: true });
       }).catch(error => {
-        console.error('Error al procesar la acción:', error.message);
+        logEvent('error', 'action_processing_error', { requestId: req.requestId, ...errorFields(error) });
         if (!res.headersSent) sendJson(res, 500, { ok: false, error: 'Error interno' });
       });
     });
@@ -434,6 +463,43 @@ const server = http.createServer((req, res) => {
   }
 
   serveStatic(req, res);
+}
+
+const server = http.createServer((req, res) => {
+  const startedAt = process.hrtime.bigint();
+  const requestId = crypto.randomUUID();
+  req.requestId = requestId;
+  req.clientIp = resolveClientIp(req);
+  res.requestId = requestId;
+  res.setHeader('X-Request-Id', requestId);
+  res.once('finish', () => {
+    const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+    let requestPath = '/invalid-url';
+    try { requestPath = new URL(req.url, 'http://internal').pathname; } catch (_) {}
+    logEvent('log', 'request', {
+      requestId,
+      method: req.method,
+      path: requestPath,
+      status: res.statusCode,
+      durationMs: Number(durationMs.toFixed(2)),
+      clientIp: req.clientIp,
+    });
+  });
+  try {
+    handleHttpRequest(req, res);
+  } catch (error) {
+    logEvent('error', 'unexpected_request_error', { requestId, ...errorFields(error) });
+    if (!res.headersSent) sendJson(res, 500, { ok: false, error: 'Error interno' });
+    else res.end();
+  }
+});
+
+server.on('clientError', (error, socket) => {
+  const requestId = crypto.randomUUID();
+  logEvent('error', 'client_protocol_error', { requestId, ...errorFields(error) });
+  if (socket.writable) {
+    socket.end(`HTTP/1.1 400 Bad Request\r\nX-Request-Id: ${requestId}\r\nConnection: close\r\n\r\n`);
+  }
 });
 
 const PORT = process.env.PORT || 3000;
@@ -441,15 +507,17 @@ let shuttingDown = false;
 async function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
+  logEvent('log', 'shutdown_started', { signal, persistenceMode: persistence.enabled ? 'postgresql' : 'memory' });
   if (clockTimer) clearInterval(clockTimer);
   sseClients.forEach(res => res.end());
   await new Promise(resolve => server.close(resolve));
   try {
     await mutationQueue;
     await persistence.close(state);
+    logEvent('log', 'shutdown_completed', { signal, persistenceMode: persistence.enabled ? 'postgresql' : 'memory' });
     process.exit(0);
   } catch (error) {
-    console.error(`No se pudo guardar el estado antes de cerrar (${signal}):`, error.message);
+    logEvent('error', 'shutdown_error', { signal, persistenceMode: persistence.enabled ? 'postgresql' : 'memory', ...errorFields(error) });
     process.exit(1);
   }
 }
@@ -462,11 +530,11 @@ async function start() {
   startClock();
   server.listen(PORT, () => {
     const mode = persistence.enabled ? 'PostgreSQL' : 'memoria';
-    console.log(`Rabieta — servidor real escuchando en el puerto ${PORT} (${mode})`);
+    logEvent('log', 'server_started', { port: Number(PORT), persistenceMode: mode === 'PostgreSQL' ? 'postgresql' : 'memory' });
   });
 }
 
 start().catch(error => {
-  console.error('No se pudo iniciar la persistencia:', error.message);
+  logEvent('error', 'startup_error', { persistenceMode: persistence.enabled ? 'postgresql' : 'memory', ...errorFields(error) });
   process.exitCode = 1;
 });

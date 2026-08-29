@@ -51,8 +51,14 @@ async function action(body, token) {
   return fetch(`${baseUrl}/api/action`, { method: 'POST', headers, body: JSON.stringify(body) });
 }
 
-async function getState() {
-  const response = await fetch(`${baseUrl}/events`);
+async function postJson(url, body, forwardedFor) {
+  const headers = { 'content-type': 'application/json' };
+  if (forwardedFor) headers['x-forwarded-for'] = forwardedFor;
+  return fetch(`${url}/api/action`, { method: 'POST', headers, body: JSON.stringify(body) });
+}
+
+async function getStateFrom(url) {
+  const response = await fetch(`${url}/events`);
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let body = '';
@@ -66,6 +72,8 @@ async function getState() {
   assert.ok(dataLine, 'SSE debe enviar un snapshot inicial');
   return JSON.parse(dataLine.slice(6)).state;
 }
+
+async function getState() { return getStateFrom(baseUrl); }
 
 async function resetState() {
   assert.equal((await action({ type: 'reset_demo' }, staffToken)).status, 200);
@@ -113,6 +121,138 @@ test('acciones internas requieren Bearer token y las públicas no', async () => 
   assert.equal((await action({ type: 'pedido_estado', mesa: 1, estado: 'preparando' }, staffToken)).status, 200);
   assert.equal((await getState()).mesas[0].pedido.estado, 'preparando');
   assert.equal((await action({ type: 'reset_demo' }, staffToken)).status, 200);
+});
+
+test('logout revoca inmediatamente el token actual', async () => {
+  const logout = await fetch(`${baseUrl}/api/staff-logout`, {
+    method: 'POST', headers: { authorization: `Bearer ${staffToken}` },
+  });
+  assert.equal(logout.status, 200);
+  assert.deepEqual(await logout.json(), { ok: true });
+  assert.equal((await action({ type: 'reset_demo' }, staffToken)).status, 401);
+
+  const login = await fetch(`${baseUrl}/api/staff-login`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pin: testPin }),
+  });
+  staffToken = (await login.json()).token;
+  assert.match(staffToken, /^[a-f0-9]{64}$/);
+});
+
+test('GET /healthz informa vida sin exponer estado interno', async () => {
+  const response = await fetch(`${baseUrl}/healthz`);
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('x-request-id'), /^[a-f0-9-]{36}$/);
+  assert.deepEqual(await response.json(), { ok: true });
+});
+
+test('un error inesperado devuelve respuesta segura y requestId rastreable', async () => {
+  const response = await fetch(`${baseUrl}/%E0%A4%A`);
+  assert.equal(response.status, 500);
+  const requestId = response.headers.get('x-request-id');
+  const body = await response.json();
+  assert.equal(body.ok, false);
+  assert.equal(body.error, 'Error interno');
+  assert.equal(body.requestId, requestId);
+  assert.equal('stack' in body, false);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.match(serverOutput, new RegExp(`"event":"unexpected_request_error".*"requestId":"${requestId}"`));
+});
+
+test('rate limiting devuelve 429, ignora X-Forwarded-For no confiable y no filtra secretos en logs', async () => {
+  const port = await reservePort();
+  const isolatedUrl = `http://127.0.0.1:${port}`;
+  const secretPin = '97531';
+  const secretBody = 'NO_LOG_BODY_MARKER';
+  let output = '';
+  const processHandle = spawn(process.execPath, ['server.js'], {
+    cwd: root,
+    env: {
+      ...process.env,
+      API_ACTION_RATE_LIMIT_MAX: '2',
+      DATABASE_URL: '',
+      PORT: String(port),
+      RATE_LIMIT_WINDOW_MS: '60000',
+      STAFF_LOGIN_RATE_LIMIT_MAX: '2',
+      STAFF_PIN: secretPin,
+      TRUSTED_PROXY_IPS: '',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  processHandle.stdout.on('data', chunk => { output += chunk; });
+  processHandle.stderr.on('data', chunk => { output += chunk; });
+  let stopped = false;
+  try {
+    await waitUntilReady(isolatedUrl, processHandle, () => output);
+    let issuedToken = '';
+    for (let index = 0; index < 2; index++) {
+      const login = await fetch(`${isolatedUrl}/api/staff-login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-forwarded-for': `203.0.113.${index + 1}` },
+        body: JSON.stringify({ pin: secretPin }),
+      });
+      assert.equal(login.status, 200);
+      issuedToken = (await login.json()).token;
+    }
+    const limitedLogin = await fetch(`${isolatedUrl}/api/staff-login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-forwarded-for': '198.51.100.99' },
+      body: JSON.stringify({ pin: secretPin }),
+    });
+    assert.equal(limitedLogin.status, 429);
+    assert.equal(limitedLogin.headers.get('retry-after'), '60');
+    const limitedError = await limitedLogin.json();
+    assert.match(limitedError.requestId, /^[a-f0-9-]{36}$/);
+    assert.equal(limitedError.requestId, limitedLogin.headers.get('x-request-id'));
+    assert.equal('stack' in limitedError, false);
+
+    assert.equal((await postJson(isolatedUrl, { type: 'llamar_mozo', mesa: 1 }, '192.0.2.1')).status, 200);
+    assert.equal((await postJson(isolatedUrl, { type: 'ayuda', mesa: 1, categoria: 'otro', mensaje: secretBody }, '192.0.2.2')).status, 200);
+    assert.equal((await postJson(isolatedUrl, { type: 'llamar_mozo', mesa: 1 }, '192.0.2.3')).status, 429);
+    const isolatedState = await getStateFrom(isolatedUrl);
+    assert.equal(isolatedState.mesas[0].alertas.length, 2);
+
+    await stopServer(processHandle);
+    stopped = true;
+    assert.doesNotMatch(output, new RegExp(secretPin));
+    assert.doesNotMatch(output, new RegExp(issuedToken));
+    assert.doesNotMatch(output, new RegExp(secretBody));
+    assert.match(output, new RegExp(`"requestId":"${limitedError.requestId}".*"status":429`));
+    assert.match(output, /"event":"server_started"/);
+    assert.match(output, /"event":"request"/);
+    assert.match(output, /"persistenceMode":"memory"/);
+  } finally {
+    if (!stopped) await stopServer(processHandle);
+  }
+});
+
+test('una DATABASE_URL fallida no se filtra en los logs de arranque', async () => {
+  const databasePort = await reservePort();
+  const appPort = await reservePort();
+  const databaseSecret = 'DB_SECRET_MARKER_741852';
+  let output = '';
+  const processHandle = spawn(process.execPath, ['server.js'], {
+    cwd: root,
+    env: {
+      ...process.env,
+      DATABASE_URL: `postgresql://usuario:${databaseSecret}@127.0.0.1:${databasePort}/rabieta?connect_timeout=1`,
+      PORT: String(appPort),
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  processHandle.stdout.on('data', chunk => { output += chunk; });
+  processHandle.stderr.on('data', chunk => { output += chunk; });
+  const exitCode = await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      processHandle.kill('SIGKILL');
+      reject(new Error(`El proceso no falló a tiempo.\n${output}`));
+    }, 5000);
+    processHandle.once('exit', code => { clearTimeout(timeout); resolve(code); });
+  });
+  assert.notEqual(exitCode, 0);
+  assert.match(output, /"event":"startup_error"/);
+  assert.doesNotMatch(output, new RegExp(databaseSecret));
+  assert.doesNotMatch(output, /postgresql:\/\//);
+  assert.doesNotMatch(output, /"event":"server_started"/);
 });
 
 test('el token expira y deja de autorizar acciones internas', async () => {

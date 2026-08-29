@@ -143,7 +143,7 @@ test('DATABASE_URL configurada y no disponible impide iniciar el servidor', { sk
     processHandle.once('exit', code => { clearTimeout(timeout); resolve(code); });
   });
   assert.notEqual(exitCode, 0);
-  assert.match(output, /No se pudo iniciar la persistencia/);
-  assert.doesNotMatch(output, /escuchando en el puerto/);
+  assert.match(output, /"event":"startup_error"/);
+  assert.doesNotMatch(output, /"event":"server_started"/);
   await assert.rejects(fetch(`http://127.0.0.1:${appPort}/api/menu`));
 });
