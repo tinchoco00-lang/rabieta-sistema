@@ -8,12 +8,13 @@ El valor de `STAFF_PIN` puede suministrarse mediante el entorno. Los secretos nu
 
 ## Resuelto en la Mision 002
 
-- Las acciones internas `pedido_estado`, `alerta_atender`, `alerta_resolver`, `mesa_liberar` y `reset_demo` exigen un Bearer token valido emitido tras verificar el PIN.
+- Las acciones internas `pedido_estado`, `alerta_atender`, `alerta_resolver`, `mesa_liberar` y `reset_demo` exigen un Bearer token valido emitido tras verificar el PIN. El token expira automáticamente a las 8 horas y los tokens vencidos se eliminan de memoria.
 - Las acciones de cliente `pedido_nuevo`, `llamar_mozo`, `pedir_cuenta` y `ayuda` siguen disponibles sin login.
 - El servidor reconstruye nombres y precios desde `menu-rabieta.json`; rechaza productos, variantes y opciones invalidas.
 - Existe una allowlist de acciones y se validan mesas y transiciones de estado de pedidos antes de modificar el estado.
 - Los textos libres se escapan antes de insertarse en vistas construidas con `innerHTML`.
 - Los bodies JSON tienen un limite de 32 KB; JSON invalido devuelve `400` y un body demasiado grande devuelve `413`.
+- `POST /api/staff-login` y `POST /api/action` solo procesan bodies con `Content-Type: application/json`; otros tipos devuelven `415` sin modificar estado.
 
 Estas protecciones estan cubiertas por pruebas automatizadas nativas de Node.js. Deben volver a ejecutarse con `npm test` y `npm run check` después de cada cambio relevante.
 
@@ -24,7 +25,7 @@ Estos riesgos describen el codigo actual. Se registran para orientar trabajo fut
 - No existe rate limiting.
 - El PIN es compartido y no identifica usuarios individuales.
 - No existen sesiones ni autorizacion real por roles.
-- Los tokens viven en memoria, no expiran y no existe un mecanismo de revocacion o cierre de sesion.
+- Los tokens viven en memoria y no existe un mecanismo de revocacion manual o cierre de sesion antes de su expiracion.
 - Las acciones publicas de clientes no autentican que quien envia la solicitud pertenezca realmente a la mesa indicada.
 - SSE distribuye el estado completo a los clientes conectados a `/events`.
 - El estado operativo existe solamente en memoria y se pierde al reiniciar el proceso.

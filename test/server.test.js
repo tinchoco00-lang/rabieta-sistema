@@ -25,23 +25,23 @@ function reservePort() {
   });
 }
 
-async function waitUntilReady(url, timeoutMs = 5000) {
+async function waitUntilReady(url, processHandle = serverProcess, output = () => serverOutput, timeoutMs = 5000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (serverProcess.exitCode !== null) throw new Error(`El servidor terminó antes de iniciar.\n${serverOutput}`);
+    if (processHandle.exitCode !== null) throw new Error(`El servidor terminó antes de iniciar.\n${output()}`);
     try { if ((await fetch(`${url}/api/menu`)).ok) return; } catch (_) {}
     await new Promise(resolve => setTimeout(resolve, 50));
   }
-  throw new Error(`El servidor no inició dentro de ${timeoutMs} ms.\n${serverOutput}`);
+  throw new Error(`El servidor no inició dentro de ${timeoutMs} ms.\n${output()}`);
 }
 
-function stopServer() {
-  if (!serverProcess || serverProcess.exitCode !== null) return Promise.resolve();
+function stopServer(processHandle = serverProcess) {
+  if (!processHandle || processHandle.exitCode !== null) return Promise.resolve();
   return new Promise(resolve => {
-    const forceStop = setTimeout(() => { if (serverProcess.exitCode === null) serverProcess.kill('SIGKILL'); }, 2000);
+    const forceStop = setTimeout(() => { if (processHandle.exitCode === null) processHandle.kill('SIGKILL'); }, 2000);
     forceStop.unref();
-    serverProcess.once('exit', () => { clearTimeout(forceStop); resolve(); });
-    serverProcess.kill('SIGTERM');
+    processHandle.once('exit', () => { clearTimeout(forceStop); resolve(); });
+    processHandle.kill('SIGTERM');
   });
 }
 
@@ -113,6 +113,54 @@ test('acciones internas requieren Bearer token y las públicas no', async () => 
   assert.equal((await action({ type: 'pedido_estado', mesa: 1, estado: 'preparando' }, staffToken)).status, 200);
   assert.equal((await getState()).mesas[0].pedido.estado, 'preparando');
   assert.equal((await action({ type: 'reset_demo' }, staffToken)).status, 200);
+});
+
+test('el token expira y deja de autorizar acciones internas', async () => {
+  const port = await reservePort();
+  const isolatedUrl = `http://127.0.0.1:${port}`;
+  let isolatedOutput = '';
+  const isolatedProcess = spawn(process.execPath, ['server.js'], {
+    cwd: root,
+    env: { ...process.env, PORT: String(port), STAFF_PIN: testPin, STAFF_TOKEN_TTL_MS: '500' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  isolatedProcess.stdout.on('data', chunk => { isolatedOutput += chunk; });
+  isolatedProcess.stderr.on('data', chunk => { isolatedOutput += chunk; });
+  try {
+    await waitUntilReady(isolatedUrl, isolatedProcess, () => isolatedOutput);
+    const login = await fetch(`${isolatedUrl}/api/staff-login`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pin: testPin }),
+    });
+    const { token } = await login.json();
+    const valid = await fetch(`${isolatedUrl}/api/action`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ type: 'reset_demo' }),
+    });
+    assert.equal(valid.status, 200);
+    await new Promise(resolve => setTimeout(resolve, 650));
+    const expired = await fetch(`${isolatedUrl}/api/action`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ type: 'reset_demo' }),
+    });
+    assert.equal(expired.status, 401);
+  } finally {
+    await stopServer(isolatedProcess);
+  }
+});
+
+test('Content-Type no JSON devuelve 415 y no modifica estado', async () => {
+  await resetState();
+  const before = (await getState()).mesas[0];
+  const badAction = await fetch(`${baseUrl}/api/action`, {
+    method: 'POST', headers: { 'content-type': 'text/plain' },
+    body: JSON.stringify({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'hummus-rabieta' }] }),
+  });
+  assert.equal(badAction.status, 415);
+  assert.deepEqual((await getState()).mesas[0], before);
+
+  const badLogin = await fetch(`${baseUrl}/api/staff-login`, {
+    method: 'POST', headers: { 'content-type': 'text/plain' }, body: JSON.stringify({ pin: testPin }),
+  });
+  assert.equal(badLogin.status, 415);
+  assert.equal((await badLogin.json()).token, undefined);
 });
 
 test('el servidor reconstruye productos y precios desde el menú', async () => {

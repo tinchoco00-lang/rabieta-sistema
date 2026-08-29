@@ -36,7 +36,11 @@ const SLA = { urgente: 20, importante: 40, normal: 65 }; // segundos — comprim
 // candado simple para que un cliente que adivina la URL no entre directo.
 // Antes de un uso real hace falta autenticación de verdad (ver README).
 const STAFF_PIN = process.env.STAFF_PIN || '1234';
-const STAFF_TOKENS = new Set();
+const configuredTokenTtl = Number(process.env.STAFF_TOKEN_TTL_MS);
+const STAFF_TOKEN_TTL_MS = Number.isFinite(configuredTokenTtl) && configuredTokenTtl > 0
+  ? configuredTokenTtl
+  : 8 * 60 * 60 * 1000;
+const STAFF_TOKENS = new Map();
 const MAX_BODY_BYTES = 32 * 1024;
 const PUBLIC_ACTIONS = new Set(['pedido_nuevo', 'llamar_mozo', 'pedir_cuenta', 'ayuda']);
 const STAFF_ACTIONS = new Set(['pedido_estado', 'alerta_atender', 'alerta_resolver', 'mesa_liberar', 'reset_demo']);
@@ -69,6 +73,12 @@ function seedState() {
   return { clockMs: 0, mesas };
 }
 let state = seedState();
+
+function pruneExpiredStaffTokens(now = Date.now()) {
+  for (const [token, expiresAt] of STAFF_TOKENS) {
+    if (expiresAt <= now) STAFF_TOKENS.delete(token);
+  }
+}
 
 function findMesa(n) { return state.mesas.find(m => m.numero === Number(n)); }
 function validMesaNumber(value) {
@@ -232,6 +242,7 @@ function handleAction(msg) {
 }
 
 setInterval(() => {
+  pruneExpiredStaffTokens();
   state.clockMs++;
   state.mesas.forEach(m => {
     if (m.pedido && m.pedido.estado === 'enviado' && (state.clockMs - m.pedido.enviadoTs) > 6) m.pedido.estado = 'preparando';
@@ -293,11 +304,23 @@ function sendJson(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
+function acceptsJson(req) {
+  const contentType = req.headers['content-type'];
+  if (typeof contentType !== 'string') return false;
+  return contentType.split(';', 1)[0].trim().toLowerCase() === 'application/json';
+}
+
 function extractBearerToken(req) {
   const authorization = req.headers.authorization;
   if (typeof authorization !== 'string' || !authorization.startsWith('Bearer ')) return null;
   const token = authorization.slice(7);
-  return token && STAFF_TOKENS.has(token) ? token : null;
+  const expiresAt = token ? STAFF_TOKENS.get(token) : null;
+  if (!expiresAt) return null;
+  if (expiresAt <= Date.now()) {
+    STAFF_TOKENS.delete(token);
+    return null;
+  }
+  return token;
 }
 
 function serveStatic(req, res) {
@@ -321,6 +344,7 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (u.pathname === '/api/staff-login' && req.method === 'POST') {
+    if (!acceptsJson(req)) { sendJson(res, 415, { ok: false, error: 'Content-Type debe ser application/json' }); return; }
     readJsonBody(req, (error, body) => {
       if (error) { sendJson(res, error.status, { ok: false, error: error.error }); return; }
       if (!body || typeof body !== 'object' || Array.isArray(body) || typeof body.pin !== 'string') {
@@ -328,13 +352,15 @@ const server = http.createServer((req, res) => {
         return;
       }
       if (body.pin !== STAFF_PIN) { sendJson(res, 401, { ok: false }); return; }
+      pruneExpiredStaffTokens();
       const token = crypto.randomBytes(32).toString('hex');
-      STAFF_TOKENS.add(token);
+      STAFF_TOKENS.set(token, Date.now() + STAFF_TOKEN_TTL_MS);
       sendJson(res, 200, { ok: true, token });
     });
     return;
   }
   if (u.pathname === '/api/action' && req.method === 'POST') {
+    if (!acceptsJson(req)) { sendJson(res, 415, { ok: false, error: 'Content-Type debe ser application/json' }); return; }
     readJsonBody(req, (error, body) => {
       if (error) { sendJson(res, error.status, { ok: false, error: error.error }); return; }
       if (body && STAFF_ACTIONS.has(body.type) && !extractBearerToken(req)) {
