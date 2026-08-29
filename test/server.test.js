@@ -57,8 +57,23 @@ async function postJson(url, body, forwardedFor) {
   return fetch(`${url}/api/action`, { method: 'POST', headers, body: JSON.stringify(body) });
 }
 
-async function getStateFrom(url) {
-  const response = await fetch(`${url}/events`);
+async function readSseEvent(reader, pending = '') {
+  const decoder = new TextDecoder();
+  let body = pending;
+  while (!body.includes('\n\n')) {
+    const { done, value } = await reader.read();
+    if (done) return { done: true, pending: body };
+    body += decoder.decode(value, { stream: true });
+  }
+  const boundary = body.indexOf('\n\n');
+  const event = body.slice(0, boundary);
+  const dataLine = event.split('\n').find(line => line.startsWith('data: '));
+  assert.ok(dataLine, 'SSE debe incluir una línea data');
+  return { done: false, message: JSON.parse(dataLine.slice(6)), pending: body.slice(boundary + 2) };
+}
+
+async function getStateFrom(url, mesa = 1) {
+  const response = await fetch(`${url}/events?mesa=${mesa}`);
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let body = '';
@@ -136,6 +151,88 @@ test('logout revoca inmediatamente el token actual', async () => {
   });
   staffToken = (await login.json()).token;
   assert.match(staffToken, /^[a-f0-9]{64}$/);
+});
+
+test('streams realtime aíslan mesas y protegen el estado completo de staff', async () => {
+  await resetState();
+  assert.equal((await action({ type: 'llamar_mozo', mesa: 1 })).status, 200);
+  assert.equal((await action({ type: 'llamar_mozo', mesa: 2 })).status, 200);
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 2, items: [{ productoId: 'hummus-rabieta' }] })).status, 200);
+
+  const mesaResponse = await fetch(`${baseUrl}/events?mesa=1`);
+  assert.equal(mesaResponse.status, 200);
+  const mesaReader = mesaResponse.body.getReader();
+  let mesaPending = '';
+  const initialMesa = await readSseEvent(mesaReader, mesaPending);
+  mesaPending = initialMesa.pending;
+  assert.equal(initialMesa.message.state.mesas.length, 1);
+  assert.equal(initialMesa.message.state.mesas[0].numero, 1);
+  assert.equal(initialMesa.message.state.mesas[0].alertas.length, 1);
+  assert.equal(initialMesa.message.state.mesas[0].pedido, null);
+  assert.equal(initialMesa.message.mesasTotal, undefined);
+
+  const manuallyChangedMesa = await getStateFrom(baseUrl, 2);
+  assert.deepEqual(manuallyChangedMesa.mesas.map(mesa => mesa.numero), [2]);
+  assert.equal(manuallyChangedMesa.mesas[0].alertas.length, 1);
+  assert.equal(manuallyChangedMesa.mesas[0].pedido.items[0].productoId, 'hummus-rabieta');
+
+  assert.equal((await fetch(`${baseUrl}/events?mesa=0`)).status, 400);
+  assert.equal((await fetch(`${baseUrl}/events?mesa=texto`)).status, 400);
+  assert.equal((await fetch(`${baseUrl}/api/staff-events`)).status, 401);
+
+  const staffResponse = await fetch(`${baseUrl}/api/staff-events`, {
+    headers: { authorization: `Bearer ${staffToken}` },
+  });
+  assert.equal(staffResponse.status, 200);
+  const staffReader = staffResponse.body.getReader();
+  const initialStaff = await readSseEvent(staffReader);
+  assert.ok(initialStaff.message.state.mesas.length > 1);
+  assert.equal(initialStaff.message.mesasTotal, initialStaff.message.state.mesas.length);
+  await staffReader.cancel();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.doesNotMatch(serverOutput, new RegExp(staffToken));
+
+  assert.equal((await action({ type: 'llamar_mozo', mesa: 2 })).status, 200);
+  const afterOtherMesa = await readSseEvent(mesaReader, mesaPending);
+  mesaPending = afterOtherMesa.pending;
+  assert.deepEqual(afterOtherMesa.message.state.mesas.map(mesa => mesa.numero), [1]);
+  assert.equal(afterOtherMesa.message.state.mesas[0].alertas.length, 1);
+
+  for (let update = 0; update < 3; update++) {
+    assert.equal((await action({ type: 'llamar_mozo', mesa: 1 })).status, 200);
+    const expectedAlerts = 2 + update;
+    let updatedMesa;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const event = await readSseEvent(mesaReader, mesaPending);
+      mesaPending = event.pending;
+      assert.deepEqual(event.message.state.mesas.map(mesa => mesa.numero), [1]);
+      assert.equal(event.message.state.mesas[0].pedido, null);
+      if (event.message.state.mesas[0].alertas.length === expectedAlerts) { updatedMesa = event.message; break; }
+    }
+    assert.ok(updatedMesa, `el stream de mesa debe recibir la actualización ${update + 1}`);
+  }
+  await mesaReader.cancel();
+});
+
+test('stream staff rechaza tokens vencidos y revocados', async () => {
+  const login = await fetch(`${baseUrl}/api/staff-login`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pin: testPin }),
+  });
+  const { token } = await login.json();
+  const stream = await fetch(`${baseUrl}/api/staff-events`, { headers: { authorization: `Bearer ${token}` } });
+  assert.equal(stream.status, 200);
+  const reader = stream.body.getReader();
+  await readSseEvent(reader);
+  const logout = await fetch(`${baseUrl}/api/staff-logout`, {
+    method: 'POST', headers: { authorization: `Bearer ${token}` },
+  });
+  assert.equal(logout.status, 200);
+  const closed = await Promise.race([
+    reader.read(),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('el stream revocado no se cerró')), 1500)),
+  ]);
+  assert.equal(closed.done, true);
+  assert.equal((await fetch(`${baseUrl}/api/staff-events`, { headers: { authorization: `Bearer ${token}` } })).status, 401);
 });
 
 test('GET /healthz informa vida sin exponer estado interno', async () => {
@@ -277,6 +374,10 @@ test('el token expira y deja de autorizar acciones internas', async () => {
     });
     assert.equal(valid.status, 200);
     await new Promise(resolve => setTimeout(resolve, 650));
+    const expiredStream = await fetch(`${isolatedUrl}/api/staff-events`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(expiredStream.status, 401);
     const expired = await fetch(`${isolatedUrl}/api/action`, {
       method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ type: 'reset_demo' }),
     });
@@ -315,7 +416,7 @@ test('el servidor reconstruye productos y precios desde el menú', async () => {
     { productoId: '2-empanadas-sintacc', opcion: 'carne' },
   ] });
   assert.equal(configured.status, 200);
-  const configuredItems = (await getState()).mesas[1].pedido.items;
+  const configuredItems = (await getStateFrom(baseUrl, 2)).mesas[0].pedido.items;
   assert.equal(configuredItems[0].nombre, 'Tablita de Quesos y Fiambres — Individual (sin bebida)');
   assert.equal(configuredItems[0].precio, 5640);
   assert.equal(configuredItems[1].nombre, '2 Empanadas de carne o verdura (Sin TACC) (carne)');
@@ -356,6 +457,8 @@ test('los textos libres se escapan en renders con innerHTML', () => {
   assert.match(source, /escapeHtml\(a\.mensaje\)/);
   assert.doesNotMatch(source, /\$\{it\.notas\}/);
   assert.doesNotMatch(source, /\$\{a\.mensaje\}/);
+  assert.doesNotMatch(source, /staff-events\?/);
+  assert.match(source, /fetch\('\/api\/staff-events', \{headers:\{Authorization:'Bearer ' \+ STAFF_TOKEN\}\}\)/);
   const implementation = source.match(/function escapeHtml\(value\)\{[\s\S]*?\n\}/);
   assert.ok(implementation, 'debe existir el escape HTML usado por los renders');
   const malicious = '<img src=x onerror="globalThis.xss=true"> & \'ataque\'';

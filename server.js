@@ -5,11 +5,10 @@
    de instalación que pueda fallar.
 
    Cómo se sincronizan los celulares en vivo, sin WebSocket:
-   - Cada cliente abre un stream Server-Sent Events (SSE) a
-     GET /events y se queda escuchando. Cuando el estado
-     cambia, el servidor le escribe el nuevo estado a TODOS
-     los streams abiertos — así el mozo ve en su celular, en
-     tiempo real, lo que pasó en el celular del cliente.
+   - Cada mesa abre un stream Server-Sent Events (SSE) a
+     GET /events?mesa=N y recibe solamente su propio estado.
+     El personal usa GET /api/staff-events con Bearer token
+     para recibir el estado operativo completo.
    - Las acciones (pedir, llamar al mozo, marcar listo, etc.)
      viajan como POST /api/action — HTTP normal, nada exótico.
 
@@ -154,12 +153,27 @@ function buildPedidoItem(input) {
 }
 
 const sseClients = new Set();
-function estadoPayload() {
-  return 'data: ' + JSON.stringify({ type: 'estado', state, mesasTotal: MESAS_TOTAL }) + '\n\n';
+function estadoPayload(client) {
+  const visibleState = client.kind === 'staff'
+    ? state
+    : { clockMs: state.clockMs, mesas: [findMesa(client.mesa)] };
+  const message = client.kind === 'staff'
+    ? { type: 'estado', state: visibleState, mesasTotal: MESAS_TOTAL }
+    : { type: 'estado', state: visibleState };
+  return 'data: ' + JSON.stringify(message) + '\n\n';
+}
+function closeSseClient(client) {
+  sseClients.delete(client);
+  try { client.res.end(); } catch (_) {}
 }
 function broadcast() {
-  const payload = estadoPayload();
-  sseClients.forEach(res => { try { res.write(payload); } catch (e) { sseClients.delete(res); } });
+  sseClients.forEach(client => {
+    if (client.kind === 'staff' && !validStaffToken(client.token)) {
+      closeSseClient(client);
+      return;
+    }
+    try { client.res.write(estadoPayload(client)); } catch (_) { closeSseClient(client); }
+  });
 }
 
 function handleAction(msg) {
@@ -351,13 +365,17 @@ function extractBearerToken(req) {
   const authorization = req.headers.authorization;
   if (typeof authorization !== 'string' || !authorization.startsWith('Bearer ')) return null;
   const token = authorization.slice(7);
+  return validStaffToken(token) ? token : null;
+}
+
+function validStaffToken(token) {
   const expiresAt = token ? STAFF_TOKENS.get(token) : null;
-  if (!expiresAt) return null;
+  if (!expiresAt) return false;
   if (expiresAt <= Date.now()) {
     STAFF_TOKENS.delete(token);
-    return null;
+    return false;
   }
-  return token;
+  return true;
 }
 
 function applyRateLimit(req, res, limiter, scope) {
@@ -413,6 +431,9 @@ function handleHttpRequest(req, res) {
     const token = extractBearerToken(req);
     if (!token) { sendJson(res, 401, { ok: false, error: 'Autenticación requerida' }); return; }
     STAFF_TOKENS.delete(token);
+    sseClients.forEach(client => {
+      if (client.kind === 'staff' && client.token === token) closeSseClient(client);
+    });
     sendJson(res, 200, { ok: true });
     return;
   }
@@ -450,15 +471,39 @@ function handleHttpRequest(req, res) {
     return;
   }
   if (u.pathname === '/events' && req.method === 'GET') {
+    const mesa = Number(u.searchParams.get('mesa'));
+    if (!validMesaNumber(mesa)) {
+      sendJson(res, 400, { ok: false, error: 'Mesa inválida' });
+      return;
+    }
+    const client = { kind: 'mesa', mesa, res };
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache, no-transform',
       'Connection': 'keep-alive',
       'X-Accel-Buffering': 'no',
     });
-    res.write(estadoPayload());
-    sseClients.add(res);
-    req.on('close', () => sseClients.delete(res));
+    res.write(estadoPayload(client));
+    sseClients.add(client);
+    req.on('close', () => sseClients.delete(client));
+    return;
+  }
+  if (u.pathname === '/api/staff-events' && req.method === 'GET') {
+    const token = extractBearerToken(req);
+    if (!token) {
+      sendJson(res, 401, { ok: false, error: 'Autenticación requerida' });
+      return;
+    }
+    const client = { kind: 'staff', token, res };
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    res.write(estadoPayload(client));
+    sseClients.add(client);
+    req.on('close', () => sseClients.delete(client));
     return;
   }
 
@@ -509,7 +554,7 @@ async function shutdown(signal) {
   shuttingDown = true;
   logEvent('log', 'shutdown_started', { signal, persistenceMode: persistence.enabled ? 'postgresql' : 'memory' });
   if (clockTimer) clearInterval(clockTimer);
-  sseClients.forEach(res => res.end());
+  sseClients.forEach(closeSseClient);
   await new Promise(resolve => server.close(resolve));
   try {
     await mutationQueue;

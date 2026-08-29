@@ -23,7 +23,8 @@ Esta tabla de fila unica es una capa transitoria de continuidad para el MVP. No 
 - `POST /api/staff-login` compara el PIN recibido con `STAFF_PIN` o el valor local por defecto.
 - `POST /api/staff-logout` revoca el token de staff presentado.
 - `POST /api/action` valida y cambia el estado; cuando PostgreSQL está activo confirma la escritura antes de responder éxito.
-- `GET /events` distribuye el estado mediante SSE.
+- `GET /events?mesa=N` distribuye mediante SSE solamente el estado de la mesa solicitada.
+- `GET /api/staff-events` distribuye el estado completo al personal y exige un Bearer token válido en el header.
 - Las demas rutas se resuelven como archivos estaticos bajo `public/`.
 
 Los tests de integracion levantan el proceso real en puertos temporales. Sin `DATABASE_URL` verifican el modo memoria. En CI, un servicio PostgreSQL oficial verifica la creacion automatica de la tabla, escritura, cierre, reinicio, recuperacion del estado y que los tokens de staff no sobrevivan al proceso.

@@ -26,18 +26,18 @@ Estas protecciones estan cubiertas por pruebas automatizadas nativas de Node.js.
 - Cada respuesta incluye `X-Request-Id`. Los logs estructurados registran ruta, método, status y duración sin incluir bodies, PIN, tokens ni `DATABASE_URL`.
 - `GET /healthz` informa solamente que el proceso responde, sin exponer estado operativo.
 - `POST /api/staff-logout` revoca inmediatamente el Bearer token presentado.
+- `GET /events?mesa=N` expone solamente el estado de esa mesa; no distribuye pedidos, alertas ni mesas ajenas.
+- `GET /api/staff-events` exige un Bearer token válido y entrega el estado completo mediante fetch streaming/SSE, sin incluir el token en la URL. Los streams se cierran cuando su token vence o es revocado.
 - Los errores inesperados devuelven una respuesta genérica con requestId y nunca incluyen stack traces.
 
 ## Pendiente
 
 Estos riesgos describen el codigo actual. Se registran para orientar trabajo futuro; no estan solucionados por esta documentacion.
 
-- No existe rate limiting.
 - El PIN es compartido y no identifica usuarios individuales.
 - No existen sesiones ni autorizacion real por roles.
-- Los tokens viven en memoria y no existe un mecanismo de revocacion manual o cierre de sesion antes de su expiracion.
 - Las acciones publicas de clientes no autentican que quien envia la solicitud pertenezca realmente a la mesa indicada.
-- SSE distribuye el estado completo a los clientes conectados a `/events`.
+- Un cliente todavía puede cambiar manualmente el número de mesa de `/events?mesa=N`; todavía no existe un token o credencial vinculada al QR de cada mesa.
 - Sin `DATABASE_URL`, el estado operativo existe solamente en memoria y se pierde al reiniciar el proceso. Con PostgreSQL hay continuidad del estado completo, pero todavía no existen historial, auditoria ni un esquema relacional definitivo.
 
 ## Reglas de cambio
