@@ -1,10 +1,16 @@
 # Decisiones registradas
 
-## Base de calidad sin dependencias externas
+## Base de calidad con herramientas nativas
 
-- **Decision:** usar `node:test`, `assert`, `fetch` y procesos hijos provistos por Node.js.
-- **Motivo:** el proyecto ya funciona sin paquetes externos y Node.js 18 incluye las capacidades necesarias.
-- **Consecuencia:** `npm test` no requiere instalar dependencias; las pruebas ejercitan el proceso real de `server.js`.
+- **Decision:** usar `node:test`, `assert`, `fetch` y procesos hijos provistos por Node.js para los tests.
+- **Motivo:** Node.js 18 incluye las capacidades de prueba necesarias sin agregar frameworks.
+- **Consecuencia:** las pruebas ejercitan el proceso real de `server.js`; la unica dependencia de runtime agregada es el cliente oficial `pg` para PostgreSQL.
+
+## Persistencia transitoria del MVP
+
+- **Decision:** guardar el estado completo en una unica fila JSONB de `rabieta_estado` cuando existe `DATABASE_URL`, y conservar el modo memoria cuando no existe.
+- **Motivo:** recuperar mesas, pedidos y alertas tras reinicios con el cambio mas pequeno compatible con el MVP.
+- **Consecuencia:** esta capa aporta continuidad, pero no es el esquema relacional definitivo del SaaS, no es multi-tenant y no resuelve multiples procesos escribiendo al mismo tiempo.
 
 ## Verificacion centralizada
 
@@ -13,8 +19,8 @@
 
 ## CI conservadora
 
-- **Decision:** GitHub Actions usa Node.js 22 LTS, compatible con el requisito existente `>=18`, y permisos de solo lectura sobre el contenido.
-- **Motivo:** validar pushes y pull requests sin publicar ni desplegar.
+- **Decision:** GitHub Actions usa Node.js 22 LTS, compatible con el requisito existente `>=18`, un servicio efimero PostgreSQL oficial y permisos de solo lectura sobre el contenido.
+- **Motivo:** validar pushes y pull requests, incluida la recuperacion real del estado tras reiniciar, sin publicar ni desplegar.
 
 ## Direccion de producto y tecnologia
 

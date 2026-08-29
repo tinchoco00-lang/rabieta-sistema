@@ -28,7 +28,7 @@ Estos riesgos describen el codigo actual. Se registran para orientar trabajo fut
 - Los tokens viven en memoria y no existe un mecanismo de revocacion manual o cierre de sesion antes de su expiracion.
 - Las acciones publicas de clientes no autentican que quien envia la solicitud pertenezca realmente a la mesa indicada.
 - SSE distribuye el estado completo a los clientes conectados a `/events`.
-- El estado operativo existe solamente en memoria y se pierde al reiniciar el proceso.
+- Sin `DATABASE_URL`, el estado operativo existe solamente en memoria y se pierde al reiniciar el proceso. Con PostgreSQL hay continuidad del estado completo, pero todavía no existen historial, auditoria ni un esquema relacional definitivo.
 
 ## Reglas de cambio
 
