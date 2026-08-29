@@ -23,6 +23,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { URL } = require('url');
 
 const MENU_DATA = JSON.parse(fs.readFileSync(path.join(__dirname, 'menu-rabieta.json'), 'utf8'));
@@ -35,6 +36,31 @@ const SLA = { urgente: 20, importante: 40, normal: 65 }; // segundos — comprim
 // candado simple para que un cliente que adivina la URL no entre directo.
 // Antes de un uso real hace falta autenticación de verdad (ver README).
 const STAFF_PIN = process.env.STAFF_PIN || '1234';
+const configuredTokenTtl = Number(process.env.STAFF_TOKEN_TTL_MS);
+const STAFF_TOKEN_TTL_MS = Number.isFinite(configuredTokenTtl) && configuredTokenTtl > 0
+  ? configuredTokenTtl
+  : 8 * 60 * 60 * 1000;
+const STAFF_TOKENS = new Map();
+const MAX_BODY_BYTES = 32 * 1024;
+const PUBLIC_ACTIONS = new Set(['pedido_nuevo', 'llamar_mozo', 'pedir_cuenta', 'ayuda']);
+const STAFF_ACTIONS = new Set(['pedido_estado', 'alerta_atender', 'alerta_resolver', 'mesa_liberar', 'reset_demo']);
+const MESA_ACTIONS = new Set(['pedido_nuevo', 'pedido_estado', 'llamar_mozo', 'pedir_cuenta', 'ayuda', 'mesa_liberar']);
+const PEDIDO_ESTADOS = ['enviado', 'preparando', 'listo', 'entregado'];
+const HELP_CATEGORIES = {
+  no_llego: { label: 'No llegó mi pedido', prioridad: 'urgente' },
+  incorrecto: { label: 'Mi pedido está incorrecto', prioridad: 'urgente' },
+  falta: { label: 'Falta algo', prioridad: 'importante' },
+  mozo: { label: 'Necesito al mozo', prioridad: 'normal' },
+  cambiar: { label: 'Quiero cambiar algo', prioridad: 'importante' },
+  cuenta: { label: 'Quiero pedir la cuenta', prioridad: 'importante' },
+  otro: { label: 'Reclamo', prioridad: null },
+};
+const KEYWORDS_URGENTE = ['no llegó', 'no llego', 'frío', 'fria', 'crudo', 'cruda', 'alerg', 'mal estado', 'equivocado', 'equivocada'];
+const KEYWORDS_IMPORTANTE = ['falta', 'cambiar', 'sin ', 'error', 'cuenta'];
+const PRODUCTOS = new Map();
+MENU_DATA.categorias.forEach(categoria => {
+  categoria.productos.forEach(producto => PRODUCTOS.set(producto.id, producto));
+});
 
 let uidCounter = 1;
 function uid() { return uidCounter++; }
@@ -48,7 +74,72 @@ function seedState() {
 }
 let state = seedState();
 
+function pruneExpiredStaffTokens(now = Date.now()) {
+  for (const [token, expiresAt] of STAFF_TOKENS) {
+    if (expiresAt <= now) STAFF_TOKENS.delete(token);
+  }
+}
+
 function findMesa(n) { return state.mesas.find(m => m.numero === Number(n)); }
+function validMesaNumber(value) {
+  return Number.isInteger(value) && value >= 1 && value <= MESAS_TOTAL;
+}
+
+function actionError(status, error) { return { ok: false, status, error }; }
+function actionOk() { return { ok: true, status: 200 }; }
+
+function clasificarTextoLibre(value) {
+  const text = value.toLowerCase();
+  if (KEYWORDS_URGENTE.some(keyword => text.includes(keyword))) return 'urgente';
+  if (KEYWORDS_IMPORTANTE.some(keyword => text.includes(keyword))) return 'importante';
+  return 'normal';
+}
+
+function normalizeOptionalText(value, field, maxLength = 500) {
+  if (value == null || value === '') return { ok: true, value: '' };
+  if (typeof value !== 'string') return actionError(400, `${field} inválida`);
+  const normalized = value.trim();
+  if (normalized.length > maxLength) return actionError(400, `${field} demasiado larga`);
+  return { ok: true, value: normalized };
+}
+
+function buildPedidoItem(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return actionError(400, 'Ítem inválido');
+  if (typeof input.productoId !== 'string') return actionError(400, 'productoId inválido');
+
+  const producto = PRODUCTOS.get(input.productoId);
+  if (!producto) return actionError(400, 'Producto inexistente');
+
+  let nombre = producto.nombre;
+  let precio = producto.precio;
+
+  if (Array.isArray(producto.variantes) && producto.variantes.length) {
+    if (typeof input.variante !== 'string') return actionError(400, 'Variante requerida');
+    const variante = producto.variantes.find(candidate => candidate.nombre === input.variante);
+    if (!variante) return actionError(400, 'Variante inválida');
+    nombre += ' — ' + variante.nombre;
+    precio = variante.precio;
+  } else if (input.variante != null) {
+    return actionError(400, 'Variante inválida');
+  }
+
+  if (Array.isArray(producto.opciones) && producto.opciones.length) {
+    if (typeof input.opcion !== 'string' || !producto.opciones.includes(input.opcion)) {
+      return actionError(400, 'Opción inválida');
+    }
+    nombre += ' (' + input.opcion + ')';
+  } else if (input.opcion != null) {
+    return actionError(400, 'Opción inválida');
+  }
+
+  const observacion = normalizeOptionalText(input.observacion, 'Observación');
+  if (!observacion.ok) return observacion;
+
+  return {
+    ok: true,
+    item: { productoId: producto.id, nombre, precio, notas: observacion.value },
+  };
+}
 
 const sseClients = new Set();
 function estadoPayload() {
@@ -60,12 +151,21 @@ function broadcast() {
 }
 
 function handleAction(msg) {
-  const m = msg.mesa != null ? findMesa(msg.mesa) : null;
+  if (!msg || typeof msg !== 'object' || Array.isArray(msg)) return actionError(400, 'Acción inválida');
+  if (!PUBLIC_ACTIONS.has(msg.type) && !STAFF_ACTIONS.has(msg.type)) return actionError(400, 'Tipo de acción inválido');
+
+  if (MESA_ACTIONS.has(msg.type) && !validMesaNumber(msg.mesa)) return actionError(400, 'Mesa inválida');
+  const m = MESA_ACTIONS.has(msg.type) ? findMesa(msg.mesa) : null;
+
   switch (msg.type) {
     case 'pedido_nuevo': {
-      if (!m) return;
-      const items = Array.isArray(msg.items) ? msg.items : [];
-      if (!items.length) return;
+      if (!Array.isArray(msg.items) || !msg.items.length) return actionError(400, 'El pedido no contiene ítems');
+      const items = [];
+      for (const input of msg.items) {
+        const built = buildPedidoItem(input);
+        if (!built.ok) return built;
+        items.push(built.item);
+      }
       m.ocupada = true;
       if (m.pedido && m.pedido.estado !== 'entregado') {
         m.pedido.items.push(...items);
@@ -75,7 +175,10 @@ function handleAction(msg) {
       break;
     }
     case 'pedido_estado': {
-      if (!m || !m.pedido) return;
+      if (!PEDIDO_ESTADOS.includes(msg.estado)) return actionError(400, 'Estado de pedido inválido');
+      if (!m.pedido) return actionError(404, 'La mesa no tiene un pedido activo');
+      const currentIndex = PEDIDO_ESTADOS.indexOf(m.pedido.estado);
+      if (msg.estado !== PEDIDO_ESTADOS[currentIndex + 1]) return actionError(409, 'Transición de pedido inválida');
       m.pedido.estado = msg.estado;
       break;
     }
@@ -91,21 +194,35 @@ function handleAction(msg) {
       break;
     }
     case 'ayuda': {
-      if (!m) return;
-      m.alertas.push({ id: uid(), tipo: msg.categoria || 'otro', label: msg.label || 'Reclamo', prioridad: msg.prioridad || 'normal', mensaje: msg.mensaje || '', estado: 'recibido', creadoTs: state.clockMs, escalado: false });
+      if (typeof msg.categoria !== 'string' || !HELP_CATEGORIES[msg.categoria]) return actionError(400, 'Categoría de ayuda inválida');
+      const message = normalizeOptionalText(msg.mensaje, 'Mensaje');
+      if (!message.ok) return message;
+      if (msg.categoria === 'otro' && !message.value) return actionError(400, 'El mensaje es obligatorio');
+      const category = HELP_CATEGORIES[msg.categoria];
+      const prioridad = category.prioridad || clasificarTextoLibre(message.value);
+      m.alertas.push({ id: uid(), tipo: msg.categoria, label: category.label, prioridad, mensaje: message.value, estado: 'recibido', creadoTs: state.clockMs, escalado: false });
       break;
     }
     case 'alerta_atender': {
-      state.mesas.forEach(mm => mm.alertas.forEach(a => { if (a.id === msg.alertaId) a.estado = 'atencion'; }));
+      if (!Number.isInteger(msg.alertaId)) return actionError(400, 'alertaId inválido');
+      const alerta = state.mesas.flatMap(mm => mm.alertas).find(candidate => candidate.id === msg.alertaId);
+      if (!alerta) return actionError(404, 'Alerta inexistente');
+      if (alerta.estado !== 'recibido') return actionError(409, 'La alerta no puede pasar a atención');
+      alerta.estado = 'atencion';
       break;
     }
     case 'alerta_resolver': {
-      state.mesas.forEach(mm => mm.alertas.forEach(a => {
-        if (a.id === msg.alertaId) {
-          a.estado = 'resuelto';
-          if (a.tipo === 'cuenta') { mm.pedido = null; mm.ocupada = false; mm.cuentaPedida = false; }
-        }
-      }));
+      if (!Number.isInteger(msg.alertaId)) return actionError(400, 'alertaId inválido');
+      let owner = null;
+      let alerta = null;
+      for (const mesa of state.mesas) {
+        const found = mesa.alertas.find(candidate => candidate.id === msg.alertaId);
+        if (found) { owner = mesa; alerta = found; break; }
+      }
+      if (!alerta) return actionError(404, 'Alerta inexistente');
+      if (alerta.estado === 'resuelto') return actionError(409, 'La alerta ya está resuelta');
+      alerta.estado = 'resuelto';
+      if (alerta.tipo === 'cuenta') { owner.pedido = null; owner.ocupada = false; owner.cuentaPedida = false; }
       break;
     }
     case 'mesa_liberar': {
@@ -118,12 +235,14 @@ function handleAction(msg) {
       break;
     }
     default:
-      return;
+      return actionError(400, 'Tipo de acción inválido');
   }
   broadcast();
+  return actionOk();
 }
 
 setInterval(() => {
+  pruneExpiredStaffTokens();
   state.clockMs++;
   state.mesas.forEach(m => {
     if (m.pedido && m.pedido.estado === 'enviado' && (state.clockMs - m.pedido.enviadoTs) > 6) m.pedido.estado = 'preparando';
@@ -150,11 +269,58 @@ const MIME = {
 
 function readJsonBody(req, cb) {
   const chunks = [];
-  req.on('data', c => chunks.push(c));
-  req.on('end', () => {
-    try { cb(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')); }
-    catch (e) { cb({}); }
+  let totalBytes = 0;
+  let tooLarge = false;
+  let completed = false;
+  function finish(error, body) {
+    if (completed) return;
+    completed = true;
+    cb(error, body);
+  }
+  req.on('data', chunk => {
+    totalBytes += chunk.length;
+    if (totalBytes > MAX_BODY_BYTES) {
+      tooLarge = true;
+      chunks.length = 0;
+      return;
+    }
+    if (!tooLarge) chunks.push(chunk);
   });
+  req.on('end', () => {
+    if (tooLarge) { finish(actionError(413, 'Body demasiado grande')); return; }
+    try {
+      const raw = Buffer.concat(chunks).toString('utf8');
+      if (!raw.trim()) { finish(actionError(400, 'JSON inválido')); return; }
+      finish(null, JSON.parse(raw));
+    } catch (e) {
+      finish(actionError(400, 'JSON inválido'));
+    }
+  });
+  req.on('error', () => finish(actionError(400, 'No se pudo leer el body')));
+}
+
+function sendJson(res, status, payload) {
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
+  res.end(JSON.stringify(payload));
+}
+
+function acceptsJson(req) {
+  const contentType = req.headers['content-type'];
+  if (typeof contentType !== 'string') return false;
+  return contentType.split(';', 1)[0].trim().toLowerCase() === 'application/json';
+}
+
+function extractBearerToken(req) {
+  const authorization = req.headers.authorization;
+  if (typeof authorization !== 'string' || !authorization.startsWith('Bearer ')) return null;
+  const token = authorization.slice(7);
+  const expiresAt = token ? STAFF_TOKENS.get(token) : null;
+  if (!expiresAt) return null;
+  if (expiresAt <= Date.now()) {
+    STAFF_TOKENS.delete(token);
+    return null;
+  }
+  return token;
 }
 
 function serveStatic(req, res) {
@@ -178,17 +344,31 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (u.pathname === '/api/staff-login' && req.method === 'POST') {
-    readJsonBody(req, body => {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: body.pin === STAFF_PIN }));
+    if (!acceptsJson(req)) { sendJson(res, 415, { ok: false, error: 'Content-Type debe ser application/json' }); return; }
+    readJsonBody(req, (error, body) => {
+      if (error) { sendJson(res, error.status, { ok: false, error: error.error }); return; }
+      if (!body || typeof body !== 'object' || Array.isArray(body) || typeof body.pin !== 'string') {
+        sendJson(res, 400, { ok: false, error: 'PIN inválido' });
+        return;
+      }
+      if (body.pin !== STAFF_PIN) { sendJson(res, 401, { ok: false }); return; }
+      pruneExpiredStaffTokens();
+      const token = crypto.randomBytes(32).toString('hex');
+      STAFF_TOKENS.set(token, Date.now() + STAFF_TOKEN_TTL_MS);
+      sendJson(res, 200, { ok: true, token });
     });
     return;
   }
   if (u.pathname === '/api/action' && req.method === 'POST') {
-    readJsonBody(req, body => {
-      handleAction(body);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end('{"ok":true}');
+    if (!acceptsJson(req)) { sendJson(res, 415, { ok: false, error: 'Content-Type debe ser application/json' }); return; }
+    readJsonBody(req, (error, body) => {
+      if (error) { sendJson(res, error.status, { ok: false, error: error.error }); return; }
+      if (body && STAFF_ACTIONS.has(body.type) && !extractBearerToken(req)) {
+        sendJson(res, 401, { ok: false, error: 'Autenticación requerida' });
+        return;
+      }
+      const result = handleAction(body);
+      sendJson(res, result.status, result.ok ? { ok: true } : { ok: false, error: result.error });
     });
     return;
   }

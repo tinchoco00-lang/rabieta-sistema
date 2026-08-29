@@ -69,6 +69,7 @@ let CANDIDATOS_3D = new Set();
 let MESAS_TOTAL = 0;
 let liveReady = false; // true mientras el stream en vivo (SSE) está conectado
 let knownAlertIds = null; // null = todavía no llegó el primer snapshot
+let STAFF_TOKEN = null;
 
 let state = {
   clockMs:0, mesas:[],
@@ -79,6 +80,11 @@ let state = {
 };
 
 function money(n){ return n===null || n===undefined ? 'A confirmar' : '$'+n.toLocaleString('es-AR'); }
+function escapeHtml(value){
+  return String(value == null ? '' : value).replace(/[&<>"']/g, char => ({
+    '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
+  })[char]);
+}
 function timeAgoSec(ts){ return Math.max(0, Math.floor((state.clockMs - ts)/1000)); }
 function fmtSec(s){ const m=Math.floor(s/60), r=s%60; return (m>0? m+'m ':'')+r+'s'; }
 function findMesa(n){ return state.mesas.find(m=>m.numero===n); }
@@ -122,8 +128,11 @@ function conectar(onFirstSnapshot){
   };
 }
 function send(obj){
-  fetch('/api/action', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(obj)}).catch(()=>{});
+  const headers = {'Content-Type':'application/json'};
+  if(STAFF_TOKEN) headers.Authorization = 'Bearer ' + STAFF_TOKEN;
+  return fetch('/api/action', {method:'POST', headers, body:JSON.stringify(obj)}).catch(()=>{});
 }
+function setStaffToken(token){ STAFF_TOKEN = token; }
 function setConnPill(on){
   let el = document.getElementById('connPill');
   if(!el){ el=document.createElement('div'); el.id='connPill'; el.className='conn-pill'; document.body.appendChild(el); }
@@ -344,14 +353,14 @@ function viewCliente(){
           <div class="circle">${i<idx?'✓':i+1}</div><div class="lbl">${PEDIDO_LABELS[s]}</div></div>`).join('')}
       </div>
       <ul style="font-size:13px;margin:0;padding-left:18px;color:var(--ink-2);">
-        ${mesa.pedido.items.map(it=>`<li>${it.nombre}${it.notas?` — "${it.notas}"`:''}</li>`).join('')}
+        ${mesa.pedido.items.map(it=>`<li>${escapeHtml(it.nombre)}${it.notas?` — "${escapeHtml(it.notas)}"`:''}</li>`).join('')}
       </ul></div>`;
   }
   const openAlerts = alertasAbiertas(mesa);
   const alertHtml = openAlerts.length ? `<div class="card" style="border-color:var(--warning);">
     <div style="font-weight:800;font-size:13px;margin-bottom:6px;">Tus solicitudes activas</div>
     ${openAlerts.map(a=>`<div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;margin-bottom:6px;">
-      <span>${a.label}${a.mensaje?': "'+a.mensaje+'"':''}</span>
+      <span>${escapeHtml(a.label)}${a.mensaje?': "'+escapeHtml(a.mensaje)+'"':''}</span>
       <span class="pill ${a.estado==='atencion'?'importante':a.prioridad}">${a.estado==='atencion'?'En atención':'Enviado'}</span></div>`).join('')}
     </div>` : '';
 
@@ -444,22 +453,30 @@ function toggleHelp(){ state.clienteHelpOpen=!state.clienteHelpOpen; render(); }
 function agregarAlCarrito(id){
   const p = findProducto(id);
   let nombre = p.nombre, precio = precioBase(p);
+  let variante = null, opcion = null;
   if(p.variantes){
     const idx = parseInt((document.querySelector(`input[name="var_${id}"]:checked`)||{}).value || 0, 10);
-    nombre += ' — ' + p.variantes[idx].nombre; precio = p.variantes[idx].precio;
+    variante = p.variantes[idx].nombre;
+    nombre += ' — ' + variante; precio = p.variantes[idx].precio;
   }
   if(p.opciones){
     const op = (document.querySelector(`input[name="op_${id}"]:checked`)||{}).value;
-    if(op) nombre += ' (' + op + ')';
+    if(op){ opcion = op; nombre += ' (' + op + ')'; }
   }
   const nota = (document.getElementById('nota_'+id)||{}).value || '';
-  state.clienteCart.push({nombre, precio, notas:nota});
+  state.clienteCart.push({productoId:id, variante, opcion, observacion:nota, nombre, precio, notas:nota});
   state.clienteExpand = null;
   render();
 }
 function enviarPedido(){
   if(!state.clienteCart.length) return;
-  send({type:'pedido_nuevo', mesa:state.clienteMesa, items:state.clienteCart});
+  const items = state.clienteCart.map(item=>{
+    const payload = {productoId:item.productoId, observacion:item.observacion};
+    if(item.variante) payload.variante = item.variante;
+    if(item.opcion) payload.opcion = item.opcion;
+    return payload;
+  });
+  send({type:'pedido_nuevo', mesa:state.clienteMesa, items});
   state.clienteCart = [];
   render();
 }
@@ -471,17 +488,17 @@ function confirmarLlamarMozo(){
   setTimeout(()=>{ if(state.modal && state.modal.type==='mozo-enviado'){ state.modal=null; render(); } }, 4500);
 }
 function pedirCuenta(){ send({type:'pedir_cuenta', mesa:state.clienteMesa}); }
-function enviarAyuda(id,label,prioridad){ send({type:'ayuda', mesa:state.clienteMesa, categoria:id, label, prioridad}); state.clienteHelpOpen=false; render(); }
+function enviarAyuda(id){ send({type:'ayuda', mesa:state.clienteMesa, categoria:id}); state.clienteHelpOpen=false; render(); }
 function enviarAyudaLibre(){
   const val = (document.getElementById('freeHelp')||{}).value || '';
   if(!val.trim()) return;
-  send({type:'ayuda', mesa:state.clienteMesa, categoria:'otro', label:'Reclamo', prioridad:clasificarTextoLibre(val), mensaje:val.trim()});
+  send({type:'ayuda', mesa:state.clienteMesa, categoria:'otro', mensaje:val.trim()});
   state.clienteHelpOpen=false; render();
 }
 function helpPanelHtml(){
   return `<div class="card" style="margin-top:14px;">
     <div style="font-weight:800;font-size:13.5px;margin-bottom:10px;">¿En qué te podemos ayudar?</div>
-    <div class="help-cats">${HELP_CATEGORIAS.map(h=>`<button onclick="enviarAyuda('${h.id}','${h.label}','${h.prioridad}')">${h.label}</button>`).join('')}</div>
+    <div class="help-cats">${HELP_CATEGORIAS.map(h=>`<button onclick="enviarAyuda('${h.id}')">${h.label}</button>`).join('')}</div>
     <div style="font-size:12px;color:var(--ink-muted);margin-bottom:6px;">O contanos con tus palabras:</div>
     <input type="text" class="nota" id="freeHelp" placeholder='Ej: "Pedí sin cebolla y vino con cebolla"'>
     <div style="margin-top:8px;display:flex;gap:8px;">
@@ -503,7 +520,7 @@ function ticketHtml(m){
     <div class="head"><span class="mesa">MESA ${m.numero}</span>
       <span class="pill ${m.pedido.estado==='enviado'?'importante':m.pedido.estado==='preparando'?'normal':'libre'}">${PEDIDO_LABELS[m.pedido.estado]}</span></div>
     <div class="timer">hace ${fmtSec(edad)}</div>
-    <ul>${m.pedido.items.map(it=>`<li>${it.nombre}${it.notas?` <span class="item-mod">— "${it.notas}"</span>`:''}</li>`).join('')}</ul>
+    <ul>${m.pedido.items.map(it=>`<li>${escapeHtml(it.nombre)}${it.notas?` <span class="item-mod">— "${escapeHtml(it.notas)}"</span>`:''}</li>`).join('')}</ul>
     <div style="display:flex;gap:6px;">
       ${m.pedido.estado==='enviado'?`<button class="btn primary sm block" onclick="avanzarPedido(${m.numero})">Empezar a preparar</button>`:''}
       ${m.pedido.estado==='preparando'?`<button class="btn good sm block" onclick="avanzarPedido(${m.numero})">Marcar listo</button>`:''}
@@ -536,7 +553,7 @@ function mesaTileHtml(m){
 function alertRowHtml(mesa,a,acciones){
   const edad = timeAgoSec(a.creadoTs);
   return `<div class="alert-row ${a.escalado?'escalado':''}">
-    <div><div class="msg">Mesa ${mesa.numero} — ${a.label}${a.mensaje?`: "${a.mensaje}"`:''}</div>
+    <div><div class="msg">Mesa ${mesa.numero} — ${escapeHtml(a.label)}${a.mensaje?`: "${escapeHtml(a.mensaje)}"`:''}</div>
     <div class="meta"><span class="pill ${a.prioridad}">${a.prioridad.toUpperCase()}</span> hace ${fmtSec(edad)} ${a.escalado?` · ${ic('warning')} ESCALADO`:''} ${a.estado==='atencion'?' · en atención':''}</div></div>
     ${acciones?`<div class="actions">${a.estado==='recibido'?`<button class="btn dark sm" onclick="marcarAtencion(${a.id})">En atención</button>`:''}
       <button class="btn good sm" onclick="resolverAlerta(${a.id})">Resolver</button></div>`:''}</div>`;
