@@ -110,22 +110,53 @@ function todasAlertasAbiertas(){
 
 /* ================= CONEXIÓN EN VIVO (Server-Sent Events) =================
    No usamos WebSocket para evitar depender de paquetes externos en el
-   servidor — SSE funciona con http puro y el navegador reconecta solo. */
+   servidor. Las mesas usan EventSource y el staff fetch streaming para
+   poder enviar el Bearer token en un header, nunca en la URL. */
+function aplicarMensajeRealtime(data, onFirstSnapshot){
+  let msg; try{ msg = JSON.parse(data); }catch(e){ return onFirstSnapshot; }
+  if(msg.type==='estado'){
+    if(!liveReady){ liveReady=true; setConnPill(true); }
+    MESAS_TOTAL = msg.mesasTotal || MESAS_TOTAL;
+    state.clockMs = msg.state.clockMs;
+    state.mesas = msg.state.mesas;
+    detectarNuevasAlertas();
+    if(onFirstSnapshot){ onFirstSnapshot(); onFirstSnapshot=null; }
+    render();
+  }
+  return onFirstSnapshot;
+}
 function conectar(onFirstSnapshot){
-  const es = new EventSource('/events');
-  es.onerror = ()=>{ liveReady=false; setConnPill(false); }; // EventSource reintenta la conexión solo
-  es.onmessage = (ev)=>{
-    let msg; try{ msg = JSON.parse(ev.data); }catch(e){ return; }
-    if(msg.type==='estado'){
-      if(!liveReady){ liveReady=true; setConnPill(true); }
-      MESAS_TOTAL = msg.mesasTotal || MESAS_TOTAL;
-      state.clockMs = msg.state.clockMs;
-      state.mesas = msg.state.mesas;
-      detectarNuevasAlertas();
-      if(onFirstSnapshot){ onFirstSnapshot(); onFirstSnapshot=null; }
-      render();
-    }
-  };
+  if(state.role==='cliente'){
+    const es = new EventSource('/events?mesa=' + encodeURIComponent(state.clienteMesa));
+    es.onerror = ()=>{ liveReady=false; setConnPill(false); }; // EventSource reintenta la conexión solo
+    es.onmessage = (ev)=>{ onFirstSnapshot = aplicarMensajeRealtime(ev.data, onFirstSnapshot); };
+    return;
+  }
+  conectarStaff(onFirstSnapshot);
+}
+async function conectarStaff(onFirstSnapshot){
+  while(STAFF_TOKEN){
+    try{
+      const response = await fetch('/api/staff-events', {headers:{Authorization:'Bearer ' + STAFF_TOKEN}});
+      if(!response.ok || !response.body) throw new Error('stream no autorizado');
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while(STAFF_TOKEN){
+        const {done,value} = await reader.read();
+        if(done) break;
+        buffer += decoder.decode(value, {stream:true});
+        let boundary;
+        while((boundary=buffer.indexOf('\n\n'))!==-1){
+          const event = buffer.slice(0,boundary); buffer = buffer.slice(boundary+2);
+          const line = event.split('\n').find(candidate=>candidate.startsWith('data: '));
+          if(line) onFirstSnapshot = aplicarMensajeRealtime(line.slice(6), onFirstSnapshot);
+        }
+      }
+    }catch(e){}
+    liveReady=false; setConnPill(false);
+    if(STAFF_TOKEN) await new Promise(resolve=>setTimeout(resolve,1000));
+  }
 }
 function send(obj){
   const headers = {'Content-Type':'application/json'};

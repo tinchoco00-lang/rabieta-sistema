@@ -62,7 +62,7 @@ async function post(baseUrl, route, body, token) {
 }
 
 async function getState(baseUrl) {
-  const response = await fetch(`${baseUrl}/events`);
+  const response = await fetch(`${baseUrl}/events?mesa=1`);
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let body = '';
