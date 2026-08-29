@@ -25,6 +25,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { URL } = require('url');
+const { createPersistence } = require('./persistence');
 
 const MENU_DATA = JSON.parse(fs.readFileSync(path.join(__dirname, 'menu-rabieta.json'), 'utf8'));
 const MESAS_TOTAL = MENU_DATA._meta.mesas.placeholder_sugerido; // ver _meta.mesas — número real pendiente de confirmar con el local
@@ -61,6 +62,7 @@ const PRODUCTOS = new Map();
 MENU_DATA.categorias.forEach(categoria => {
   categoria.productos.forEach(producto => PRODUCTOS.set(producto.id, producto));
 });
+const persistence = createPersistence();
 
 let uidCounter = 1;
 function uid() { return uidCounter++; }
@@ -73,6 +75,13 @@ function seedState() {
   return { clockMs: 0, mesas };
 }
 let state = seedState();
+let mutationQueue = Promise.resolve();
+
+function enqueueMutation(task) {
+  const operation = mutationQueue.then(task);
+  mutationQueue = operation.catch(() => {});
+  return operation;
+}
 
 function pruneExpiredStaffTokens(now = Date.now()) {
   for (const [token, expiresAt] of STAFF_TOKENS) {
@@ -237,21 +246,41 @@ function handleAction(msg) {
     default:
       return actionError(400, 'Tipo de acción inválido');
   }
-  broadcast();
   return actionOk();
 }
 
-setInterval(() => {
-  pruneExpiredStaffTokens();
-  state.clockMs++;
-  state.mesas.forEach(m => {
-    if (m.pedido && m.pedido.estado === 'enviado' && (state.clockMs - m.pedido.enviadoTs) > 6) m.pedido.estado = 'preparando';
-  });
-  state.mesas.forEach(m => m.alertas.forEach(a => {
-    if (a.estado === 'recibido' && !a.escalado && (state.clockMs - a.creadoTs) > SLA[a.prioridad]) a.escalado = true;
-  }));
-  broadcast();
-}, 1000);
+let clockTimer = null;
+function startClock() {
+  clockTimer = setInterval(() => {
+    enqueueMutation(async () => {
+      const previousState = structuredClone(state);
+      let operationalChange = false;
+      pruneExpiredStaffTokens();
+      state.clockMs++;
+      state.mesas.forEach(m => {
+        if (m.pedido && m.pedido.estado === 'enviado' && (state.clockMs - m.pedido.enviadoTs) > 6) {
+          m.pedido.estado = 'preparando';
+          operationalChange = true;
+        }
+      });
+      state.mesas.forEach(m => m.alertas.forEach(a => {
+        if (a.estado === 'recibido' && !a.escalado && (state.clockMs - a.creadoTs) > SLA[a.prioridad]) {
+          a.escalado = true;
+          operationalChange = true;
+        }
+      }));
+      if (operationalChange) {
+        try {
+          await persistence.save(state);
+        } catch (error) {
+          state = previousState;
+          throw error;
+        }
+      }
+      broadcast();
+    }).catch(error => console.error('No se pudo persistir un cambio automático:', error.message));
+  }, 1000);
+}
 
 /* ---------------- servidor HTTP (estático + API + SSE) ---------------- */
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -367,8 +396,27 @@ const server = http.createServer((req, res) => {
         sendJson(res, 401, { ok: false, error: 'Autenticación requerida' });
         return;
       }
-      const result = handleAction(body);
-      sendJson(res, result.status, result.ok ? { ok: true } : { ok: false, error: result.error });
+      enqueueMutation(async () => {
+        const previousState = structuredClone(state);
+        const result = handleAction(body);
+        if (!result.ok) {
+          sendJson(res, result.status, { ok: false, error: result.error });
+          return;
+        }
+        try {
+          await persistence.save(state);
+        } catch (error) {
+          state = previousState;
+          console.error('No se pudo persistir la acción:', error.message);
+          sendJson(res, 503, { ok: false, error: 'Persistencia no disponible' });
+          return;
+        }
+        broadcast();
+        sendJson(res, 200, { ok: true });
+      }).catch(error => {
+        console.error('Error al procesar la acción:', error.message);
+        if (!res.headersSent) sendJson(res, 500, { ok: false, error: 'Error interno' });
+      });
     });
     return;
   }
@@ -389,4 +437,36 @@ const server = http.createServer((req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log('Rabieta — servidor real escuchando en el puerto ' + PORT));
+let shuttingDown = false;
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  if (clockTimer) clearInterval(clockTimer);
+  sseClients.forEach(res => res.end());
+  await new Promise(resolve => server.close(resolve));
+  try {
+    await mutationQueue;
+    await persistence.close(state);
+    process.exit(0);
+  } catch (error) {
+    console.error(`No se pudo guardar el estado antes de cerrar (${signal}):`, error.message);
+    process.exit(1);
+  }
+}
+
+process.once('SIGTERM', () => shutdown('SIGTERM'));
+process.once('SIGINT', () => shutdown('SIGINT'));
+
+async function start() {
+  state = await persistence.initialize(state);
+  startClock();
+  server.listen(PORT, () => {
+    const mode = persistence.enabled ? 'PostgreSQL' : 'memoria';
+    console.log(`Rabieta — servidor real escuchando en el puerto ${PORT} (${mode})`);
+  });
+}
+
+start().catch(error => {
+  console.error('No se pudo iniciar la persistencia:', error.message);
+  process.exitCode = 1;
+});

@@ -4,9 +4,9 @@ Este documento separa el estado comprobado de posibles trabajos futuros. Nada de
 
 ## Estado comprobado
 
-- MVP Node.js sin dependencias externas.
+- MVP Node.js con `pg` como unica dependencia de runtime.
 - Menu cargado desde JSON.
-- Estado efimero en memoria y actualizaciones por SSE.
+- Estado en memoria por defecto, persistencia PostgreSQL opcional de continuidad y actualizaciones por SSE.
 - PIN compartido para la interfaz de personal.
 - Pruebas basicas de rutas HTTP y verificacion automatizada del repositorio.
 
@@ -21,7 +21,7 @@ Esta fase establece controles de desarrollo. No resuelve los riesgos funcionales
 
 ## Fase 1 - Seguridad y operacion basica
 
-- persistencia;
+- evolucionar la persistencia transitoria JSONB hacia el modelo definitivo;
 - autenticacion y autorizacion;
 - validacion de pedidos y precios contra el menu;
 - mitigacion de XSS;

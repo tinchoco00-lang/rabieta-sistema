@@ -75,7 +75,7 @@ before(async () => {
   const port = await reservePort();
   baseUrl = `http://127.0.0.1:${port}`;
   serverProcess = spawn(process.execPath, ['server.js'], {
-    cwd: root, env: { ...process.env, PORT: String(port), STAFF_PIN: testPin }, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: root, env: { ...process.env, DATABASE_URL: '', PORT: String(port), STAFF_PIN: testPin }, stdio: ['ignore', 'pipe', 'pipe'],
   });
   serverProcess.stdout.on('data', chunk => { serverOutput += chunk; });
   serverProcess.stderr.on('data', chunk => { serverOutput += chunk; });
@@ -121,7 +121,7 @@ test('el token expira y deja de autorizar acciones internas', async () => {
   let isolatedOutput = '';
   const isolatedProcess = spawn(process.execPath, ['server.js'], {
     cwd: root,
-    env: { ...process.env, PORT: String(port), STAFF_PIN: testPin, STAFF_TOKEN_TTL_MS: '500' },
+    env: { ...process.env, DATABASE_URL: '', PORT: String(port), STAFF_PIN: testPin, STAFF_TOKEN_TTL_MS: '500' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   isolatedProcess.stdout.on('data', chunk => { isolatedOutput += chunk; });

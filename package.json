@@ -1,15 +1,17 @@
 {
   "name": "rabieta-sistema-mesa",
   "version": "0.1.0",
-  "description": "Sistema de mesa en tiempo real para Rabieta (Lomas de Zamora) — MVP funcional: cliente, mozo, cocina, encargado, dueño en vivo por Server-Sent Events. Sin dependencias externas.",
+  "description": "Sistema de mesa en tiempo real para Rabieta (Lomas de Zamora) — MVP funcional con persistencia PostgreSQL opcional.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "test": "node --test",
-    "check": "node --check server.js && node --check public/app.js && node --check test/server.test.js && node --check scripts/validate-json.js && node scripts/validate-json.js && npm test"
+    "check": "node --check server.js && node --check persistence.js && node --check public/app.js && node --check test/server.test.js && node --check test/persistence.test.js && node --check test/postgres.integration.test.js && node --check scripts/validate-json.js && node scripts/validate-json.js && npm test"
   },
   "engines": {
     "node": ">=18"
   },
-  "dependencies": {}
+  "dependencies": {
+    "pg": "^8.23.0"
+  }
 }
