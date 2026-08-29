@@ -6,6 +6,7 @@ Rabieta es actualmente un MVP ejecutado por un unico proceso de Node.js 18 o sup
 
 - `server.js`: servidor HTTP, API, archivos estaticos y eventos en vivo mediante Server-Sent Events (SSE).
 - `persistence.js`: selecciona memoria o PostgreSQL y encapsula la tabla de continuidad del MVP.
+- `operational.js`: resolución segura de IP, rate limiting y logging estructurado sin dependencias adicionales.
 - `menu-rabieta.json`: catalogo y metadatos consumidos por el servidor.
 - `public/mesa.html`: entrada de la experiencia de mesa.
 - `public/staff.html`: panel de personal protegido por un PIN simple.
@@ -18,7 +19,9 @@ Esta tabla de fila unica es una capa transitoria de continuidad para el MVP. No 
 ## Interfaces verificables
 
 - `GET /api/menu` entrega el menu.
+- `GET /healthz` confirma que el proceso HTTP responde sin publicar estado interno.
 - `POST /api/staff-login` compara el PIN recibido con `STAFF_PIN` o el valor local por defecto.
+- `POST /api/staff-logout` revoca el token de staff presentado.
 - `POST /api/action` valida y cambia el estado; cuando PostgreSQL está activo confirma la escritura antes de responder éxito.
 - `GET /events` distribuye el estado mediante SSE.
 - Las demas rutas se resuelven como archivos estaticos bajo `public/`.
