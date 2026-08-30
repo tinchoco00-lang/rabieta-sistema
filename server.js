@@ -42,6 +42,7 @@ const STAFF_TOKEN_TTL_MS = Number.isFinite(configuredTokenTtl) && configuredToke
   ? configuredTokenTtl
   : 8 * 60 * 60 * 1000;
 const STAFF_TOKENS = new Map();
+const MESA_TOKEN_SECRET = process.env.MESA_TOKEN_SECRET || null;
 const MAX_BODY_BYTES = 32 * 1024;
 const PUBLIC_ACTIONS = new Set(['pedido_nuevo', 'llamar_mozo', 'pedir_cuenta', 'ayuda']);
 const STAFF_ACTIONS = new Set(['pedido_estado', 'alerta_atender', 'alerta_resolver', 'mesa_liberar', 'reset_demo']);
@@ -94,6 +95,16 @@ function pruneExpiredStaffTokens(now = Date.now()) {
 function findMesa(n) { return state.mesas.find(m => m.numero === Number(n)); }
 function validMesaNumber(value) {
   return Number.isInteger(value) && value >= 1 && value <= MESAS_TOTAL;
+}
+
+function authorizeMesaRequest(req, mesa) {
+  if (!MESA_TOKEN_SECRET) return { ok: true };
+  const token = req.headers['x-mesa-token'];
+  if (typeof token !== 'string' || !token) return { ok: false, status: 401 };
+  if (!validMesaNumber(mesa) || !/^[a-f0-9]{64}$/i.test(token)) return { ok: false, status: 403 };
+  const expected = crypto.createHmac('sha256', MESA_TOKEN_SECRET).update(`mesa:${mesa}`).digest();
+  const supplied = Buffer.from(token, 'hex');
+  return crypto.timingSafeEqual(expected, supplied) ? { ok: true } : { ok: false, status: 403 };
 }
 
 function actionError(status, error) { return { ok: false, status, error }; }
@@ -442,6 +453,13 @@ function handleHttpRequest(req, res) {
     if (!acceptsJson(req)) { sendJson(res, 415, { ok: false, error: 'Content-Type debe ser application/json' }); return; }
     readJsonBody(req, (error, body) => {
       if (error) { sendJson(res, error.status, { ok: false, error: error.error }); return; }
+      if (body && PUBLIC_ACTIONS.has(body.type)) {
+        const mesaAuthorization = authorizeMesaRequest(req, body.mesa);
+        if (!mesaAuthorization.ok) {
+          sendJson(res, mesaAuthorization.status, { ok: false, error: 'Identidad de mesa inválida' });
+          return;
+        }
+      }
       if (body && STAFF_ACTIONS.has(body.type) && !extractBearerToken(req)) {
         sendJson(res, 401, { ok: false, error: 'Autenticación requerida' });
         return;
@@ -474,6 +492,11 @@ function handleHttpRequest(req, res) {
     const mesa = Number(u.searchParams.get('mesa'));
     if (!validMesaNumber(mesa)) {
       sendJson(res, 400, { ok: false, error: 'Mesa inválida' });
+      return;
+    }
+    const mesaAuthorization = authorizeMesaRequest(req, mesa);
+    if (!mesaAuthorization.ok) {
+      sendJson(res, mesaAuthorization.status, { ok: false, error: 'Identidad de mesa inválida' });
       return;
     }
     const client = { kind: 'mesa', mesa, res };
@@ -572,6 +595,8 @@ process.once('SIGINT', () => shutdown('SIGINT'));
 
 async function start() {
   state = await persistence.initialize(state);
+  if (MESA_TOKEN_SECRET) logEvent('log', 'mesa_identity_active');
+  else logEvent('warn', 'mesa_identity_inactive', { warning: 'MESA_TOKEN_SECRET no configurado; compatibilidad legacy activa' });
   startClock();
   server.listen(PORT, () => {
     const mode = persistence.enabled ? 'PostgreSQL' : 'memoria';

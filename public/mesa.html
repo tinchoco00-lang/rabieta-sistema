@@ -29,6 +29,12 @@
   (function(){
     const params = new URLSearchParams(location.search);
     const mesaN = parseInt(params.get('mesa'), 10);
+    const fragment = new URLSearchParams(location.hash.slice(1));
+    const fragmentToken = fragment.get('token');
+    const tokenStorageKey = Number.isInteger(mesaN) ? 'rabietaMesaToken:' + mesaN : null;
+    if(fragmentToken && tokenStorageKey) sessionStorage.setItem(tokenStorageKey, fragmentToken);
+    setMesaToken(fragmentToken || (tokenStorageKey ? sessionStorage.getItem(tokenStorageKey) : null));
+    if(location.hash) history.replaceState(null, '', location.pathname + location.search);
     if(!mesaN){
       document.getElementById('app').innerHTML = `<div class="empty">
         Este link no tiene número de mesa. Probá abrir con <code>?mesa=1</code> al final de la URL

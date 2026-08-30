@@ -25,6 +25,8 @@ Esta tabla de fila unica es una capa transitoria de continuidad para el MVP. No 
 - `POST /api/action` valida y cambia el estado; cuando PostgreSQL está activo confirma la escritura antes de responder éxito.
 - `GET /events?mesa=N` distribuye mediante SSE solamente el estado de la mesa solicitada.
 - `GET /api/staff-events` distribuye el estado completo al personal y exige un Bearer token válido en el header.
+- Si `MESA_TOKEN_SECRET` está configurado, las acciones públicas y el stream cliente verifican un HMAC-SHA256 vinculado al número de mesa mediante `X-Mesa-Token`. El secreto y los tokens no se persisten.
+- Sin `MESA_TOKEN_SECRET`, se conserva temporalmente el modo legacy y el servidor emite un warning seguro al iniciar.
 - Las demas rutas se resuelven como archivos estaticos bajo `public/`.
 
 Los tests de integracion levantan el proceso real en puertos temporales. Sin `DATABASE_URL` verifican el modo memoria. En CI, un servicio PostgreSQL oficial verifica la creacion automatica de la tabla, escritura, cierre, reinicio, recuperacion del estado y que los tokens de staff no sobrevivan al proceso.

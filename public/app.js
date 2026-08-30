@@ -70,6 +70,7 @@ let MESAS_TOTAL = 0;
 let liveReady = false; // true mientras el stream en vivo (SSE) está conectado
 let knownAlertIds = null; // null = todavía no llegó el primer snapshot
 let STAFF_TOKEN = null;
+let MESA_TOKEN = null;
 
 let state = {
   clockMs:0, mesas:[],
@@ -127,43 +128,59 @@ function aplicarMensajeRealtime(data, onFirstSnapshot){
 }
 function conectar(onFirstSnapshot){
   if(state.role==='cliente'){
-    const es = new EventSource('/events?mesa=' + encodeURIComponent(state.clienteMesa));
-    es.onerror = ()=>{ liveReady=false; setConnPill(false); }; // EventSource reintenta la conexión solo
-    es.onmessage = (ev)=>{ onFirstSnapshot = aplicarMensajeRealtime(ev.data, onFirstSnapshot); };
+    conectarMesa(onFirstSnapshot);
     return;
   }
   conectarStaff(onFirstSnapshot);
+}
+async function conectarMesa(onFirstSnapshot){
+  while(state.role==='cliente'){
+    const headers = {};
+    if(MESA_TOKEN) headers['X-Mesa-Token'] = MESA_TOKEN;
+    try{
+      const response = await fetch('/events?mesa=' + encodeURIComponent(state.clienteMesa), {headers});
+      onFirstSnapshot = await consumirStream(response, onFirstSnapshot, ()=>state.role==='cliente');
+    }catch(e){}
+    liveReady=false; setConnPill(false);
+    if(state.role==='cliente') await new Promise(resolve=>setTimeout(resolve,1000));
+  }
 }
 async function conectarStaff(onFirstSnapshot){
   while(STAFF_TOKEN){
     try{
       const response = await fetch('/api/staff-events', {headers:{Authorization:'Bearer ' + STAFF_TOKEN}});
-      if(!response.ok || !response.body) throw new Error('stream no autorizado');
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      while(STAFF_TOKEN){
-        const {done,value} = await reader.read();
-        if(done) break;
-        buffer += decoder.decode(value, {stream:true});
-        let boundary;
-        while((boundary=buffer.indexOf('\n\n'))!==-1){
-          const event = buffer.slice(0,boundary); buffer = buffer.slice(boundary+2);
-          const line = event.split('\n').find(candidate=>candidate.startsWith('data: '));
-          if(line) onFirstSnapshot = aplicarMensajeRealtime(line.slice(6), onFirstSnapshot);
-        }
-      }
+      onFirstSnapshot = await consumirStream(response, onFirstSnapshot, ()=>!!STAFF_TOKEN);
     }catch(e){}
     liveReady=false; setConnPill(false);
     if(STAFF_TOKEN) await new Promise(resolve=>setTimeout(resolve,1000));
   }
 }
+async function consumirStream(response, onFirstSnapshot, continuar){
+  if(!response.ok || !response.body) throw new Error('stream no autorizado');
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while(continuar()){
+    const {done,value} = await reader.read();
+    if(done) break;
+    buffer += decoder.decode(value, {stream:true});
+    let boundary;
+    while((boundary=buffer.indexOf('\n\n'))!==-1){
+      const event = buffer.slice(0,boundary); buffer = buffer.slice(boundary+2);
+      const line = event.split('\n').find(candidate=>candidate.startsWith('data: '));
+      if(line) onFirstSnapshot = aplicarMensajeRealtime(line.slice(6), onFirstSnapshot);
+    }
+  }
+  return onFirstSnapshot;
+}
 function send(obj){
   const headers = {'Content-Type':'application/json'};
   if(STAFF_TOKEN) headers.Authorization = 'Bearer ' + STAFF_TOKEN;
+  if(state.role==='cliente' && MESA_TOKEN) headers['X-Mesa-Token'] = MESA_TOKEN;
   return fetch('/api/action', {method:'POST', headers, body:JSON.stringify(obj)}).catch(()=>{});
 }
 function setStaffToken(token){ STAFF_TOKEN = token; }
+function setMesaToken(token){ MESA_TOKEN = token || null; }
 function setConnPill(on){
   let el = document.getElementById('connPill');
   if(!el){ el=document.createElement('div'); el.id='connPill'; el.className='conn-pill'; document.body.appendChild(el); }
