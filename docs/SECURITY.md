@@ -41,6 +41,8 @@ Estos riesgos describen el codigo actual. Se registran para orientar trabajo fut
 - La identidad HMAC de mesa solo queda activa cuando un operador configura `MESA_TOKEN_SECRET`; el modo legacy sin esa variable no autentica la mesa y debe considerarse transitorio.
 - Todavía no existe generación ni distribución operativa de QR por mesa. Esta misión solamente implementa la validación compatible con futuros enlaces `mesa.html?mesa=N#token=...`.
 - Sin `DATABASE_URL`, el estado operativo existe solamente en memoria y se pierde al reiniciar el proceso. Con PostgreSQL hay continuidad del estado completo, pero todavía no existen historial, auditoria ni un esquema relacional definitivo.
+- Un futuro ledger de metricas puede contener datos personales u operativos sensibles; antes de usar datos reales necesita minimizacion, permisos, retencion, borrado y auditoria definidos.
+- Los pagos futuros deben confirmar estado exclusivamente desde el proveedor mediante webhooks autenticados e idempotentes, con conciliacion y manejo explicito de estados inciertos. Una pantalla del cliente nunca sera prueba suficiente de pago.
 
 ## Reglas de cambio
 

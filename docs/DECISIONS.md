@@ -26,13 +26,16 @@
 
 Estas son decisiones de direccion. No significan que las capacidades futuras ya esten implementadas.
 
-- Rabieta no busca ser solamente otro sistema QR; el foco es la coordinacion operativa del salon y del restaurante.
-- El modelo SaaS futuro previsto es de precio fijo, sin comision sobre ventas.
+- La perspectiva principal es la del dueno/empresario: cada capacidad debe justificar impacto economico, operativo, de control o de escalabilidad.
+- Rabieta no busca ser solamente otro sistema QR; el foco es coordinar el flujo completo del salon y demostrar resultados en Rabieta Lomitas.
+- Existe una direccion historica hacia un SaaS de precio fijo sin comision sobre ventas, pero no constituye una decision de precio aprobada.
 - Se prioriza integrar con POS existentes antes que competir innecesariamente con ellos.
 - SSE es la tecnologia de tiempo real utilizada actualmente.
 - Se prioriza la simplicidad tecnica y se evita complejidad sin beneficio verificado.
 - La UI actual debe preservarse salvo que exista una decision explicita de producto para cambiarla.
-- 3D/AR e IA conversacional son lineas estrategicas de innovacion, pero no bloquean la operacion base y requieren una hipotesis comercial medible antes de inversion relevante.
+- El dueno confirmo que los platos llegan por partes; la operacion objetivo debe modelar preparacion y entrega por item, aunque el MVP actual todavia maneja un estado por pedido.
+- 3D/AR e IA conversacional son lineas estrategicas de innovacion, condicionadas a una hipotesis empresarial medible y a no bloquear la operacion basica.
+- Nunca se afirmara diferenciacion, impacto o novedad sin evidencia. El benchmark minimo cubre Argentina, Estados Unidos y China.
 - Produccion, dinero y datos reales requieren aprobacion humana.
 
 ## Decisiones pendientes
@@ -40,8 +43,9 @@ Estas son decisiones de direccion. No significan que las capacidades futuras ya 
 Todavia no se decidio:
 
 - usar un backend multi-tenant compartido o un deploy por restaurante;
-- modelar el servicio de cada plato individualmente o gestionar el pedido como bloque;
 - la arquitectura definitiva de persistencia y base de datos.
 - el proveedor y el diseno de integracion de pagos locales, POS y facturacion.
 
-Estas decisiones describen solamente la base actual. No implican que exista base de datos, multi-tenant, autenticacion real, pagos, 3D o AR.
+Tambien siguen pendientes la politica de retencion de eventos y los criterios cuantitativos del piloto. No se inventaran metas sin linea de base.
+
+Estas decisiones describen solamente la base actual. No implican que exista un modelo relacional definitivo, multi-tenant, autenticacion real, pagos ni capacidades avanzadas validadas.
