@@ -10,7 +10,7 @@
 6. Preferir soluciones simples, cambios pequenos, comprobables y reversibles.
 7. Preservar la UI existente salvo que exista una decision explicita para cambiarla; no redisenarla arbitrariamente.
 8. No incluir secretos en codigo, commits, fixtures, logs ni documentacion.
-9. No tratar 3D o AR como prioridad estrategica.
+9. Tratar 3D/AR e IA conversacional como innovacion estrategica, pero nunca dejar que bloqueen una operacion de restaurante solida ni afirmar valor sin evidencia.
 10. No afirmar que existen capacidades ausentes: hoy no hay multi-tenant, autenticacion real de API, base de datos activa en `main` ni pagos.
 11. Revisar `git diff` y `git status` antes de terminar; no mezclar cambios ajenos ni borrar trabajo parcial valido.
 

@@ -32,7 +32,7 @@ Estas son decisiones de direccion. No significan que las capacidades futuras ya 
 - SSE es la tecnologia de tiempo real utilizada actualmente.
 - Se prioriza la simplicidad tecnica y se evita complejidad sin beneficio verificado.
 - La UI actual debe preservarse salvo que exista una decision explicita de producto para cambiarla.
-- 3D y AR no son una prioridad estrategica.
+- 3D/AR e IA conversacional son lineas estrategicas de innovacion, pero no bloquean la operacion base y requieren una hipotesis comercial medible antes de inversion relevante.
 - Produccion, dinero y datos reales requieren aprobacion humana.
 
 ## Decisiones pendientes
@@ -42,5 +42,6 @@ Todavia no se decidio:
 - usar un backend multi-tenant compartido o un deploy por restaurante;
 - modelar el servicio de cada plato individualmente o gestionar el pedido como bloque;
 - la arquitectura definitiva de persistencia y base de datos.
+- el proveedor y el diseno de integracion de pagos locales, POS y facturacion.
 
 Estas decisiones describen solamente la base actual. No implican que exista base de datos, multi-tenant, autenticacion real, pagos, 3D o AR.
