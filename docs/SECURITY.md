@@ -28,6 +28,8 @@ Estas protecciones estan cubiertas por pruebas automatizadas nativas de Node.js.
 - `POST /api/staff-logout` revoca inmediatamente el Bearer token presentado.
 - `GET /events?mesa=N` expone solamente el estado de esa mesa; no distribuye pedidos, alertas ni mesas ajenas.
 - `GET /api/staff-events` exige un Bearer token válido y entrega el estado completo mediante fetch streaming/SSE, sin incluir el token en la URL. Los streams se cierran cuando su token vence o es revocado.
+- Cuando existe `MESA_TOKEN_SECRET`, el servidor exige en `X-Mesa-Token` un HMAC-SHA256 válido para la misma mesa en streams y acciones públicas. El cliente toma el token del fragmento local `#token=...`, lo conserva en `sessionStorage` ligado a esa mesa, limpia la URL visible y nunca lo pone en query strings.
+- Para no romper instalaciones existentes, la ausencia de `MESA_TOKEN_SECRET` mantiene el modo legacy y genera un warning estructurado que no incluye secretos ni tokens.
 - Los errores inesperados devuelven una respuesta genérica con requestId y nunca incluyen stack traces.
 
 ## Pendiente
@@ -36,8 +38,8 @@ Estos riesgos describen el codigo actual. Se registran para orientar trabajo fut
 
 - El PIN es compartido y no identifica usuarios individuales.
 - No existen sesiones ni autorizacion real por roles.
-- Las acciones publicas de clientes no autentican que quien envia la solicitud pertenezca realmente a la mesa indicada.
-- Un cliente todavía puede cambiar manualmente el número de mesa de `/events?mesa=N`; todavía no existe un token o credencial vinculada al QR de cada mesa.
+- La identidad HMAC de mesa solo queda activa cuando un operador configura `MESA_TOKEN_SECRET`; el modo legacy sin esa variable no autentica la mesa y debe considerarse transitorio.
+- Todavía no existe generación ni distribución operativa de QR por mesa. Esta misión solamente implementa la validación compatible con futuros enlaces `mesa.html?mesa=N#token=...`.
 - Sin `DATABASE_URL`, el estado operativo existe solamente en memoria y se pierde al reiniciar el proceso. Con PostgreSQL hay continuidad del estado completo, pero todavía no existen historial, auditoria ni un esquema relacional definitivo.
 
 ## Reglas de cambio

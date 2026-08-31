@@ -2,6 +2,7 @@
 
 const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const net = require('node:net');
 const path = require('node:path');
@@ -72,8 +73,9 @@ async function readSseEvent(reader, pending = '') {
   return { done: false, message: JSON.parse(dataLine.slice(6)), pending: body.slice(boundary + 2) };
 }
 
-async function getStateFrom(url, mesa = 1) {
-  const response = await fetch(`${url}/events?mesa=${mesa}`);
+async function getStateFrom(url, mesa = 1, mesaToken) {
+  const headers = mesaToken ? { 'x-mesa-token': mesaToken } : undefined;
+  const response = await fetch(`${url}/events?mesa=${mesa}`, { headers });
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let body = '';
@@ -89,6 +91,10 @@ async function getStateFrom(url, mesa = 1) {
 }
 
 async function getState() { return getStateFrom(baseUrl); }
+
+function tokenForMesa(secret, mesa) {
+  return crypto.createHmac('sha256', secret).update(`mesa:${mesa}`).digest('hex');
+}
 
 async function resetState() {
   assert.equal((await action({ type: 'reset_demo' }, staffToken)).status, 200);
@@ -212,6 +218,112 @@ test('streams realtime aíslan mesas y protegen el estado completo de staff', as
     assert.ok(updatedMesa, `el stream de mesa debe recibir la actualización ${update + 1}`);
   }
   await mesaReader.cancel();
+});
+
+test('identidad HMAC vincula token y acciones a una sola mesa sin afectar staff', async () => {
+  const port = await reservePort();
+  const isolatedUrl = `http://127.0.0.1:${port}`;
+  const mesaSecret = crypto.randomBytes(32).toString('hex');
+  const mesaOneToken = tokenForMesa(mesaSecret, 1);
+  const mesaTwoToken = tokenForMesa(mesaSecret, 2);
+  let output = '';
+  const processHandle = spawn(process.execPath, ['server.js'], {
+    cwd: root,
+    env: {
+      ...process.env,
+      DATABASE_URL: '',
+      MESA_TOKEN_SECRET: mesaSecret,
+      PORT: String(port),
+      STAFF_PIN: testPin,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  processHandle.stdout.on('data', chunk => { output += chunk; });
+  processHandle.stderr.on('data', chunk => { output += chunk; });
+  let stopped = false;
+  try {
+    await waitUntilReady(isolatedUrl, processHandle, () => output);
+
+    const mesaOneState = await getStateFrom(isolatedUrl, 1, mesaOneToken);
+    assert.deepEqual(mesaOneState.mesas.map(mesa => mesa.numero), [1]);
+    assert.equal((await fetch(`${isolatedUrl}/events?mesa=1`)).status, 401);
+    assert.equal((await fetch(`${isolatedUrl}/events?mesa=2`, {
+      headers: { 'x-mesa-token': mesaOneToken },
+    })).status, 403);
+    const tamperedToken = `${mesaOneToken.slice(0, -1)}${mesaOneToken.endsWith('0') ? '1' : '0'}`;
+    assert.equal((await fetch(`${isolatedUrl}/events?mesa=1`, {
+      headers: { 'x-mesa-token': tamperedToken },
+    })).status, 403);
+    const invalidTokens = [
+      mesaOneToken.slice(0, -1),
+      `${mesaOneToken}0`,
+      'z'.repeat(64),
+      'token-invalido',
+    ];
+    for (const invalidToken of invalidTokens) {
+      assert.equal((await fetch(`${isolatedUrl}/events?mesa=1`, {
+        headers: { 'x-mesa-token': invalidToken },
+      })).status, 403);
+    }
+    const duplicatedHeaders = new Headers();
+    duplicatedHeaders.append('x-mesa-token', mesaOneToken);
+    duplicatedHeaders.append('x-mesa-token', mesaTwoToken);
+    assert.equal((await fetch(`${isolatedUrl}/events?mesa=1`, { headers: duplicatedHeaders })).status, 403);
+    assert.equal((await fetch(`${isolatedUrl}/api/mesa-token?mesa=1`)).status, 404);
+
+    const publicMesaHtml = await (await fetch(`${isolatedUrl}/mesa.html?mesa=1`)).text();
+    const publicAppJs = await (await fetch(`${isolatedUrl}/app.js`)).text();
+    assert.doesNotMatch(publicMesaHtml, new RegExp(mesaSecret));
+    assert.doesNotMatch(publicMesaHtml, new RegExp(mesaOneToken));
+    assert.doesNotMatch(publicAppJs, new RegExp(mesaSecret));
+    assert.doesNotMatch(publicAppJs, new RegExp(mesaOneToken));
+
+    const publicHeaders = { 'content-type': 'application/json', 'x-mesa-token': mesaOneToken };
+    assert.equal((await fetch(`${isolatedUrl}/api/action`, {
+      method: 'POST', headers: publicHeaders, body: JSON.stringify({ type: 'llamar_mozo', mesa: 1 }),
+    })).status, 200);
+    assert.equal((await fetch(`${isolatedUrl}/api/action`, {
+      method: 'POST', headers: publicHeaders, body: JSON.stringify({ type: 'llamar_mozo', mesa: 2 }),
+    })).status, 403);
+    assert.equal((await fetch(`${isolatedUrl}/api/action`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: 'llamar_mozo', mesa: 1 }),
+    })).status, 401);
+    assert.equal((await getStateFrom(isolatedUrl, 1, mesaOneToken)).mesas[0].alertas.length, 1);
+    assert.equal((await getStateFrom(isolatedUrl, 2, mesaTwoToken)).mesas[0].alertas.length, 0);
+
+    const login = await fetch(`${isolatedUrl}/api/staff-login`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pin: testPin }),
+    });
+    const { token: staffAccessToken } = await login.json();
+    const staffStream = await fetch(`${isolatedUrl}/api/staff-events`, {
+      headers: { authorization: `Bearer ${staffAccessToken}` },
+    });
+    assert.equal(staffStream.status, 200);
+    await staffStream.body.cancel();
+    assert.equal((await fetch(`${isolatedUrl}/api/action`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${staffAccessToken}` },
+      body: JSON.stringify({ type: 'reset_demo' }),
+    })).status, 200);
+
+    await stopServer(processHandle);
+    stopped = true;
+    assert.match(output, /"event":"mesa_identity_active"/);
+    assert.doesNotMatch(output, new RegExp(mesaSecret));
+    assert.doesNotMatch(output, new RegExp(mesaOneToken));
+    assert.doesNotMatch(output, new RegExp(mesaTwoToken));
+    assert.doesNotMatch(output, new RegExp(staffAccessToken));
+  } finally {
+    if (!stopped) await stopServer(processHandle);
+  }
+});
+
+test('sin MESA_TOKEN_SECRET se mantiene el modo legacy con warning seguro', async () => {
+  assert.equal((await action({ type: 'llamar_mozo', mesa: 1 })).status, 200);
+  assert.deepEqual((await getState()).mesas.map(mesa => mesa.numero), [1]);
+  assert.match(serverOutput, /"event":"mesa_identity_inactive"/);
+  assert.doesNotMatch(serverOutput, /"event":"mesa_identity_active"/);
+  await resetState();
 });
 
 test('stream staff rechaza tokens vencidos y revocados', async () => {
@@ -453,12 +565,51 @@ test('JSON inválido da 400 y body mayor a 32 KB da 413', async () => {
 
 test('los textos libres se escapan en renders con innerHTML', () => {
   const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  const mesaSource = fs.readFileSync(path.join(root, 'public', 'mesa.html'), 'utf8');
+  const serverSource = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
+  const publicSource = fs.readdirSync(path.join(root, 'public'))
+    .filter(name => fs.statSync(path.join(root, 'public', name)).isFile())
+    .map(name => fs.readFileSync(path.join(root, 'public', name), 'utf8'))
+    .join('\n');
   assert.match(source, /escapeHtml\(it\.notas\)/);
   assert.match(source, /escapeHtml\(a\.mensaje\)/);
   assert.doesNotMatch(source, /\$\{it\.notas\}/);
   assert.doesNotMatch(source, /\$\{a\.mensaje\}/);
   assert.doesNotMatch(source, /staff-events\?/);
   assert.match(source, /fetch\('\/api\/staff-events', \{headers:\{Authorization:'Bearer ' \+ STAFF_TOKEN\}\}\)/);
+  assert.match(source, /headers\['X-Mesa-Token'\] = MESA_TOKEN/);
+  assert.match(mesaSource, /new URLSearchParams\(location\.hash\.slice\(1\)\)/);
+  assert.match(mesaSource, /sessionStorage\.setItem\(tokenStorageKey, fragmentToken\)/);
+  assert.match(mesaSource, /'rabietaMesaToken:' \+ mesaN/);
+  assert.match(mesaSource, /history\.replaceState\(null, '', location\.pathname \+ location\.search\)/);
+  assert.doesNotMatch(source, /events\?mesa=.*MESA_TOKEN/);
+  assert.doesNotMatch(publicSource, /MESA_TOKEN_SECRET/);
+  assert.doesNotMatch(serverSource, /pathname === ['"]\/api\/mesa-token/);
+  assert.match(serverSource, /crypto\.timingSafeEqual\(expected, supplied\)/);
+
+  const inlineScript = [...mesaSource.matchAll(/<script>([\s\S]*?)<\/script>/g)].at(-1)[1];
+  const sessionValues = new Map();
+  let capturedToken = null;
+  let cleanedUrl = null;
+  const browserContext = {
+    URLSearchParams,
+    location: { search: '?mesa=1', hash: '#token=token-local-de-prueba', pathname: '/mesa.html' },
+    history: { replaceState(_state, _title, url) { cleanedUrl = url; } },
+    sessionStorage: {
+      getItem(key) { return sessionValues.get(key) || null; },
+      setItem(key, value) { sessionValues.set(key, value); },
+    },
+    setMesaToken(token) { capturedToken = token; },
+    document: { getElementById() { return { innerHTML: '' }; } },
+    state: {},
+    conectar() {},
+    fetch() { return { then() { return this; } }; },
+  };
+  vm.runInNewContext(inlineScript, browserContext);
+  assert.equal(capturedToken, 'token-local-de-prueba');
+  assert.equal(sessionValues.get('rabietaMesaToken:1'), 'token-local-de-prueba');
+  assert.equal(cleanedUrl, '/mesa.html?mesa=1');
+  assert.doesNotMatch(cleanedUrl, /token|#/);
   const implementation = source.match(/function escapeHtml\(value\)\{[\s\S]*?\n\}/);
   assert.ok(implementation, 'debe existir el escape HTML usado por los renders');
   const malicious = '<img src=x onerror="globalThis.xss=true"> & \'ataque\'';
