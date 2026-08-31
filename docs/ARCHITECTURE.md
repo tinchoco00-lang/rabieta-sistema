@@ -28,6 +28,7 @@ La carta todavia no define el sector operativo de cada producto. Sus categorias 
 - `POST /api/staff-logout` revoca el token de staff presentado.
 - `POST /api/action` valida y cambia el estado; cuando PostgreSQL está activo confirma la escritura antes de responder éxito.
 - Cada item permanece en `enviado` hasta que una accion autenticada de staff confirma su transicion a `preparando`; el reloj no simula actividad de cocina.
+- La solicitud de cuenta conserva el pedido. En modo demostracion, staff puede registrar una confirmacion de pago calculada por el servidor y luego liberar la mesa; no existe proveedor, transaccion ni confirmacion bancaria real.
 - `GET /events?mesa=N` distribuye mediante SSE solamente el estado de la mesa solicitada.
 - `GET /api/staff-events` distribuye el estado completo al personal y exige un Bearer token válido en el header.
 - Si `MESA_TOKEN_SECRET` está configurado, las acciones públicas y el stream cliente verifican un HMAC-SHA256 vinculado al número de mesa mediante `X-Mesa-Token`. El secreto y los tokens no se persisten.

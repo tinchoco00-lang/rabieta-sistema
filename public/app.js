@@ -100,6 +100,7 @@ function estadoPedidoLabel(m){
   return PEDIDO_LABELS[m.pedido.estado];
 }
 function itemEstadoClass(estado){ return estado==='enviado'?'importante':estado==='preparando'?'normal':'libre'; }
+function pedidoTotal(m){ return m.pedido ? m.pedido.items.reduce((sum,item)=>sum+(item.precio||0),0) : 0; }
 function alertasAbiertas(m){ return m.alertas.filter(a=>a.estado!=='resuelto'); }
 function prioridadMax(alertas){
   if(alertas.some(a=>a.prioridad==='urgente')) return 'urgente';
@@ -400,6 +401,11 @@ function viewCliente(){
   let pedidoStatusHtml = '';
   if(mesa.pedido){
     const idx = PEDIDO_ESTADOS.indexOf(mesa.pedido.estado);
+    const pagoHtml = mesa.pago && mesa.pago.estado==='confirmado'
+      ? `<div class="mock-banner" style="margin:12px 0 0;">${ic('checkring')} Pago de demostración confirmado por ${money(mesa.pago.total)}. No se movió dinero real.</div>`
+      : mesa.cuentaPedida
+        ? `<div class="mock-banner" style="margin:12px 0 0;">${ic('receipt')} Cuenta solicitada por ${money(pedidoTotal(mesa))}. El personal está preparando el cobro.</div>`
+        : '';
     pedidoStatusHtml = `<div class="card">
       <div style="font-weight:800;font-size:13.5px;margin-bottom:4px;">Tu pedido</div>
       <div class="status-stepper">${PEDIDO_ESTADOS.map((s,i)=>`
@@ -408,7 +414,7 @@ function viewCliente(){
       </div>
       <ul style="font-size:13px;margin:0;padding-left:18px;color:var(--ink-2);">
         ${mesa.pedido.items.map(it=>`<li>${escapeHtml(it.nombre)}${it.notas?` — "${escapeHtml(it.notas)}"`:''} <span class="pill ${itemEstadoClass(it.estado)}">${PEDIDO_LABELS[it.estado]}</span></li>`).join('')}
-      </ul></div>`;
+      </ul>${pagoHtml}</div>`;
   }
   const openAlerts = alertasAbiertas(mesa);
   const alertHtml = openAlerts.length ? `<div class="card" style="border-color:var(--warning);">
@@ -437,22 +443,26 @@ function viewCliente(){
       ${MENU_DATA.categorias.map(c=>`<button class="${c.id===state.clienteCat?'active':''}" onclick="setCat('${c.id}')">${c.nombre}</button>`).join('')}
     </div>
     <div class="dish-list">
-      ${productos.length ? productos.map(p=>dishCardHtml(p)).join('') : '<div class="empty">Ningún producto de esta categoría es apto Sin TACC.</div>'}
+      ${productos.length ? productos.map(p=>dishCardHtml(p, mesa.cuentaPedida)).join('') : '<div class="empty">Ningún producto de esta categoría es apto Sin TACC.</div>'}
     </div>
     <div class="action-row">
       <button class="btn callout" onclick="llamarMozo()">${ic('bell')} Llamar al mozo</button>
-      <button class="btn dark" onclick="pedirCuenta()">${ic('receipt')} Pedir la cuenta</button>
+      ${mesa.pago && mesa.pago.estado==='confirmado'
+        ? `<button class="btn good" disabled>${ic('checkring')} Pago demo confirmado</button>`
+        : mesa.cuentaPedida
+          ? `<button class="btn dark" disabled>${ic('receipt')} Cuenta solicitada</button>`
+          : `<button class="btn dark" onclick="pedirCuenta()">${ic('receipt')} Pedir la cuenta</button>`}
       <button class="btn critical" onclick="toggleHelp()">${ic('help')} Necesito ayuda</button>
     </div>
     ${state.clienteHelpOpen ? helpPanelHtml() : ''}
-    ${state.clienteCart.length ? `<div class="cart-bar">
+    ${state.clienteCart.length && !mesa.cuentaPedida ? `<div class="cart-bar">
       <div><div class="cart-total">${money(cartTotal)}${cartPendientes?' + '+cartPendientes+' a confirmar':''}</div>
       <div class="cart-info">${state.clienteCart.length} ítem(s) en el carrito</div></div>
       <button class="btn primary" onclick="enviarPedido()">Enviar pedido a cocina →</button></div>` : ''}
   `;
 }
 
-function dishCardHtml(p){
+function dishCardHtml(p, bloqueado){
   const expanded = state.clienteExpand===p.id;
   const esCombo = p.tipo==='combo';
   const precio = precioBase(p);
@@ -469,7 +479,9 @@ function dishCardHtml(p){
       ${p.para_compartir?'<span class="tag">Para compartir</span>':''}
     </div>
     ${esDestacado?`<button class="btn-3d" onclick="openModal3d('${p.id}','${p.nombre.replace(/'/g,"\\'")}')">${ic('cube')} Ver en 3D</button>`:''}
-    ${expanded ? dishDetailHtml(p) : `<div style="margin-top:8px;"><button class="btn dark sm" onclick="toggleDish('${p.id}')">Agregar al pedido</button></div>`}
+    ${bloqueado
+      ? '<div style="margin-top:8px;"><span class="pill importante">Cuenta en proceso</span></div>'
+      : expanded ? dishDetailHtml(p) : `<div style="margin-top:8px;"><button class="btn dark sm" onclick="toggleDish('${p.id}')">Agregar al pedido</button></div>`}
   `;
   if(p.imagen){
     return `<div class="dish"><div class="dish-row">
@@ -541,7 +553,7 @@ function confirmarLlamarMozo(){
   render();
   setTimeout(()=>{ if(state.modal && state.modal.type==='mozo-enviado'){ state.modal=null; render(); } }, 4500);
 }
-function pedirCuenta(){ send({type:'pedir_cuenta', mesa:state.clienteMesa}); }
+function pedirCuenta(){ state.clienteCart=[]; send({type:'pedir_cuenta', mesa:state.clienteMesa}); render(); }
 function enviarAyuda(id){ send({type:'ayuda', mesa:state.clienteMesa, categoria:id}); state.clienteHelpOpen=false; render(); }
 function enviarAyudaLibre(){
   const val = (document.getElementById('freeHelp')||{}).value || '';
@@ -604,11 +616,25 @@ function viewMozo(){
     <div class="mesa-grid">${misMesas.length ? misMesas.map(m=>mesaTileHtml(m)).join('') : '<div class="empty">Sin mesas activas.</div>'}</div>`;
 }
 function cambiarMozo(v){ state.mozoActivo=v; render(); }
+function cuentaActionsHtml(m){
+  if(!m.cuentaPedida) return '';
+  if(m.pago && m.pago.estado==='confirmado'){
+    return `<div style="margin-top:10px;"><span class="pill libre">Pago demo confirmado · ${money(m.pago.total)}</span>
+      <button class="btn good sm block" style="margin-top:8px;" onclick="liberarMesa(${m.numero})">Cerrar y liberar mesa</button></div>`;
+  }
+  return `<div style="margin-top:10px;"><strong>${money(pedidoTotal(m))}</strong>
+    <button class="btn primary sm block" style="margin-top:8px;" onclick="confirmarPagoDemo(${m.numero})">Confirmar pago demo</button></div>`;
+}
+function confirmarPagoDemo(n){ send({type:'pago_demo_confirmar', mesa:n}); }
+function liberarMesa(n){
+  if(confirm(`Esto cierra la cuenta demo y libera la Mesa ${n}. ¿Confirmás?`)) send({type:'mesa_liberar', mesa:n});
+}
 function mesaTileHtml(m){
   const prio = prioridadMax(alertasAbiertas(m));
   return `<div class="mesa-tile ${prio?'alerta-'+prio:''}"><div class="num">Mesa ${m.numero}</div>
     <div class="estado">${m.pedido?estadoPedidoLabel(m):'Sentados'}${m.cuentaPedida?' · cuenta':''}</div>
-    ${alertasAbiertas(m).length?`<span class="pill ${prio}">${alertasAbiertas(m).length} alerta(s)</span>`:`<span class="pill ocupada">OK</span>`}</div>`;
+    ${alertasAbiertas(m).length?`<span class="pill ${prio}">${alertasAbiertas(m).length} alerta(s)</span>`:`<span class="pill ocupada">OK</span>`}
+    ${cuentaActionsHtml(m)}</div>`;
 }
 function alertRowHtml(mesa,a,acciones){
   const edad = timeAgoSec(a.creadoTs);
@@ -634,7 +660,8 @@ function viewEncargado(){
       const prio=prioridadMax(alertasAbiertas(m));
       return `<div class="mesa-tile ${prio?'alerta-'+prio:''}"><div class="num">Mesa ${m.numero}</div>
         <div class="estado">${m.ocupada?(m.pedido?estadoPedidoLabel(m):'Sentados'):'Libre'} · ${m.mozo}</div>
-        ${alertasAbiertas(m).length?`<span class="pill ${prio}">${alertasAbiertas(m).length} alerta(s)</span>`:`<span class="pill ${m.ocupada?'ocupada':'libre'}">${m.ocupada?'Ocupada':'Libre'}</span>`}</div>`;
+        ${alertasAbiertas(m).length?`<span class="pill ${prio}">${alertasAbiertas(m).length} alerta(s)</span>`:`<span class="pill ${m.ocupada?'ocupada':'libre'}">${m.ocupada?'Ocupada':'Libre'}</span>`}
+        ${cuentaActionsHtml(m)}</div>`;
     }).join('')}</div>
     <div class="section-h">Cola de alertas</div>
     ${todas.length ? todas.map(({mesa,alerta})=>alertRowHtml(mesa,alerta,true)).join('') : `<div class="empty">${ic('checkring')} No hay alertas abiertas.</div>`}

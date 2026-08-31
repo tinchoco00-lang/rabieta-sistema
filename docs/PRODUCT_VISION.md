@@ -47,7 +47,7 @@ El servicio debe admitir un modelo hibrido: el cliente puede autogestionarse y e
 
 El codigo actual es un MVP de un restaurante y un proceso Node.js. Tiene carta desde JSON, acciones de mesa, vistas de personal, SSE, validacion de productos y precios, protecciones operativas basicas y persistencia opcional de continuidad en PostgreSQL.
 
-Ya permite avanzar preparacion y entrega por item, incluidas entregas parciales. Todavia no tiene ruteo por sector confirmado, historial auditable, metricas de piloto, usuarios y roles reales, multi-tenant, pagos, facturacion, POS ni CRM. El panel de dueno resume solamente el estado de la sesion actual; no representa ventas fiscales ni caja.
+Ya permite avanzar preparacion y entrega por item, incluidas entregas parciales. La cuenta puede solicitarse, confirmarse en un modo demo sin dinero real y cerrarse sin borrar antes el pedido. Todavia no tiene ruteo por sector confirmado, historial auditable, metricas de piloto, usuarios y roles reales, multi-tenant, pagos reales, facturacion, POS ni CRM. El panel de dueno resume solamente el estado de la sesion actual; no representa ventas fiscales ni caja.
 
 ## Innovacion avanzada
 

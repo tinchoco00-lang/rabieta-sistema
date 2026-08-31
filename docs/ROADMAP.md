@@ -12,6 +12,7 @@ Este documento separa el estado comprobado de posibles trabajos futuros. Nada pe
 - Validacion de pedidos contra la carta, protecciones operativas basicas, tests y CI.
 - Los estados de cocina avanzan solamente mediante una accion autenticada del personal; no existe avance automatico de demo.
 - Preparacion y entrega avanzan por item; el resumen del pedido no oculta que quedan items mas atrasados.
+- Solicitud, confirmacion de pago demo y liberacion de mesa son pasos separados; el modo demo no mueve dinero ni simula una confirmacion externa.
 
 ## Fase 0 - Base de desarrollo seguro
 

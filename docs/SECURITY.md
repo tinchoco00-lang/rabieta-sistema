@@ -8,7 +8,7 @@ El valor de `STAFF_PIN` puede suministrarse mediante el entorno. Los secretos nu
 
 ## Resuelto en la Mision 002
 
-- Las acciones internas `pedido_estado`, `alerta_atender`, `alerta_resolver`, `mesa_liberar` y `reset_demo` exigen un Bearer token valido emitido tras verificar el PIN. El token expira automáticamente a las 8 horas y los tokens vencidos se eliminan de memoria.
+- Las acciones internas `pedido_estado`, `alerta_atender`, `alerta_resolver`, `pago_demo_confirmar`, `mesa_liberar` y `reset_demo` exigen un Bearer token valido emitido tras verificar el PIN. El token expira automáticamente a las 8 horas y los tokens vencidos se eliminan de memoria.
 - Las acciones de cliente `pedido_nuevo`, `llamar_mozo`, `pedir_cuenta` y `ayuda` siguen disponibles sin login.
 - El servidor reconstruye nombres y precios desde `menu-rabieta.json`; rechaza productos, variantes y opciones invalidas.
 - Existe una allowlist de acciones y se validan mesas y transiciones de estado de pedidos antes de modificar el estado.
@@ -42,7 +42,8 @@ Estos riesgos describen el codigo actual. Se registran para orientar trabajo fut
 - Todavía no existe generación ni distribución operativa de QR por mesa. Esta misión solamente implementa la validación compatible con futuros enlaces `mesa.html?mesa=N#token=...`.
 - Sin `DATABASE_URL`, el estado operativo existe solamente en memoria y se pierde al reiniciar el proceso. Con PostgreSQL hay continuidad del estado completo, pero todavía no existen historial, auditoria ni un esquema relacional definitivo.
 - Un futuro ledger de metricas puede contener datos personales u operativos sensibles; antes de usar datos reales necesita minimizacion, permisos, retencion, borrado y auditoria definidos.
-- Los pagos futuros deben confirmar estado exclusivamente desde el proveedor mediante webhooks autenticados e idempotentes, con conciliacion y manejo explicito de estados inciertos. Una pantalla del cliente nunca sera prueba suficiente de pago.
+- `pago_demo_confirmar` es solamente una marca operativa de sandbox: calcula el total desde el pedido validado, no acepta datos de tarjeta, no llama a un proveedor y no representa dinero cobrado.
+- Los pagos reales futuros deben confirmar estado exclusivamente desde el proveedor mediante webhooks autenticados e idempotentes, con conciliacion y manejo explicito de estados inciertos. Una pantalla del cliente nunca sera prueba suficiente de pago.
 
 ## Reglas de cambio
 

@@ -208,6 +208,57 @@ test('cocina avanza cada item por separado y el pedido termina al entregar todos
   await resetState();
 });
 
+test('cuenta y pago demo conservan el pedido hasta que staff libera la mesa', async () => {
+  await resetState();
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [
+    { productoId: 'hummus-rabieta' },
+    { productoId: 'burrata' },
+  ] })).status, 200);
+
+  assert.equal((await action({ type: 'pago_demo_confirmar', mesa: 1 })).status, 401);
+  assert.equal((await action({ type: 'pedir_cuenta', mesa: 1 })).status, 200);
+  assert.equal((await action({ type: 'pedir_cuenta', mesa: 1 })).status, 409);
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'papas-bravas' }] })).status, 409);
+
+  let mesa = (await getState()).mesas[0];
+  const cuentaAlert = mesa.alertas.find(alerta => alerta.tipo === 'cuenta');
+  assert.equal(mesa.cuentaPedida, true);
+  assert.equal(mesa.pago, null);
+  assert.ok(cuentaAlert);
+
+  assert.equal((await action({ type: 'alerta_resolver', alertaId: cuentaAlert.id }, staffToken)).status, 200);
+  mesa = (await getState()).mesas[0];
+  assert.equal(mesa.ocupada, true);
+  assert.equal(mesa.pedido.items.length, 2);
+  assert.equal(mesa.cuentaPedida, true);
+
+  assert.equal((await action({ type: 'pago_demo_confirmar', mesa: 1 }, staffToken)).status, 200);
+  mesa = (await getState()).mesas[0];
+  assert.deepEqual(mesa.pago, {
+    modo: 'demo', estado: 'confirmado', total: 7700, confirmadoTs: mesa.pago.confirmadoTs,
+  });
+  assert.ok(Number.isFinite(mesa.pago.confirmadoTs));
+  assert.equal(mesa.pedido.items.length, 2);
+  assert.equal((await action({ type: 'pago_demo_confirmar', mesa: 1 }, staffToken)).status, 409);
+
+  assert.equal((await action({ type: 'mesa_liberar', mesa: 1 }, staffToken)).status, 200);
+  mesa = (await getState()).mesas[0];
+  assert.equal(mesa.ocupada, false);
+  assert.equal(mesa.pedido, null);
+  assert.equal(mesa.cuentaPedida, false);
+  assert.equal(mesa.pago, null);
+  await resetState();
+});
+
+test('pago demo rechaza cuentas con precios pendientes', async () => {
+  await resetState();
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'rabas-romana' }] })).status, 200);
+  assert.equal((await action({ type: 'pedir_cuenta', mesa: 1 })).status, 200);
+  assert.equal((await action({ type: 'pago_demo_confirmar', mesa: 1 }, staffToken)).status, 409);
+  assert.equal((await getState()).mesas[0].pago, null);
+  await resetState();
+});
+
 test('logout revoca inmediatamente el token actual', async () => {
   const logout = await fetch(`${baseUrl}/api/staff-logout`, {
     method: 'POST', headers: { authorization: `Bearer ${staffToken}` },
