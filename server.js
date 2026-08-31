@@ -13,11 +13,9 @@
      viajan como POST /api/action — HTTP normal, nada exótico.
 
    IMPORTANTE — límite honesto de este MVP:
-   El estado vive en la MEMORIA del proceso. Si el servidor se
-   reinicia (se cae, se redeploya), se pierde el estado en curso
-   (vuelve a las mesas vacías). Para un piloto real de un día
-   esto alcanza. Para producción de verdad, el siguiente paso es
-   mover este `state` a una base de datos (ver README-DEPLOY.md).
+   Sin DATABASE_URL el estado vive solamente en memoria. Con
+   DATABASE_URL se conserva como una fila JSONB de continuidad,
+   que todavía no es el modelo relacional ni multi-tenant final.
    ========================================================= */
 const http = require('http');
 const fs = require('fs');
@@ -287,12 +285,6 @@ function startClock() {
       rateLimiters.login.prune();
       rateLimiters.action.prune();
       state.clockMs++;
-      state.mesas.forEach(m => {
-        if (m.pedido && m.pedido.estado === 'enviado' && (state.clockMs - m.pedido.enviadoTs) > 6) {
-          m.pedido.estado = 'preparando';
-          operationalChange = true;
-        }
-      });
       state.mesas.forEach(m => m.alertas.forEach(a => {
         if (a.estado === 'recibido' && !a.escalado && (state.clockMs - a.creadoTs) > SLA[a.prioridad]) {
           a.escalado = true;
