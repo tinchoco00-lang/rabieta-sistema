@@ -14,10 +14,11 @@ al instante; un cliente llama al mozo, el mozo suena/vibra al instante.
   oficial `pg`, crea la tabla necesaria y recupera el estado al iniciar.
 - `package.json` y `package-lock.json` — declaran y fijan las dependencias. La
   única dependencia directa actual es `pg`.
-- `public/mesa.html` — lo que ve el CLIENTE. Se abre con `tuservidor.com/mesa.html?mesa=5`
-  — el número al final es el número de mesa. En producción, cada mesa tiene
-  pegado un QR que ya apunta a su propio número (eso lo generamos después,
-  es trivial, es texto).
+- `public/mesa.html` — lo que ve el CLIENTE. En modo compatible se abre con
+  `tuservidor.com/mesa.html?mesa=5`. Cuando está activa la identidad de mesa,
+  el QR autorizado debe agregar el token de esa mesa en el fragmento local:
+  `tuservidor.com/mesa.html?mesa=5#token=<token-de-mesa>`. El navegador guarda
+  el token sólo para esa mesa durante la sesión y limpia el fragmento visible.
 - `public/staff.html` — lo que ve el PERSONAL (mozo, cocina, encargado, dueño).
   Pide un PIN (por ahora `1234`, lo cambiás con la variable `STAFF_PIN`, ver abajo).
 - `menu-rabieta.json` — la carta real de Rabieta, la misma que ya venías usando.
@@ -42,6 +43,16 @@ El PIN compartido de personal genera un token temporal en memoria para autorizar
 las acciones internas. Esos tokens no se guardan en PostgreSQL y dejan de ser
 válidos al reiniciar el proceso. Todavía no existen usuarios individuales,
 sesiones persistentes ni autorización real por roles.
+
+La variable opcional `MESA_TOKEN_SECRET` activa la identidad HMAC de mesa. Con
+ella configurada, cada acción y stream público debe presentar en
+`X-Mesa-Token` el token correspondiente al mismo número de mesa. El secreto y
+los tokens no se guardan en PostgreSQL ni se escriben en logs. Si la variable
+no existe, el servidor conserva temporalmente el modo compatible sin identidad
+de mesa y registra un warning seguro. La generación y distribución de los QR
+autorizados sigue siendo un paso operativo pendiente: no se debe activar esta
+variable hasta contar con ese procedimiento y un entorno autorizado para el
+secreto.
 
 ## Cómo ponerlo en internet — paso a paso, sin usar la terminal
 
@@ -77,13 +88,16 @@ está corriendo para nadie.
    - **Instance Type**: Free
 5. (Opcional pero recomendado) En **Environment Variables**, agregá una:
    - Key: `STAFF_PIN` — Value: el PIN que quieras usar de verdad (4 a 8 números).
+   - No agregues `MESA_TOKEN_SECRET` durante esta guía inicial: requiere generar
+     y distribuir antes los enlaces QR autorizados de cada mesa.
 6. Tocá **Create Web Service** y esperá 2-3 minutos.
 7. Cuando termine, Render te da una URL como `https://rabieta-sistema.onrender.com`
    — ESA es tu sistema real, ya anda para cualquiera con ese link.
 
 ### Paso 3 — Probarlo con dos celulares (antes de mostrárselo al dueño)
 
-- Celular 1: `https://tu-url.onrender.com/mesa.html?mesa=1`
+- Celular 1: `https://tu-url.onrender.com/mesa.html?mesa=1` (modo compatible,
+  mientras `MESA_TOKEN_SECRET` no esté configurada).
 - Celular 2: `https://tu-url.onrender.com/staff.html` → PIN → "Activar sonido y
   vibración" → pestaña Mozo.
 - Desde el celular 1, tocá "Llamar al mozo". El celular 2 tiene que sonar y
@@ -101,9 +115,10 @@ al plan pago de Render (unos USD 7/mes) para que nunca se duerma.
 
 1. Confirmar con el dueño los 21 precios pendientes y la cantidad real de mesas
    (hoy usa 22 como placeholder).
-2. Reemplazar los 2 modelos 3D genéricos por el escaneo real de los 5 platos
+2. Reemplazar el modelo 3D genérico por escaneos reales de los platos
    destacados (servicio de escaneo/fotogrametría — costo y tiempo aparte).
 3. Login real de personal (usuario + contraseña por persona, no un PIN compartido).
 4. Diseñar el esquema relacional definitivo del SaaS, con historial y auditoría,
    reemplazando cuando corresponda la persistencia JSONB transitoria.
-5. QR impresos por mesa apuntando a `/mesa.html?mesa=N` de cada una.
+5. Definir el procedimiento autorizado para generar, rotar y distribuir QR por
+   mesa con enlaces `/mesa.html?mesa=N#token=...`, sin exponer el secreto HMAC.
