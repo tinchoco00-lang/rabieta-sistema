@@ -86,14 +86,20 @@ function escapeHtml(value){
     '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
   })[char]);
 }
-function timeAgoSec(ts){ return Math.max(0, Math.floor((state.clockMs - ts)/1000)); }
+function timeAgoSec(ts){ return Math.max(0, Math.floor(state.clockMs - ts)); }
 function fmtSec(s){ const m=Math.floor(s/60), r=s%60; return (m>0? m+'m ':'')+r+'s'; }
 function findMesa(n){ return state.mesas.find(m=>m.numero===n); }
 function findProducto(id){ for(const c of MENU_DATA.categorias) for(const p of c.productos) if(p.id===id) return p; }
 function todosLosProductos(){ const out=[]; MENU_DATA.categorias.forEach(c=>c.productos.forEach(p=>out.push({...p,categoriaId:c.id}))); return out; }
 function precioBase(p){ if(p.variantes && p.variantes.length) return p.variantes[0].precio; return p.precio; }
 function mesaBusy(m){ return !!m.pedido; }
-function estadoPedidoLabel(m){ return m.pedido ? PEDIDO_LABELS[m.pedido.estado] : 'Libre'; }
+function estadoPedidoLabel(m){
+  if(!m.pedido) return 'Libre';
+  const entregados = m.pedido.items.filter(it=>it.estado==='entregado').length;
+  if(entregados>0 && entregados<m.pedido.items.length) return `${entregados}/${m.pedido.items.length} entregados`;
+  return PEDIDO_LABELS[m.pedido.estado];
+}
+function itemEstadoClass(estado){ return estado==='enviado'?'importante':estado==='preparando'?'normal':'libre'; }
 function alertasAbiertas(m){ return m.alertas.filter(a=>a.estado!=='resuelto'); }
 function prioridadMax(alertas){
   if(alertas.some(a=>a.prioridad==='urgente')) return 'urgente';
@@ -401,7 +407,7 @@ function viewCliente(){
           <div class="circle">${i<idx?'✓':i+1}</div><div class="lbl">${PEDIDO_LABELS[s]}</div></div>`).join('')}
       </div>
       <ul style="font-size:13px;margin:0;padding-left:18px;color:var(--ink-2);">
-        ${mesa.pedido.items.map(it=>`<li>${escapeHtml(it.nombre)}${it.notas?` — "${escapeHtml(it.notas)}"`:''}</li>`).join('')}
+        ${mesa.pedido.items.map(it=>`<li>${escapeHtml(it.nombre)}${it.notas?` — "${escapeHtml(it.notas)}"`:''} <span class="pill ${itemEstadoClass(it.estado)}">${PEDIDO_LABELS[it.estado]}</span></li>`).join('')}
       </ul></div>`;
   }
   const openAlerts = alertasAbiertas(mesa);
@@ -557,27 +563,32 @@ function helpPanelHtml(){
 
 /* ---------------- COCINA ---------------- */
 function viewCocina(){
-  const activos = state.mesas.filter(m=>m.pedido && m.pedido.estado!=='entregado');
+  const activos = state.mesas.filter(m=>m.pedido && m.pedido.items.some(it=>it.estado!=='entregado'));
   return `<h1 class="view-title">COCINA</h1><p class="view-sub">KDS — comandas en vivo, sin papel.</p>
     <div class="kds-grid">${activos.length ? activos.map(m=>ticketHtml(m)).join('') : '<div class="empty">No hay comandas activas.</div>'}</div>`;
 }
 function ticketHtml(m){
-  const edad = timeAgoSec(m.pedido.enviadoTs);
-  const late = m.pedido.estado==='preparando' && edad>240;
+  const itemsActivos = m.pedido.items.filter(it=>it.estado!=='entregado');
+  const oldestTs = itemsActivos.reduce((oldest,it)=>Math.min(oldest,it.enviadoTs), state.clockMs);
+  const edad = timeAgoSec(oldestTs);
+  const late = itemsActivos.some(it=>it.estado==='preparando') && edad>240;
   return `<div class="ticket ${late?'late':''}">
     <div class="head"><span class="mesa">MESA ${m.numero}</span>
-      <span class="pill ${m.pedido.estado==='enviado'?'importante':m.pedido.estado==='preparando'?'normal':'libre'}">${PEDIDO_LABELS[m.pedido.estado]}</span></div>
+      <span class="pill ${itemEstadoClass(m.pedido.estado)}">${estadoPedidoLabel(m)}</span></div>
     <div class="timer">hace ${fmtSec(edad)}</div>
-    <ul>${m.pedido.items.map(it=>`<li>${escapeHtml(it.nombre)}${it.notas?` <span class="item-mod">— "${escapeHtml(it.notas)}"</span>`:''}</li>`).join('')}</ul>
-    <div style="display:flex;gap:6px;">
-      ${m.pedido.estado==='enviado'?`<button class="btn primary sm block" onclick="avanzarPedido(${m.numero})">Empezar a preparar</button>`:''}
-      ${m.pedido.estado==='preparando'?`<button class="btn good sm block" onclick="avanzarPedido(${m.numero})">Marcar listo</button>`:''}
-      ${m.pedido.estado==='listo'?`<button class="btn dark sm block" onclick="avanzarPedido(${m.numero})">Entregado en mesa</button>`:''}
-    </div></div>`;
+    <ul>${itemsActivos.map(it=>`<li style="margin-bottom:10px;">
+      <div>${escapeHtml(it.nombre)}${it.notas?` <span class="item-mod">— "${escapeHtml(it.notas)}"</span>`:''}</div>
+      <div style="display:flex;align-items:center;gap:6px;margin-top:5px;">
+        <span class="pill ${itemEstadoClass(it.estado)}">${PEDIDO_LABELS[it.estado]}</span>
+        ${it.estado==='enviado'?`<button class="btn primary sm" onclick="avanzarItem(${m.numero},${it.id})">Empezar a preparar</button>`:''}
+        ${it.estado==='preparando'?`<button class="btn good sm" onclick="avanzarItem(${m.numero},${it.id})">Marcar listo</button>`:''}
+        ${it.estado==='listo'?`<button class="btn dark sm" onclick="avanzarItem(${m.numero},${it.id})">Entregado en mesa</button>`:''}
+      </div></li>`).join('')}</ul></div>`;
 }
-function avanzarPedido(n){
-  const m=findMesa(n); const i=PEDIDO_ESTADOS.indexOf(m.pedido.estado);
-  if(i<PEDIDO_ESTADOS.length-1) send({type:'pedido_estado', mesa:n, estado:PEDIDO_ESTADOS[i+1]});
+function avanzarItem(n,itemId){
+  const m=findMesa(n); const item=m.pedido.items.find(it=>it.id===itemId);
+  const i=item ? PEDIDO_ESTADOS.indexOf(item.estado) : -1;
+  if(i>=0 && i<PEDIDO_ESTADOS.length-1) send({type:'pedido_estado', mesa:n, itemId, estado:PEDIDO_ESTADOS[i+1]});
 }
 
 /* ---------------- MOZO ---------------- */

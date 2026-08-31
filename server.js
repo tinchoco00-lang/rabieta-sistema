@@ -161,6 +161,54 @@ function buildPedidoItem(input) {
   };
 }
 
+function syncPedidoEstado(pedido) {
+  if (!pedido || !Array.isArray(pedido.items) || !pedido.items.length) return;
+  const earliestStateIndex = pedido.items.reduce((earliest, item) => {
+    const index = PEDIDO_ESTADOS.indexOf(item.estado);
+    return Math.min(earliest, index === -1 ? 0 : index);
+  }, PEDIDO_ESTADOS.length - 1);
+  pedido.estado = PEDIDO_ESTADOS[earliestStateIndex];
+}
+
+function normalizeRecoveredState(recoveredState) {
+  let highestId = 0;
+  const itemIds = new Set();
+
+  const normalizedItemIds = new Set();
+  recoveredState.mesas.forEach(mesa => {
+    mesa.alertas.forEach(alerta => {
+      if (Number.isInteger(alerta.id) && alerta.id > highestId) highestId = alerta.id;
+    });
+    if (!mesa.pedido || !Array.isArray(mesa.pedido.items)) return;
+    mesa.pedido.items.forEach(item => {
+      if (Number.isInteger(item.id) && item.id > 0 && !itemIds.has(item.id)) {
+        itemIds.add(item.id);
+        if (item.id > highestId) highestId = item.id;
+      }
+    });
+  });
+  uidCounter = Math.max(uidCounter, highestId + 1);
+
+  recoveredState.mesas.forEach(mesa => {
+    const pedido = mesa.pedido;
+    if (!pedido || !Array.isArray(pedido.items)) return;
+    const legacyState = PEDIDO_ESTADOS.includes(pedido.estado) ? pedido.estado : 'enviado';
+    pedido.items.forEach(item => {
+      if (!Number.isInteger(item.id) || item.id <= 0 || normalizedItemIds.has(item.id)) item.id = uid();
+      normalizedItemIds.add(item.id);
+      if (!PEDIDO_ESTADOS.includes(item.estado)) item.estado = legacyState;
+      if (!Number.isFinite(item.enviadoTs)) {
+        item.enviadoTs = Number.isFinite(pedido.enviadoTs) ? pedido.enviadoTs : recoveredState.clockMs;
+      }
+    });
+    if (!Number.isFinite(pedido.enviadoTs)) {
+      pedido.enviadoTs = pedido.items.reduce((earliest, item) => Math.min(earliest, item.enviadoTs), recoveredState.clockMs);
+    }
+    syncPedidoEstado(pedido);
+  });
+  return recoveredState;
+}
+
 const sseClients = new Set();
 function estadoPayload(client) {
   const visibleState = client.kind === 'staff'
@@ -199,11 +247,12 @@ function handleAction(msg) {
       for (const input of msg.items) {
         const built = buildPedidoItem(input);
         if (!built.ok) return built;
-        items.push(built.item);
+        items.push({ ...built.item, id: uid(), estado: 'enviado', enviadoTs: state.clockMs });
       }
       m.ocupada = true;
       if (m.pedido && m.pedido.estado !== 'entregado') {
         m.pedido.items.push(...items);
+        syncPedidoEstado(m.pedido);
       } else {
         m.pedido = { items, estado: 'enviado', enviadoTs: state.clockMs };
       }
@@ -212,9 +261,15 @@ function handleAction(msg) {
     case 'pedido_estado': {
       if (!PEDIDO_ESTADOS.includes(msg.estado)) return actionError(400, 'Estado de pedido inválido');
       if (!m.pedido) return actionError(404, 'La mesa no tiene un pedido activo');
-      const currentIndex = PEDIDO_ESTADOS.indexOf(m.pedido.estado);
+      let item = null;
+      if (Number.isInteger(msg.itemId)) item = m.pedido.items.find(candidate => candidate.id === msg.itemId);
+      else if (m.pedido.items.length === 1) [item] = m.pedido.items;
+      else return actionError(400, 'itemId es obligatorio para pedidos con varios items');
+      if (!item) return actionError(404, 'Item de pedido inexistente');
+      const currentIndex = PEDIDO_ESTADOS.indexOf(item.estado);
       if (msg.estado !== PEDIDO_ESTADOS[currentIndex + 1]) return actionError(409, 'Transición de pedido inválida');
-      m.pedido.estado = msg.estado;
+      item.estado = msg.estado;
+      syncPedidoEstado(m.pedido);
       break;
     }
     case 'llamar_mozo': {
@@ -586,7 +641,7 @@ process.once('SIGTERM', () => shutdown('SIGTERM'));
 process.once('SIGINT', () => shutdown('SIGINT'));
 
 async function start() {
-  state = await persistence.initialize(state);
+  state = normalizeRecoveredState(await persistence.initialize(state));
   if (MESA_TOKEN_SECRET) logEvent('log', 'mesa_identity_active');
   else logEvent('warn', 'mesa_identity_inactive', { warning: 'MESA_TOKEN_SECRET no configurado; compatibilidad legacy activa' });
   startClock();

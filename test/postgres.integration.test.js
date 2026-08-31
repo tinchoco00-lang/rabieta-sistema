@@ -123,6 +123,58 @@ test('PostgreSQL real recupera estado tras reinicio y no persiste tokens', { ski
   }
 });
 
+test('PostgreSQL normaliza pedidos legacy para operar por item sin perder estado', { skip: !databaseUrl }, async () => {
+  const adminPool = new Pool({ connectionString: databaseUrl });
+  let server;
+  try {
+    await adminPool.query('DROP TABLE IF EXISTS rabieta_estado');
+    await adminPool.query(`
+      CREATE TABLE rabieta_estado (
+        id SMALLINT PRIMARY KEY CHECK (id = 1),
+        state JSONB NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    const legacyState = {
+      clockMs: 42,
+      mesas: [{
+        numero: 1,
+        mozo: 'Sofía',
+        ocupada: true,
+        pedido: {
+          items: [{ productoId: 'hummus-rabieta', nombre: 'Hummus Rabieta', precio: 4600, notas: '' }],
+          estado: 'listo',
+          enviadoTs: 10,
+        },
+        cuentaPedida: false,
+        alertas: [],
+      }],
+    };
+    await adminPool.query(
+      'INSERT INTO rabieta_estado (id, state) VALUES (1, $1::jsonb)',
+      [JSON.stringify(legacyState)]
+    );
+
+    server = await startServer(databaseUrl);
+    const recovered = await getState(server.baseUrl);
+    const item = recovered.mesas[0].pedido.items[0];
+    assert.ok(Number.isInteger(item.id));
+    assert.equal(item.estado, 'listo');
+    assert.equal(item.enviadoTs, 10);
+
+    const login = await post(server.baseUrl, '/api/staff-login', { pin: testPin });
+    const { token } = await login.json();
+    assert.equal((await post(server.baseUrl, '/api/action', {
+      type: 'pedido_estado', mesa: 1, itemId: item.id, estado: 'entregado',
+    }, token)).status, 200);
+    assert.equal((await getState(server.baseUrl)).mesas[0].pedido.estado, 'entregado');
+  } finally {
+    if (server) await stopServer(server.processHandle);
+    await adminPool.query('DROP TABLE IF EXISTS rabieta_estado');
+    await adminPool.end();
+  }
+});
+
 test('DATABASE_URL configurada y no disponible impide iniciar el servidor', { skip: !databaseUrl }, async () => {
   const databasePort = await reservePort();
   const appPort = await reservePort();

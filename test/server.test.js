@@ -165,6 +165,38 @@ test('un pedido permanece enviado hasta que cocina confirma la preparación', as
   await resetState();
 });
 
+test('cocina avanza cada item por separado y el pedido termina al entregar todos', async () => {
+  await resetState();
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [
+    { productoId: 'hummus-rabieta' },
+    { productoId: 'burrata' },
+  ] })).status, 200);
+
+  let pedido = (await getState()).mesas[0].pedido;
+  const [hummus, burrata] = pedido.items;
+  assert.notEqual(hummus.id, burrata.id);
+  assert.deepEqual(pedido.items.map(item => item.estado), ['enviado', 'enviado']);
+  assert.equal((await action({ type: 'pedido_estado', mesa: 1, estado: 'preparando' }, staffToken)).status, 400);
+  assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId: hummus.id, estado: 'listo' }, staffToken)).status, 409);
+  assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId: 999999, estado: 'preparando' }, staffToken)).status, 404);
+
+  for (const estado of ['preparando', 'listo', 'entregado']) {
+    assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId: hummus.id, estado }, staffToken)).status, 200);
+  }
+  pedido = (await getState()).mesas[0].pedido;
+  assert.equal(pedido.items[0].estado, 'entregado');
+  assert.equal(pedido.items[1].estado, 'enviado');
+  assert.equal(pedido.estado, 'enviado');
+
+  for (const estado of ['preparando', 'listo', 'entregado']) {
+    assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId: burrata.id, estado }, staffToken)).status, 200);
+  }
+  pedido = (await getState()).mesas[0].pedido;
+  assert.deepEqual(pedido.items.map(item => item.estado), ['entregado', 'entregado']);
+  assert.equal(pedido.estado, 'entregado');
+  await resetState();
+});
+
 test('logout revoca inmediatamente el token actual', async () => {
   const logout = await fetch(`${baseUrl}/api/staff-logout`, {
     method: 'POST', headers: { authorization: `Bearer ${staffToken}` },
@@ -542,7 +574,13 @@ test('el servidor reconstruye productos y precios desde el menú', async () => {
   const response = await action({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'hummus-rabieta', observacion: '<img src=x onerror=alert(1)>', nombre: 'Falso', precio: 1 }] });
   assert.equal(response.status, 200);
   const item = (await getState()).mesas[0].pedido.items[0];
-  assert.deepEqual(item, { productoId: 'hummus-rabieta', nombre: 'Hummus Rabieta', precio: 4600, notas: '<img src=x onerror=alert(1)>' });
+  assert.ok(Number.isInteger(item.id));
+  assert.equal(item.estado, 'enviado');
+  assert.ok(Number.isFinite(item.enviadoTs));
+  assert.deepEqual(
+    { productoId: item.productoId, nombre: item.nombre, precio: item.precio, notas: item.notas },
+    { productoId: 'hummus-rabieta', nombre: 'Hummus Rabieta', precio: 4600, notas: '<img src=x onerror=alert(1)>' }
+  );
 
   const configured = await action({ type: 'pedido_nuevo', mesa: 2, items: [
     { productoId: 'tablita-quesos-fiambres', variante: 'Individual (sin bebida)' },
@@ -637,4 +675,9 @@ test('los textos libres se escapan en renders con innerHTML', () => {
   const escaped = vm.runInNewContext(`${implementation[0]}; escapeHtml(payload)`, { payload: malicious });
   assert.equal(escaped, '&lt;img src=x onerror=&quot;globalThis.xss=true&quot;&gt; &amp; &#39;ataque&#39;');
   assert.doesNotMatch(escaped, /<img|onerror="/);
+
+  const timeImplementation = source.match(/function timeAgoSec\(ts\)\{[^\n]+\}/);
+  assert.ok(timeImplementation, 'debe existir el calculo de antiguedad operativa');
+  const elapsedSeconds = vm.runInNewContext(`${timeImplementation[0]}; timeAgoSec(20)`, { state: { clockMs: 65 } });
+  assert.equal(elapsedSeconds, 45);
 });

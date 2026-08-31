@@ -33,7 +33,8 @@ Estas son decisiones de direccion. No significan que las capacidades futuras ya 
 - SSE es la tecnologia de tiempo real utilizada actualmente.
 - Se prioriza la simplicidad tecnica y se evita complejidad sin beneficio verificado.
 - La UI actual debe preservarse salvo que exista una decision explicita de producto para cambiarla.
-- El dueno confirmo que los platos llegan por partes; la operacion objetivo debe modelar preparacion y entrega por item, aunque el MVP actual todavia maneja un estado por pedido.
+- El dueno confirmo que los platos llegan por partes. El MVP asigna identidad, estado y timestamp de envio a cada item; `pedido.estado` queda como resumen compatible del item menos avanzado.
+- El sector operativo no se infiere desde la categoria comercial de la carta. Cocina, barra u otros destinos deben confirmarse con el local antes de rutear pedidos.
 - 3D/AR e IA conversacional son lineas estrategicas de innovacion, condicionadas a una hipotesis empresarial medible y a no bloquear la operacion basica.
 - Nunca se afirmara diferenciacion, impacto o novedad sin evidencia. El benchmark minimo cubre Argentina, Estados Unidos y China.
 - Produccion, dinero y datos reales requieren aprobacion humana.
