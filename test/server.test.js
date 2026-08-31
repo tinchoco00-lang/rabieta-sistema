@@ -188,11 +188,22 @@ test('cocina avanza cada item por separado y el pedido termina al entregar todos
   assert.equal(pedido.items[1].estado, 'enviado');
   assert.equal(pedido.estado, 'enviado');
 
-  for (const estado of ['preparando', 'listo', 'entregado']) {
-    assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId: burrata.id, estado }, staffToken)).status, 200);
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [
+    { productoId: 'papas-bravas' },
+  ] })).status, 200);
+  pedido = (await getState()).mesas[0].pedido;
+  const papas = pedido.items[2];
+  assert.equal(pedido.items[0].id, hummus.id);
+  assert.equal(pedido.items[0].estado, 'entregado');
+  assert.deepEqual(pedido.items.slice(1).map(item => item.estado), ['enviado', 'enviado']);
+
+  for (const itemId of [burrata.id, papas.id]) {
+    for (const estado of ['preparando', 'listo', 'entregado']) {
+      assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId, estado }, staffToken)).status, 200);
+    }
   }
   pedido = (await getState()).mesas[0].pedido;
-  assert.deepEqual(pedido.items.map(item => item.estado), ['entregado', 'entregado']);
+  assert.deepEqual(pedido.items.map(item => item.estado), ['entregado', 'entregado', 'entregado']);
   assert.equal(pedido.estado, 'entregado');
   await resetState();
 });

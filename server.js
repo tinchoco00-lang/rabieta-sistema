@@ -43,8 +43,8 @@ const STAFF_TOKENS = new Map();
 const MESA_TOKEN_SECRET = process.env.MESA_TOKEN_SECRET || null;
 const MAX_BODY_BYTES = 32 * 1024;
 const PUBLIC_ACTIONS = new Set(['pedido_nuevo', 'llamar_mozo', 'pedir_cuenta', 'ayuda']);
-const STAFF_ACTIONS = new Set(['pedido_estado', 'alerta_atender', 'alerta_resolver', 'mesa_liberar', 'reset_demo']);
-const MESA_ACTIONS = new Set(['pedido_nuevo', 'pedido_estado', 'llamar_mozo', 'pedir_cuenta', 'ayuda', 'mesa_liberar']);
+const STAFF_ACTIONS = new Set(['pedido_estado', 'alerta_atender', 'alerta_resolver', 'pago_demo_confirmar', 'mesa_liberar', 'reset_demo']);
+const MESA_ACTIONS = new Set(['pedido_nuevo', 'pedido_estado', 'llamar_mozo', 'pedir_cuenta', 'ayuda', 'pago_demo_confirmar', 'mesa_liberar']);
 const PEDIDO_ESTADOS = ['enviado', 'preparando', 'listo', 'entregado'];
 const HELP_CATEGORIES = {
   no_llego: { label: 'No llegó mi pedido', prioridad: 'urgente' },
@@ -71,7 +71,7 @@ function uid() { return uidCounter++; }
 function seedState() {
   const mesas = [];
   for (let i = 1; i <= MESAS_TOTAL; i++) {
-    mesas.push({ numero: i, mozo: MOZOS[i % MOZOS.length], ocupada: false, pedido: null, cuentaPedida: false, alertas: [] });
+    mesas.push({ numero: i, mozo: MOZOS[i % MOZOS.length], ocupada: false, pedido: null, cuentaPedida: false, pago: null, alertas: [] });
   }
   return { clockMs: 0, mesas };
 }
@@ -172,8 +172,6 @@ function syncPedidoEstado(pedido) {
 
 function normalizeRecoveredState(recoveredState) {
   let highestId = 0;
-  const itemIds = new Set();
-
   const normalizedItemIds = new Set();
   recoveredState.mesas.forEach(mesa => {
     mesa.alertas.forEach(alerta => {
@@ -181,15 +179,13 @@ function normalizeRecoveredState(recoveredState) {
     });
     if (!mesa.pedido || !Array.isArray(mesa.pedido.items)) return;
     mesa.pedido.items.forEach(item => {
-      if (Number.isInteger(item.id) && item.id > 0 && !itemIds.has(item.id)) {
-        itemIds.add(item.id);
-        if (item.id > highestId) highestId = item.id;
-      }
+      if (Number.isInteger(item.id) && item.id > highestId) highestId = item.id;
     });
   });
   uidCounter = Math.max(uidCounter, highestId + 1);
 
   recoveredState.mesas.forEach(mesa => {
+    if (!mesa.pago || mesa.pago.modo !== 'demo' || mesa.pago.estado !== 'confirmado') mesa.pago = null;
     const pedido = mesa.pedido;
     if (!pedido || !Array.isArray(pedido.items)) return;
     const legacyState = PEDIDO_ESTADOS.includes(pedido.estado) ? pedido.estado : 'enviado';
@@ -199,6 +195,13 @@ function normalizeRecoveredState(recoveredState) {
       if (!PEDIDO_ESTADOS.includes(item.estado)) item.estado = legacyState;
       if (!Number.isFinite(item.enviadoTs)) {
         item.enviadoTs = Number.isFinite(pedido.enviadoTs) ? pedido.enviadoTs : recoveredState.clockMs;
+      }
+      if (!item.estadoTs || typeof item.estadoTs !== 'object' || Array.isArray(item.estadoTs)) item.estadoTs = {};
+      if (!Number.isFinite(item.estadoTs.enviado)) item.estadoTs.enviado = item.enviadoTs;
+      const itemStateIndex = PEDIDO_ESTADOS.indexOf(item.estado);
+      for (let index = 1; index <= itemStateIndex; index++) {
+        const stage = PEDIDO_ESTADOS[index];
+        if (!Number.isFinite(item.estadoTs[stage])) item.estadoTs[stage] = item.enviadoTs;
       }
     });
     if (!Number.isFinite(pedido.enviadoTs)) {
@@ -243,11 +246,12 @@ function handleAction(msg) {
   switch (msg.type) {
     case 'pedido_nuevo': {
       if (!Array.isArray(msg.items) || !msg.items.length) return actionError(400, 'El pedido no contiene ítems');
+      if (m.cuentaPedida) return actionError(409, 'La cuenta ya fue solicitada');
       const items = [];
       for (const input of msg.items) {
         const built = buildPedidoItem(input);
         if (!built.ok) return built;
-        items.push({ ...built.item, id: uid(), estado: 'enviado', enviadoTs: state.clockMs });
+        items.push({ ...built.item, id: uid(), estado: 'enviado', enviadoTs: state.clockMs, estadoTs: { enviado: state.clockMs } });
       }
       m.ocupada = true;
       if (m.pedido && m.pedido.estado !== 'entregado') {
@@ -269,6 +273,8 @@ function handleAction(msg) {
       const currentIndex = PEDIDO_ESTADOS.indexOf(item.estado);
       if (msg.estado !== PEDIDO_ESTADOS[currentIndex + 1]) return actionError(409, 'Transición de pedido inválida');
       item.estado = msg.estado;
+      if (!item.estadoTs || typeof item.estadoTs !== 'object' || Array.isArray(item.estadoTs)) item.estadoTs = {};
+      item.estadoTs[msg.estado] = state.clockMs;
       syncPedidoEstado(m.pedido);
       break;
     }
@@ -278,7 +284,8 @@ function handleAction(msg) {
       break;
     }
     case 'pedir_cuenta': {
-      if (!m) return;
+      if (!m.pedido || !m.pedido.items.length) return actionError(409, 'La mesa no tiene consumos');
+      if (m.cuentaPedida) return actionError(409, 'La cuenta ya fue solicitada');
       m.cuentaPedida = true;
       m.alertas.push({ id: uid(), tipo: 'cuenta', label: 'Pidió la cuenta', prioridad: 'importante', mensaje: '', estado: 'recibido', creadoTs: state.clockMs, escalado: false });
       break;
@@ -303,21 +310,32 @@ function handleAction(msg) {
     }
     case 'alerta_resolver': {
       if (!Number.isInteger(msg.alertaId)) return actionError(400, 'alertaId inválido');
-      let owner = null;
       let alerta = null;
       for (const mesa of state.mesas) {
         const found = mesa.alertas.find(candidate => candidate.id === msg.alertaId);
-        if (found) { owner = mesa; alerta = found; break; }
+        if (found) { alerta = found; break; }
       }
       if (!alerta) return actionError(404, 'Alerta inexistente');
       if (alerta.estado === 'resuelto') return actionError(409, 'La alerta ya está resuelta');
       alerta.estado = 'resuelto';
-      if (alerta.tipo === 'cuenta') { owner.pedido = null; owner.ocupada = false; owner.cuentaPedida = false; }
+      break;
+    }
+    case 'pago_demo_confirmar': {
+      if (!m.pedido || !m.cuentaPedida) return actionError(409, 'La cuenta no fue solicitada');
+      if (m.pago) return actionError(409, 'El pago demo ya fue confirmado');
+      if (m.pedido.items.some(item => !Number.isFinite(item.precio))) {
+        return actionError(409, 'Hay precios pendientes de confirmar');
+      }
+      const total = m.pedido.items.reduce((sum, item) => sum + item.precio, 0);
+      m.pago = { modo: 'demo', estado: 'confirmado', total, confirmadoTs: state.clockMs };
+      m.alertas.forEach(alertaCuenta => {
+        if (alertaCuenta.tipo === 'cuenta' && alertaCuenta.estado !== 'resuelto') alertaCuenta.estado = 'resuelto';
+      });
       break;
     }
     case 'mesa_liberar': {
       if (!m) return;
-      m.ocupada = false; m.pedido = null; m.cuentaPedida = false; m.alertas = [];
+      m.ocupada = false; m.pedido = null; m.cuentaPedida = false; m.pago = null; m.alertas = [];
       break;
     }
     case 'reset_demo': {

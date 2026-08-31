@@ -580,6 +580,7 @@ function ticketHtml(m){
       <div>${escapeHtml(it.nombre)}${it.notas?` <span class="item-mod">— "${escapeHtml(it.notas)}"</span>`:''}</div>
       <div style="display:flex;align-items:center;gap:6px;margin-top:5px;">
         <span class="pill ${itemEstadoClass(it.estado)}">${PEDIDO_LABELS[it.estado]}</span>
+        <span class="item-mod">${itemElapsedLabel(it)}</span>
         ${it.estado==='enviado'?`<button class="btn primary sm" onclick="avanzarItem(${m.numero},${it.id})">Empezar a preparar</button>`:''}
         ${it.estado==='preparando'?`<button class="btn good sm" onclick="avanzarItem(${m.numero},${it.id})">Marcar listo</button>`:''}
         ${it.estado==='listo'?`<button class="btn dark sm" onclick="avanzarItem(${m.numero},${it.id})">Entregado en mesa</button>`:''}
