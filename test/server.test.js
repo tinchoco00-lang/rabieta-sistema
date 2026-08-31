@@ -144,6 +144,27 @@ test('acciones internas requieren Bearer token y las públicas no', async () => 
   assert.equal((await action({ type: 'reset_demo' }, staffToken)).status, 200);
 });
 
+test('un pedido permanece enviado hasta que cocina confirma la preparación', async () => {
+  await resetState();
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'hummus-rabieta' }] })).status, 200);
+  const initialState = await getState();
+  const initialClock = initialState.clockMs;
+  assert.equal(initialState.mesas[0].pedido.estado, 'enviado');
+
+  const deadline = Date.now() + 9000;
+  let laterState = initialState;
+  while (laterState.clockMs - initialClock < 7 && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 200));
+    laterState = await getState();
+  }
+
+  assert.ok(laterState.clockMs - initialClock >= 7, 'el reloj operativo debe avanzar al menos siete segundos');
+  assert.equal(laterState.mesas[0].pedido.estado, 'enviado');
+  assert.equal((await action({ type: 'pedido_estado', mesa: 1, estado: 'preparando' }, staffToken)).status, 200);
+  assert.equal((await getState()).mesas[0].pedido.estado, 'preparando');
+  await resetState();
+});
+
 test('logout revoca inmediatamente el token actual', async () => {
   const logout = await fetch(`${baseUrl}/api/staff-logout`, {
     method: 'POST', headers: { authorization: `Bearer ${staffToken}` },

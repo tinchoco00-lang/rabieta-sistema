@@ -25,6 +25,7 @@ El dominio actual mantiene un solo `pedido` por mesa y un unico estado para todo
 - `POST /api/staff-login` compara el PIN recibido con `STAFF_PIN` o el valor local por defecto.
 - `POST /api/staff-logout` revoca el token de staff presentado.
 - `POST /api/action` valida y cambia el estado; cuando PostgreSQL está activo confirma la escritura antes de responder éxito.
+- Los pedidos permanecen en `enviado` hasta que una accion autenticada de staff confirma la transicion a `preparando`; el reloj no simula actividad de cocina.
 - `GET /events?mesa=N` distribuye mediante SSE solamente el estado de la mesa solicitada.
 - `GET /api/staff-events` distribuye el estado completo al personal y exige un Bearer token válido en el header.
 - Si `MESA_TOKEN_SECRET` está configurado, las acciones públicas y el stream cliente verifican un HMAC-SHA256 vinculado al número de mesa mediante `X-Mesa-Token`. El secreto y los tokens no se persisten.
