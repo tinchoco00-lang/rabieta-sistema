@@ -1,62 +1,70 @@
-# Roadmap
+# Roadmap orientado al piloto
 
-Este documento separa el estado comprobado de posibles trabajos futuros. Nada de lo listado como pendiente debe comunicarse como implementado.
+Este documento separa el estado comprobado de posibles trabajos futuros. Nada pendiente debe comunicarse como implementado. La prioridad es demostrar valor empresarial en Rabieta Lomitas antes de escalar o invertir en capacidades avanzadas.
 
 ## Estado comprobado
 
 - MVP Node.js con `pg` como unica dependencia de runtime.
 - Menu cargado desde JSON.
-- Estado en memoria por defecto, persistencia PostgreSQL opcional de continuidad y actualizaciones por SSE.
+- Estado en memoria por defecto, persistencia PostgreSQL opcional de continuidad en una fila JSONB y actualizaciones por SSE.
 - PIN compartido para la interfaz de personal.
-- Pruebas basicas de rutas HTTP y verificacion automatizada del repositorio.
+- Identidad HMAC opcional por mesa; sin `MESA_TOKEN_SECRET` permanece un modo legacy no autenticado.
+- Validacion de pedidos contra la carta, protecciones operativas basicas, tests y CI.
 
 ## Fase 0 - Base de desarrollo seguro
 
-- CI;
-- tests;
+- CI, tests y controles reproducibles;
 - reglas para agentes;
-- documentacion tecnica y de seguridad.
+- documentacion tecnica, de producto y seguridad.
 
-Esta fase establece controles de desarrollo. No resuelve los riesgos funcionales enumerados para fases posteriores.
+Esta fase establece controles de desarrollo. No resuelve los riesgos funcionales de las fases posteriores.
 
-## Fase 1 - Seguridad y operacion basica
+## Fase 1 - Piloto operativo seguro
 
-- evolucionar la persistencia transitoria JSONB hacia el modelo definitivo;
-- autenticacion y autorizacion;
-- validacion de pedidos y precios contra el menu;
-- mitigacion de XSS;
-- limites robustos de body;
-- rate limiting;
-- manejo de errores y observabilidad.
+- eliminar automatismos de demo que puedan mostrar estados operativos falsos;
+- confirmar mesas, sectores, carta, precios, modificadores y flujo real del local;
+- modelar preparacion y entrega por item/sector, segun la decision explicita del dueno;
+- autenticacion y autorizacion adecuadas al piloto;
+- generar, rotar y distribuir QR por mesa de forma operativa;
+- definir degradacion segura ante caidas de red o persistencia;
+- observabilidad y runbook del turno.
 
-## Fase 2 - Modelo relacional y multi-tenant
+## Fase 2 - Instrumentacion y prueba de valor
 
-- restaurantes;
-- sucursales;
-- staff;
-- mesas;
-- pedidos;
-- items;
-- alertas.
+- ledger auditable de eventos con timestamps reales;
+- apertura/cierre de mesa, cubiertos y motivos de excepcion;
+- linea de base y metricas definidas en `PILOT_METRICS.md`;
+- dashboard del dueno basado en datos conciliados, con calidad y alcance visibles;
+- experimento controlado en Rabieta Lomitas y decision de continuar o revertir.
 
-La arquitectura multi-tenant y de persistencia sigue pendiente de decision.
+## Fase 3 - Integraciones locales
 
-## Fase 3 - Control e informacion operativa
+- integracion evaluada con el POS elegido;
+- solicitud de cuenta y pagos argentinos en ambiente de prueba;
+- confirmacion por webhooks, idempotencia y conciliacion;
+- facturacion e inventario solamente mediante integraciones aprobadas.
 
-- roles;
-- auditoria;
-- historial y analytics.
+Pagos reales, credenciales, produccion, datos reales y asuntos legales requieren aprobacion del fundador.
 
-## Fase 4 - Integraciones aprobadas
+## Fase 4 - Modelo relacional y multi-tenant
 
-- integraciones con POS;
-- Mercado Pago;
-- otras integraciones que hayan sido evaluadas y aprobadas.
+- restaurantes y sucursales;
+- staff y roles;
+- mesas, pedidos, items, sectores y alertas;
+- aislamiento, auditoria e historial.
 
-## Fase 5 - Capacidades avanzadas
+La arquitectura multi-tenant y de persistencia definitiva sigue pendiente de decision. Debe basarse en lo aprendido en el piloto y facilitar multiples sucursales.
 
-- IA aplicada al producto;
+## Fase 5 - Control y crecimiento
+
+- analytics operativos y financieros;
+- CRM, fidelizacion, resenas y recurrencia medible;
+- control remoto y automatizacion multi-sucursal.
+
+## Fase 6 - Capacidades avanzadas condicionadas
+
+- concierge de IA con informacion verificada, confirmacion y salida humana;
 - automatizacion avanzada;
-- 3D real unicamente si existe una razon comercial verificada.
+- 3D/AR solamente mediante experimentos con una razon comercial y metrica verificables.
 
-Las fases no tienen fechas comprometidas. Produccion, pagos, datos reales y decisiones irreversibles requieren aprobacion humana.
+Las fases no tienen fechas comprometidas. Produccion, pagos, datos reales, arquitectura fundamental y decisiones irreversibles requieren aprobacion humana.
