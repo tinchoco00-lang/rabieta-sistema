@@ -92,6 +92,14 @@ async function getStateFrom(url, mesa = 1, mesaToken) {
 
 async function getState() { return getStateFrom(baseUrl); }
 
+async function getStaffState() {
+  const response = await fetch(`${baseUrl}/api/staff-events`, { headers: { authorization: `Bearer ${staffToken}` } });
+  const reader = response.body.getReader();
+  const event = await readSseEvent(reader);
+  await reader.cancel();
+  return event.message.state;
+}
+
 function tokenForMesa(secret, mesa) {
   return crypto.createHmac('sha256', secret).update(`mesa:${mesa}`).digest('hex');
 }
@@ -208,6 +216,23 @@ test('cocina avanza cada item por separado y el pedido termina al entregar todos
   await resetState();
 });
 
+test('cada avance de cocina conserva una marca de tiempo auditable por ítem', async () => {
+  await resetState();
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'hummus-rabieta' }] })).status, 200);
+  let item = (await getState()).mesas[0].pedido.items[0];
+  assert.deepEqual(item.estadoTs, { enviado: item.enviadoTs });
+
+  assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId: item.id, estado: 'preparando' }, staffToken)).status, 200);
+  item = (await getState()).mesas[0].pedido.items[0];
+  assert.equal(item.estadoTs.enviado, item.enviadoTs);
+  assert.equal(item.estadoTs.preparando, (await getState()).clockMs);
+
+  assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId: item.id, estado: 'listo' }, staffToken)).status, 200);
+  item = (await getState()).mesas[0].pedido.items[0];
+  assert.ok(Number.isFinite(item.estadoTs.listo));
+  await resetState();
+});
+
 test('cuenta y pago demo conservan el pedido hasta que staff libera la mesa', async () => {
   await resetState();
   assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [
@@ -241,12 +266,22 @@ test('cuenta y pago demo conservan el pedido hasta que staff libera la mesa', as
   assert.equal(mesa.pedido.items.length, 2);
   assert.equal((await action({ type: 'pago_demo_confirmar', mesa: 1 }, staffToken)).status, 409);
 
+  let analytics = (await getStaffState()).analytics;
+  assert.equal(analytics.pagosConfirmados, 1);
+  assert.equal(analytics.ventasDemo, 7700);
+  assert.equal(analytics.itemsVendidos, 2);
+  assert.deepEqual(analytics.productos['hummus-rabieta'], { nombre: 'Hummus Rabieta', cantidad: 1, total: 4600 });
+  assert.deepEqual(analytics.productos.burrata, { nombre: 'Burrata', cantidad: 1, total: 3100 });
+
   assert.equal((await action({ type: 'mesa_liberar', mesa: 1 }, staffToken)).status, 200);
   mesa = (await getState()).mesas[0];
   assert.equal(mesa.ocupada, false);
   assert.equal(mesa.pedido, null);
   assert.equal(mesa.cuentaPedida, false);
   assert.equal(mesa.pago, null);
+  analytics = (await getStaffState()).analytics;
+  assert.equal(analytics.pagosConfirmados, 1);
+  assert.equal(analytics.ventasDemo, 7700);
   await resetState();
 });
 

@@ -68,12 +68,16 @@ const rateLimiters = createRateLimiters();
 let uidCounter = 1;
 function uid() { return uidCounter++; }
 
+function seedAnalytics() {
+  return { pagosConfirmados: 0, ventasDemo: 0, tiempoPagoTotalSec: 0, itemsVendidos: 0, productos: {} };
+}
+
 function seedState() {
   const mesas = [];
   for (let i = 1; i <= MESAS_TOTAL; i++) {
-    mesas.push({ numero: i, mozo: MOZOS[i % MOZOS.length], ocupada: false, pedido: null, cuentaPedida: false, pago: null, alertas: [] });
+    mesas.push({ numero: i, mozo: MOZOS[i % MOZOS.length], ocupada: false, pedido: null, cuentaPedida: false, cuentaPedidaTs: null, pago: null, alertas: [] });
   }
-  return { clockMs: 0, mesas };
+  return { clockMs: 0, mesas, analytics: seedAnalytics() };
 }
 let state = seedState();
 let mutationQueue = Promise.resolve();
@@ -170,7 +174,42 @@ function syncPedidoEstado(pedido) {
   pedido.estado = PEDIDO_ESTADOS[earliestStateIndex];
 }
 
+function recordPaymentAnalytics(mesa, analytics = state.analytics, clock = state.clockMs) {
+  const total = mesa.pedido.items.reduce((sum, item) => sum + item.precio, 0);
+  const paymentTime = Number.isFinite(mesa.cuentaPedidaTs)
+    ? Math.max(0, clock - mesa.cuentaPedidaTs)
+    : 0;
+  analytics.pagosConfirmados++;
+  analytics.ventasDemo += total;
+  analytics.tiempoPagoTotalSec += paymentTime;
+  analytics.itemsVendidos += mesa.pedido.items.length;
+  mesa.pedido.items.forEach(item => {
+    const current = analytics.productos[item.productoId] || { nombre: item.nombre, cantidad: 0, total: 0 };
+    current.cantidad++;
+    current.total += item.precio;
+    analytics.productos[item.productoId] = current;
+  });
+}
+
+function normalizeAnalytics(value) {
+  const analytics = seedAnalytics();
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return analytics;
+  for (const field of ['pagosConfirmados', 'ventasDemo', 'tiempoPagoTotalSec', 'itemsVendidos']) {
+    if (Number.isFinite(value[field]) && value[field] >= 0) analytics[field] = value[field];
+  }
+  if (!value.productos || typeof value.productos !== 'object' || Array.isArray(value.productos)) return analytics;
+  Object.entries(value.productos).forEach(([productoId, metrics]) => {
+    const producto = PRODUCTOS.get(productoId);
+    if (!producto || !metrics || typeof metrics !== 'object') return;
+    if (!Number.isFinite(metrics.cantidad) || metrics.cantidad < 0 || !Number.isFinite(metrics.total) || metrics.total < 0) return;
+    analytics.productos[productoId] = { nombre: producto.nombre, cantidad: metrics.cantidad, total: metrics.total };
+  });
+  return analytics;
+}
+
 function normalizeRecoveredState(recoveredState) {
+  const hadAnalytics = recoveredState.analytics && typeof recoveredState.analytics === 'object';
+  recoveredState.analytics = normalizeAnalytics(recoveredState.analytics);
   let highestId = 0;
   const normalizedItemIds = new Set();
   recoveredState.mesas.forEach(mesa => {
@@ -186,6 +225,10 @@ function normalizeRecoveredState(recoveredState) {
 
   recoveredState.mesas.forEach(mesa => {
     if (!mesa.pago || mesa.pago.modo !== 'demo' || mesa.pago.estado !== 'confirmado') mesa.pago = null;
+    const cuentaAlert = mesa.alertas.find(alerta => alerta.tipo === 'cuenta');
+    mesa.cuentaPedidaTs = mesa.cuentaPedida
+      ? (Number.isFinite(mesa.cuentaPedidaTs) ? mesa.cuentaPedidaTs : (cuentaAlert && Number.isFinite(cuentaAlert.creadoTs) ? cuentaAlert.creadoTs : recoveredState.clockMs))
+      : null;
     const pedido = mesa.pedido;
     if (!pedido || !Array.isArray(pedido.items)) return;
     const legacyState = PEDIDO_ESTADOS.includes(pedido.estado) ? pedido.estado : 'enviado';
@@ -209,6 +252,13 @@ function normalizeRecoveredState(recoveredState) {
     }
     syncPedidoEstado(pedido);
   });
+  if (!hadAnalytics) {
+    recoveredState.mesas.forEach(mesa => {
+      if (mesa.pago && mesa.pedido && mesa.pedido.items.every(item => Number.isFinite(item.precio))) {
+        recordPaymentAnalytics(mesa, recoveredState.analytics, recoveredState.clockMs);
+      }
+    });
+  }
   return recoveredState;
 }
 
@@ -287,6 +337,7 @@ function handleAction(msg) {
       if (!m.pedido || !m.pedido.items.length) return actionError(409, 'La mesa no tiene consumos');
       if (m.cuentaPedida) return actionError(409, 'La cuenta ya fue solicitada');
       m.cuentaPedida = true;
+      m.cuentaPedidaTs = state.clockMs;
       m.alertas.push({ id: uid(), tipo: 'cuenta', label: 'Pidió la cuenta', prioridad: 'importante', mensaje: '', estado: 'recibido', creadoTs: state.clockMs, escalado: false });
       break;
     }
@@ -328,6 +379,7 @@ function handleAction(msg) {
       }
       const total = m.pedido.items.reduce((sum, item) => sum + item.precio, 0);
       m.pago = { modo: 'demo', estado: 'confirmado', total, confirmadoTs: state.clockMs };
+      recordPaymentAnalytics(m);
       m.alertas.forEach(alertaCuenta => {
         if (alertaCuenta.tipo === 'cuenta' && alertaCuenta.estado !== 'resuelto') alertaCuenta.estado = 'resuelto';
       });
@@ -335,7 +387,7 @@ function handleAction(msg) {
     }
     case 'mesa_liberar': {
       if (!m) return;
-      m.ocupada = false; m.pedido = null; m.cuentaPedida = false; m.pago = null; m.alertas = [];
+      m.ocupada = false; m.pedido = null; m.cuentaPedida = false; m.cuentaPedidaTs = null; m.pago = null; m.alertas = [];
       break;
     }
     case 'reset_demo': {

@@ -73,7 +73,7 @@ let STAFF_TOKEN = null;
 let MESA_TOKEN = null;
 
 let state = {
-  clockMs:0, mesas:[],
+  clockMs:0, mesas:[], analytics:{pagosConfirmados:0,ventasDemo:0,tiempoPagoTotalSec:0,itemsVendidos:0,productos:{}},
   // ui local, no viene del servidor:
   role:null, clienteMesa:null, clienteCat:null, clienteFiltroSinTacc:false,
   clienteCart:[], clienteExpand:null, clienteHelpOpen:false, clienteSplashDismissed:false,
@@ -127,6 +127,7 @@ function aplicarMensajeRealtime(data, onFirstSnapshot){
     MESAS_TOTAL = msg.mesasTotal || MESAS_TOTAL;
     state.clockMs = msg.state.clockMs;
     state.mesas = msg.state.mesas;
+    if(msg.state.analytics) state.analytics = msg.state.analytics;
     detectarNuevasAlertas();
     if(onFirstSnapshot){ onFirstSnapshot(); onFirstSnapshot=null; }
     render();
@@ -598,6 +599,10 @@ function ticketHtml(m){
         ${it.estado==='listo'?`<button class="btn dark sm" onclick="avanzarItem(${m.numero},${it.id})">Entregado en mesa</button>`:''}
       </div></li>`).join('')}</ul></div>`;
 }
+function itemElapsedLabel(it){
+  const stageTs = it.estadoTs && Number.isFinite(it.estadoTs[it.estado]) ? it.estadoTs[it.estado] : it.enviadoTs;
+  return `hace ${fmtSec(timeAgoSec(stageTs))} en esta etapa`;
+}
 function avanzarItem(n,itemId){
   const m=findMesa(n); const item=m.pedido.items.find(it=>it.id===itemId);
   const i=item ? PEDIDO_ESTADOS.indexOf(item.estado) : -1;
@@ -677,16 +682,30 @@ function viewDueno(){
   const mesasOcupadas = state.mesas.filter(m=>m.ocupada).length;
   const alertasN = todasAlertasAbiertas().length;
   const urgentes = todasAlertasAbiertas().filter(x=>x.alerta.prioridad==='urgente').length;
-  const ventasDemo = state.mesas.reduce((s,m)=> s + (m.pedido? m.pedido.items.reduce((a,it)=>a+(it.precio||0),0):0), 0);
+  const analytics = state.analytics || {pagosConfirmados:0,ventasDemo:0,tiempoPagoTotalSec:0,itemsVendidos:0,productos:{}};
+  const pedidosActivos = state.mesas.filter(m=>m.pedido).length;
+  const ticketPromedio = analytics.pagosConfirmados ? Math.round(analytics.ventasDemo/analytics.pagosConfirmados) : 0;
+  const tiempoPagoPromedio = analytics.pagosConfirmados ? Math.round(analytics.tiempoPagoTotalSec/analytics.pagosConfirmados) : 0;
+  const topProductos = Object.values(analytics.productos||{}).sort((a,b)=>b.cantidad-a.cantidad).slice(0,5);
   const productosPendientes = todosLosProductos().filter(p=>precioBase(p)===null).length;
   return `<h1 class="view-title">DUEÑO</h1>
-    <p class="view-sub">Panel de negocio. ${productosPendientes} productos todavía sin precio confirmado — se excluyen del cálculo de ventas.</p>
-    <div class="mock-banner">${ic('clipboard')} Este dashboard usa datos reales de la carta y pedidos reales de esta sesión — pero no hay caja/POS conectado, así que "ventas" es sólo lo pedido desde este sistema hoy.</div>
+    <p class="view-sub">Panel de negocio de esta sesión. ${productosPendientes} productos todavía sin precio confirmado.</p>
+    <div class="mock-banner">${ic('clipboard')} Los cobros son confirmaciones de demostración acumuladas por este sistema. No hay caja, POS ni dinero real conectado.</div>
     <div class="grid cols-4">
-      ${statTile('Ventas (hoy, este sistema)', money(ventasDemo), 'pedidos por esta app', null)}
+      ${statTile('Cobrado demo', money(analytics.ventasDemo), analytics.pagosConfirmados+' cuenta(s)', null)}
+      ${statTile('Ticket promedio', money(ticketPromedio), 'cuentas confirmadas', null)}
+      ${statTile('Tiempo para pagar', fmtSec(tiempoPagoPromedio), 'promedio desde solicitud', null)}
+      ${statTile('Ítems cobrados', String(analytics.itemsVendidos), 'en esta sesión', null)}
+    </div>
+    <div class="grid cols-4" style="margin-top:14px;">
       ${statTile('Mesas ocupadas', mesasOcupadas+' / '+MESAS_TOTAL, null, null)}
+      ${statTile('Pedidos activos', String(pedidosActivos), 'ahora', null)}
       ${statTile('Alertas activas', String(alertasN), urgentes>0?urgentes+' urgente(s)':'todo tranquilo', urgentes>0?'downAlert':null)}
       ${statTile('Precios a confirmar', String(productosPendientes), 'productos', null)}
+    </div>
+    <div class="section-h">Más vendidos de la sesión</div>
+    <div class="grid cols-3">
+      ${topProductos.length ? topProductos.map((p,index)=>`<div class="insight"><span>${index+1}. ${escapeHtml(p.nombre)}</span><b>${p.cantidad} · ${money(p.total)}</b></div>`).join('') : '<div class="empty">Los productos aparecerán cuando se confirme el primer pago demo.</div>'}
     </div>
     <div class="section-h">Platos con 3D real activado</div>
     <div class="grid cols-3">
