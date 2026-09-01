@@ -986,6 +986,11 @@ test('el servidor reconstruye productos y precios desde el menú', async () => {
   assert.match(appSource, /Tu carrito sigue intacto/);
   assert.match(appSource, /Reintentar envío/);
   assert.match(appSource, /type:'pedido-enviado'/);
+  assert.match(appSource, /async function confirmarLlamarMozo\(\)/);
+  assert.match(appSource, /Reintentar llamado/);
+  assert.match(appSource, /async function confirmarPedirCuenta\(\)/);
+  assert.match(appSource, /Solo se quitarán del carrito cuando la cuenta sea solicitada con éxito/);
+  assert.match(appSource, /type:'cuenta-enviada'/);
 });
 
 test('productos, variantes y opciones inválidas no modifican estado', async () => {
