@@ -38,6 +38,11 @@ const PEDIDO_ESTADOS = ['enviado','preparando','listo','entregado'];
 const DESTINO_LABELS = {cocina:'Cocina', barra:'Barra'};
 const PEDIDO_LABELS = {enviado:'Recibido', preparando:'En preparación', listo:'Listo', entregado:'Entregado'};
 const MOZOS = ['Martín','Sofía','Lucas'];
+const ASISTENTE_OPCIONES = [
+  {id:'compartir',label:'Para compartir'}, {id:'contundente',label:'Algo contundente'},
+  {id:'liviano',label:'Algo más liviano'}, {id:'sin_tacc',label:'Sin TACC'},
+  {id:'dulce',label:'Un postre'},
+];
 const HELP_CATEGORIAS = [
   {id:'no_llego',  label:'No llegó mi pedido',        prioridad:'urgente'},
   {id:'incorrecto',label:'Mi pedido está incorrecto',  prioridad:'urgente'},
@@ -77,7 +82,8 @@ let state = {
   clockMs:0, mesas:[], analytics:{pagosConfirmados:0,ventasDemo:0,tiempoPagoTotalSec:0,itemsVendidos:0,productos:{},resenas:[]},
   // ui local, no viene del servidor:
   role:null, clienteMesa:null, clienteCat:null, clienteFiltroSinTacc:false,
-  clienteCart:[], clienteExpand:null, clienteHelpOpen:false, clienteSplashDismissed:false, clienteResenaError:'', clienteResenaEnviando:false,
+  clienteCart:[], clienteExpand:null, clienteHelpOpen:false, clienteSplashDismissed:false,
+  clienteAsistenteOpen:false, clientePreferencia:null, clienteResenaError:'', clienteResenaEnviando:false,
   mozoActivo:MOZOS[0], modal:null,
 };
 
@@ -397,6 +403,63 @@ function banner3dHtml(){
     </div></div>`;
 }
 
+function puntuarRecomendacion(p, perfil){
+  const categoria = p.categoriaId;
+  const texto = `${p.nombre} ${p.descripcion||''}`.toLowerCase();
+  if(perfil==='sin_tacc') return p.filtro_dietario && p.filtro_dietario.includes('sin_tacc') ? 20 : -1;
+  if(perfil==='dulce') return categoria==='sobremesa' ? 15+(p.candidato_destacado?1:0) : -1;
+  let score = 0;
+  if(perfil==='compartir'){
+    if(p.para_compartir) score += 12;
+    if(['tablas-y-picadas','caliente','pizzas'].includes(categoria)) score += 6;
+  }
+  if(perfil==='contundente'){
+    if(['entrepanes','cocina-resistencia','pizzas'].includes(categoria)) score += 8;
+    if(/burger|milanesa|bife|bondiola|asado/.test(texto)) score += 5;
+  }
+  if(perfil==='liviano'){
+    if(['mezcolanzas','sin-tacc'].includes(categoria)) score += 10;
+    if(/ensalada|rúcula|vegetal|hummus/.test(texto)) score += 4;
+  }
+  if(score>0 && p.candidato_destacado) score++;
+  return score || -1;
+}
+function recomendacionesAsistente(perfil){
+  return todosLosProductos()
+    .filter(p=>Number.isFinite(precioBase(p)))
+    .map(p=>({p,score:puntuarRecomendacion(p,perfil)}))
+    .filter(item=>item.score>0)
+    .sort((a,b)=>b.score-a.score || a.p.nombre.localeCompare(b.p.nombre,'es'))
+    .slice(0,3).map(item=>item.p);
+}
+function asistenteCartaHtml(){
+  if(!state.clienteAsistenteOpen){
+    return `<div class="ai-assistant compact"><div><span class="ai-badge">Recomendación inteligente · demo local</span>
+      <strong>¿No sabés qué pedir?</strong><p>Te orientamos con la carta real de Rabieta.</p></div>
+      <button class="btn primary sm" onclick="toggleAsistente()">Ayudame a elegir</button></div>`;
+  }
+  const recomendaciones = state.clientePreferencia ? recomendacionesAsistente(state.clientePreferencia) : [];
+  return `<div class="ai-assistant">
+    <div class="ai-head"><div><span class="ai-badge">Asistente Rabieta</span><strong>¿Qué te pinta hoy?</strong></div>
+      <button class="btn ghost sm" onclick="toggleAsistente()">Cerrar</button></div>
+    <div class="ai-options">${ASISTENTE_OPCIONES.map(op=>`<button class="${state.clientePreferencia===op.id?'active':''}" onclick="setPreferenciaAsistente('${op.id}')">${op.label}</button>`).join('')}</div>
+    ${state.clientePreferencia ? `<div class="ai-results">
+      ${recomendaciones.map(p=>`<button onclick="abrirRecomendacion('${p.id}')"><span><strong>${escapeHtml(p.nombre)}</strong><small>${escapeHtml(MENU_DATA.categorias.find(c=>c.id===p.categoriaId).nombre)}</small></span><b>${money(precioBase(p))}</b></button>`).join('')}
+    </div>${state.clientePreferencia==='sin_tacc'?`<p class="ai-warning">${ic('warning')} Según la carta marcada Sin TACC. Confirmá con el personal por contaminación cruzada.</p>`:''}` : '<p class="ai-empty">Elegí una opción y te mostramos hasta tres platos con precio confirmado.</p>'}
+    <p class="ai-fineprint">Funciona localmente con reglas sobre la carta; no envía datos ni usa un servicio externo.</p>
+  </div>`;
+}
+function toggleAsistente(){ state.clienteAsistenteOpen=!state.clienteAsistenteOpen; render(); }
+function setPreferenciaAsistente(perfil){
+  if(ASISTENTE_OPCIONES.some(op=>op.id===perfil)){ state.clientePreferencia=perfil; render(); }
+}
+function abrirRecomendacion(id){
+  const producto = todosLosProductos().find(p=>p.id===id);
+  if(!producto) return;
+  state.clienteCat=producto.categoriaId; state.clienteExpand=id; state.clienteAsistenteOpen=false; render();
+  setTimeout(()=>{ const dish=document.getElementById('dish-'+id); if(dish) dish.scrollIntoView({behavior:'smooth',block:'center'}); },0);
+}
+
 function splashHtml(mesa){
   const platos = platosDestacadosData();
   const destacado = platos.find(p=>p.id==='burger-rabieta' && p.imagen) || platos.find(p=>p.imagen);
@@ -475,6 +538,7 @@ function viewCliente(){
       <span class="badge-mesa">MESA ${mesa.numero}</span>
     </div>
     ${banner3dHtml()}
+    ${asistenteCartaHtml()}
     ${pedidoStatusHtml}${alertHtml}
 
     <div class="filter-chips">
@@ -525,12 +589,12 @@ function dishCardHtml(p, bloqueado){
       : expanded ? dishDetailHtml(p) : `<div style="margin-top:8px;"><button class="btn dark sm" onclick="toggleDish('${p.id}')">Agregar al pedido</button></div>`}
   `;
   if(p.imagen){
-    return `<div class="dish"><div class="dish-row">
+    return `<div class="dish" id="dish-${p.id}"><div class="dish-row">
       <img class="dish-thumb" src="${p.imagen}" alt="${p.nombre}">
       <div class="dish-body">${cuerpo}</div>
     </div></div>`;
   }
-  return `<div class="dish">${cuerpo}</div>`;
+  return `<div class="dish" id="dish-${p.id}">${cuerpo}</div>`;
 }
 function dishDetailHtml(p){
   let variantePicker = '';

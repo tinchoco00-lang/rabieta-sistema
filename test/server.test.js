@@ -833,3 +833,12 @@ test('3D y AR mantienen una foto útil y explican dispositivos incompatibles', (
   assert.match(source, /mv\.canActivateAR===false/);
   assert.match(source, /No se pudo abrir la cámara AR/);
 });
+
+test('el asistente recomienda solo productos reales con precio y declara su alcance local', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  assert.match(source, /function recomendacionesAsistente\(perfil\)/);
+  assert.match(source, /filter\(p=>Number\.isFinite\(precioBase\(p\)\)\)/);
+  assert.match(source, /no envía datos ni usa un servicio externo/);
+  assert.match(source, /Confirmá con el personal por contaminación cruzada/);
+  assert.doesNotMatch(source, /fetch\(['"]\/api\/recomend/);
+});
