@@ -181,6 +181,62 @@ test('cada rol recibe sólo sus vistas, datos y acciones operativas', async () =
   await resetState();
 });
 
+test('recorrido completo QR a analytics funciona con roles separados', async () => {
+  staffToken = (await loginAs('encargado')).token;
+  await resetState();
+  const cocina = await loginAs('cocina');
+  const mozo = await loginAs('mozo');
+  const dueno = await loginAs('dueno');
+
+  const linksResponse = await fetch(`${baseUrl}/api/mesa-links`, {
+    headers: { authorization: `Bearer ${staffToken}` },
+  });
+  assert.equal(linksResponse.status, 200);
+  const links = await linksResponse.json();
+  assert.equal(links.mesas[0].numero, 1);
+  assert.match(links.mesas[0].path, /^\/mesa\.html\?mesa=1(?:#token=[a-f0-9]{64})?$/);
+
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [
+    { productoId: 'hummus-rabieta' },
+    { productoId: 'agua' },
+  ] })).status, 200);
+
+  let mesa = (await getState()).mesas[0];
+  assert.equal(mesa.ocupada, true);
+  assert.deepEqual(mesa.pedido.items.map(item => item.destino), ['cocina', 'barra']);
+
+  for (const item of mesa.pedido.items) {
+    assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId: item.id, estado: 'preparando' }, cocina.token)).status, 200);
+    assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId: item.id, estado: 'listo' }, cocina.token)).status, 200);
+    assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId: item.id, estado: 'entregado' }, mozo.token)).status, 200);
+  }
+
+  mesa = (await getState()).mesas[0];
+  assert.equal(mesa.pedido.estado, 'entregado');
+  assert.equal((await action({ type: 'pedir_cuenta', mesa: 1 })).status, 200);
+  mesa = (await getState()).mesas[0];
+  const alertaCuenta = mesa.alertas.find(alerta => alerta.tipo === 'cuenta');
+  assert.ok(alertaCuenta);
+  assert.equal((await action({ type: 'alerta_atender', alertaId: alertaCuenta.id }, mozo.token)).status, 200);
+  assert.equal((await action({ type: 'pago_demo_confirmar', mesa: 1 }, mozo.token)).status, 200);
+  assert.equal((await action({
+    type: 'resena_enviar', mesa: 1, puntuacion: 5, comentario: 'Demo punta a punta lista',
+  })).status, 200);
+
+  const ownerState = (await getStaffStateWithToken(dueno.token)).state;
+  assert.equal(ownerState.analytics.pagosConfirmados, 1);
+  assert.equal(ownerState.analytics.itemsVendidos, 2);
+  assert.equal(ownerState.analytics.resenas.length, 1);
+  assert.equal(ownerState.analytics.resenas[0].comentario, 'Demo punta a punta lista');
+  assert.equal((await action({ type: 'mesa_liberar', mesa: 1 }, mozo.token)).status, 200);
+
+  mesa = (await getState()).mesas[0];
+  assert.equal(mesa.ocupada, false);
+  assert.equal(mesa.pedido, null);
+  assert.equal((await getStaffStateWithToken(dueno.token)).state.analytics.pagosConfirmados, 1);
+  await resetState();
+});
+
 test('acciones internas requieren Bearer token y las públicas no', async () => {
   assert.equal((await action({ type: 'reset_demo' })).status, 401);
   assert.equal((await action({ type: 'reset_demo' }, 'token-invalido')).status, 401);

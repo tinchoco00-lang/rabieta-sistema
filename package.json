@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test",
+    "demo:smoke": "node --test --test-name-pattern=\"recorrido completo\" test/server.test.js",
     "check": "node --check server.js && node --check persistence.js && node --check operational.js && node --check public/app.js && node --check public/vendor/qrcode.js && node --check test/server.test.js && node --check test/persistence.test.js && node --check test/operational.test.js && node --check test/postgres.integration.test.js && node --check scripts/validate-json.js && node scripts/validate-json.js && npm test"
   },
   "engines": {
