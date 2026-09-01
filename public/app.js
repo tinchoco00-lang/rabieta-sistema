@@ -893,9 +893,22 @@ function viewDueno(){
   const resenasCriticas = resenas.filter(r=>r.puntuacion<=3).length;
   const resenasRecientes = [...resenas].reverse().slice(0,6);
   const productosPendientes = todosLosProductos().filter(p=>precioBase(p)===null).length;
+  const flujo = [
+    {label:'Sin pedido',value:state.mesas.filter(m=>m.ocupada&&!m.pedido).length,hint:'mesas sentadas'},
+    {label:'En producción',value:state.mesas.filter(m=>m.pedido&&!m.cuentaPedida&&m.pedido.items.some(i=>i.estado==='enviado'||i.estado==='preparando')).length,hint:'cocina o barra'},
+    {label:'Esperando salón',value:itemsEsperandoSalon.length,hint:'ítems listos'},
+    {label:'Cuenta abierta',value:state.mesas.filter(m=>m.cuentaPedida&&!m.pago).length,hint:'esperando pago'},
+    {label:'Pagadas',value:state.mesas.filter(m=>m.pago&&m.pago.estado==='confirmado').length,hint:'listas para liberar'},
+  ];
+  const cuello = flujo.reduce((mayor,paso)=>paso.value>mayor.value?paso:mayor,flujo[0]);
   return `<h1 class="view-title">DUEÑO</h1>
     <p class="view-sub">Panel de negocio de esta sesión. ${productosPendientes} productos todavía sin precio confirmado.</p>
     <div class="mock-banner">${ic('clipboard')} Los cobros son confirmaciones de demostración acumuladas por este sistema. No hay caja, POS ni dinero real conectado.</div>
+    <div class="section-h">Embudo operativo ahora</div>
+    <div class="owner-funnel">
+      ${flujo.map((paso,index)=>`<div class="funnel-step ${paso.value?'active':''}"><span class="funnel-index">${index+1}</span><div><b>${paso.label}</b><small>${paso.hint}</small></div><strong>${paso.value}</strong></div>`).join('')}
+    </div>
+    <div class="owner-focus ${cuello.value?'attention':''}">${cuello.value?`${ic('warning')} Foco sugerido: <b>${cuello.label}</b> concentra ${cuello.value} unidad(es) ahora.`:`${ic('checkring')} No hay cuellos de botella activos en este momento.`}</div>
     <div class="grid cols-4">
       ${statTile('Cobrado demo', money(analytics.ventasDemo), analytics.pagosConfirmados+' cuenta(s)', null)}
       ${statTile('Ticket promedio', money(ticketPromedio), 'cuentas confirmadas', null)}

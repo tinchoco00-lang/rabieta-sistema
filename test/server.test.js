@@ -875,3 +875,14 @@ test('el asistente recomienda solo productos reales con precio y declara su alca
   assert.match(source, /Confirmá con el personal por contaminación cruzada/);
   assert.doesNotMatch(source, /fetch\(['"]\/api\/recomend/);
 });
+
+test('dueño ve un embudo operativo vivo con foco sugerido', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  assert.match(source, /Embudo operativo ahora/);
+  assert.match(source, /label:'Sin pedido'/);
+  assert.match(source, /label:'En producción'/);
+  assert.match(source, /label:'Esperando salón'/);
+  assert.match(source, /label:'Cuenta abierta'/);
+  assert.match(source, /label:'Pagadas'/);
+  assert.match(source, /Foco sugerido/);
+});
