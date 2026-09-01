@@ -96,7 +96,7 @@ let state = {
   clienteCart:[], clienteExpand:null, clienteHelpOpen:false, clienteSplashDismissed:false,
   clienteAsistenteOpen:false, clientePreferencia:null, clienteAsistenteConsulta:'', clienteAsistenteRespuesta:null,
   clienteAsistenteAgregado:null, clienteResenaError:'', clienteResenaEnviando:false,
-  clienteRepetirAviso:'',
+  clienteRepetirAviso:'', clientePedidoEnviando:false, clientePedidoError:'',
   clienteResenaDraft:{puntuacion:null,comentario:'',crmConsentimiento:false,crmCanal:'whatsapp',crmContacto:'',crmNombre:''},
   mozoActivo:MOZOS[0], modal:null, mesaLinks:null, mesaLinksLoading:false, mesaLinksError:'', presentacionCargada:false,
   demoPasoActual:1, demoPasosVistos:new Set(),
@@ -427,7 +427,10 @@ function renderModal(){
   const root = document.getElementById('modalRoot');
   if(!root) return;
   if(!state.modal){ root.innerHTML=''; delete root.dataset.modalKey; return; }
-  const modalKey=`${state.modal.type}:${state.modal.id||state.modal.numero||''}${state.modal.type==='cart'?':'+state.clienteCart.length:''}`;
+  const cartModalKey = state.modal.type==='cart'
+    ? ':'+state.clienteCart.map(item=>cantidadLinea(item)).join(',')+':'+state.clientePedidoEnviando+':'+state.clientePedidoError
+    : '';
+  const modalKey=`${state.modal.type}:${state.modal.id||state.modal.numero||''}${cartModalKey}`;
   if(root.dataset.modalKey===modalKey && root.firstElementChild) return;
   root.dataset.modalKey=modalKey;
   if(state.modal.type==='mesa-preview'){
@@ -471,13 +474,23 @@ function renderModal(){
         </div>
       </div></div>`;
   } else if(state.modal.type==='cart'){
-    const total=state.clienteCart.reduce((sum,item)=>sum+(item.precio||0),0);
-    const pendientes=state.clienteCart.filter(item=>item.precio===null).length;
+    const unidades=cantidadCarrito();
+    const total=totalCarrito();
+    const pendientes=state.clienteCart.reduce((sum,item)=>sum+(item.precio===null?cantidadLinea(item):0),0);
     root.innerHTML = `<div class="modal-bg" onclick="closeModal(event)"><div class="modal cart-modal" onclick="event.stopPropagation()">
       <div class="cart-modal-head"><div><span class="presentation-kicker">Antes de enviar</span><h3>Revisá tu carrito</h3></div><button class="btn ghost sm" onclick="closeModal()">Seguir eligiendo</button></div>
-      <ul class="cart-review-list">${state.clienteCart.map((item,index)=>`<li><div><strong>${escapeHtml(item.nombre)}</strong>${item.notas?`<span>“${escapeHtml(item.notas)}”</span>`:''}</div><b>${money(item.precio)}</b><button class="cart-remove" aria-label="Quitar ${escapeHtml(item.nombre)}" onclick="quitarDelCarrito(${index})">×</button></li>`).join('')}</ul>
-      <div class="cart-review-total"><span>${state.clienteCart.length} ítem(s)${pendientes?' · '+pendientes+' a confirmar':''}</span><strong>${money(total)}${pendientes?' + pendientes':''}</strong></div>
-      <div class="cart-modal-actions"><button class="btn ghost" onclick="vaciarCarrito()">Vaciar</button><button class="btn primary" onclick="enviarPedido()">Enviar ${findMesa(state.clienteMesa)&&findMesa(state.clienteMesa).pedido?'otra ronda':'pedido'} a cocina →</button></div>
+      <ul class="cart-review-list">${state.clienteCart.map((item,index)=>{ const cantidad=cantidadLinea(item); return `<li><div><strong>${escapeHtml(item.nombre)}</strong>${item.notas?`<span>“${escapeHtml(item.notas)}”</span>`:''}</div><div class="cart-qty" aria-label="Cantidad de ${escapeHtml(item.nombre)}"><button aria-label="Restar uno" ${state.clientePedidoEnviando?'disabled':''} onclick="cambiarCantidadCarrito(${index},-1)">−</button><span aria-live="polite">${cantidad}</span><button aria-label="Sumar uno" ${cantidad>=20||state.clientePedidoEnviando?'disabled':''} onclick="cambiarCantidadCarrito(${index},1)">+</button></div><b>${cantidad>1&&item.precio!==null?`${cantidad} × ${money(item.precio)} · `:''}${money(item.precio===null?null:item.precio*cantidad)}</b><button class="cart-remove" aria-label="Quitar ${escapeHtml(item.nombre)}" ${state.clientePedidoEnviando?'disabled':''} onclick="quitarDelCarrito(${index})">×</button></li>`; }).join('')}</ul>
+      <div class="cart-review-total"><span>${unidades} unidad(es)${pendientes?' · '+pendientes+' a confirmar':''}</span><strong>${money(total)}${pendientes?' + pendientes':''}</strong></div>
+      ${state.clientePedidoError?`<div class="cart-send-error" role="alert">${ic('warning')} <span><strong>No se envió el pedido.</strong>${escapeHtml(state.clientePedidoError)} Tu carrito sigue intacto.</span></div>`:''}
+      <div class="cart-modal-actions"><button class="btn ghost" ${state.clientePedidoEnviando?'disabled':''} onclick="vaciarCarrito()">Vaciar</button><button class="btn primary" ${state.clientePedidoEnviando?'disabled':''} aria-busy="${state.clientePedidoEnviando?'true':'false'}" onclick="enviarPedido()">${state.clientePedidoEnviando?'Enviando…':state.clientePedidoError?'Reintentar envío →':`Enviar ${findMesa(state.clienteMesa)&&findMesa(state.clienteMesa).pedido?'otra ronda':'pedido'} a cocina →`}</button></div>
+    </div></div>`;
+  } else if(state.modal.type==='pedido-enviado'){
+    root.innerHTML = `<div class="modal-bg"><div class="modal order-sent-modal">
+      <div class="icon">${ic('checkring')}</div>
+      <span class="presentation-kicker">Pedido confirmado</span>
+      <h3>${state.modal.esRonda?'Nueva ronda enviada':'¡Ya lo recibió el equipo!'}</h3>
+      <p>Enviamos ${state.modal.unidades} unidad(es) de la Mesa ${state.clienteMesa}. Podés seguir el avance de cada producto en vivo desde la carta.</p>
+      <button class="btn good block" onclick="closeModal()">Ver estado del pedido</button>
     </div></div>`;
   } else if(state.modal.type==='confirm-mozo'){
     root.innerHTML = `<div class="modal-bg" onclick="closeModal(event)">
@@ -672,8 +685,9 @@ function viewCliente(){
     ${resolvedAlerts.map(a=>`<div class="resolved-request"><span>${escapeHtml(a.label)}</span><span class="pill libre">${ic('checkring')} Resuelto</span></div>`).join('')}
     </div>` : '';
 
-  const cartTotal = state.clienteCart.reduce((s,it)=> s + (it.precio||0), 0);
-  const cartPendientes = state.clienteCart.filter(it=>it.precio===null).length;
+  const cartTotal = totalCarrito();
+  const cartUnidades = cantidadCarrito();
+  const cartPendientes = state.clienteCart.reduce((sum,item)=>sum+(item.precio===null?cantidadLinea(item):0),0);
 
   return `
     <h1 class="view-title">CARTA</h1>
@@ -706,7 +720,7 @@ function viewCliente(){
     ${state.clienteHelpOpen ? helpPanelHtml() : ''}
     ${state.clienteCart.length && !mesa.cuentaPedida ? `<div class="cart-bar">
       <div><div class="cart-total">${money(cartTotal)}${cartPendientes?' + '+cartPendientes+' a confirmar':''}</div>
-      <div class="cart-info">${state.clienteCart.length} ítem(s) en el carrito</div></div>
+      <div class="cart-info">${cartUnidades} unidad(es) en el carrito</div></div>
       <button class="btn primary" onclick="abrirCarrito()">Revisar y ${mesa.pedido?'enviar otra ronda':'enviar pedido'} →</button></div>` : ''}
   `;
 }
@@ -779,19 +793,37 @@ function agregarAlCarrito(id){
     if(op){ opcion = op; nombre += ' (' + op + ')'; }
   }
   const nota = (document.getElementById('nota_'+id)||{}).value || '';
-  state.clienteCart.push({productoId:id, variante, opcion, observacion:nota, nombre, precio, notas:nota});
+  agregarLineaCarrito({productoId:id, variante, opcion, observacion:nota, nombre, precio, notas:nota});
   state.clienteRepetirAviso='';
   state.clienteExpand = null;
   render();
 }
 function abrirCarrito(){ if(state.clienteCart.length){ state.modal={type:'cart'}; render(); } }
+function cantidadLinea(item){ return Number.isInteger(item.cantidad) && item.cantidad>0 ? item.cantidad : 1; }
+function cantidadCarrito(){ return state.clienteCart.reduce((sum,item)=>sum+cantidadLinea(item),0); }
+function totalCarrito(){ return state.clienteCart.reduce((sum,item)=>sum+(item.precio||0)*cantidadLinea(item),0); }
+function agregarLineaCarrito(item){
+  const existente=state.clienteCart.find(linea=>linea.productoId===item.productoId && linea.variante===item.variante && linea.opcion===item.opcion && linea.observacion===item.observacion);
+  if(existente) existente.cantidad=Math.min(20,cantidadLinea(existente)+1);
+  else state.clienteCart.push({...item,cantidad:1});
+  state.clientePedidoError='';
+}
+function cambiarCantidadCarrito(index,delta){
+  if(state.clientePedidoEnviando || index<0 || index>=state.clienteCart.length || !Number.isInteger(delta)) return;
+  const cantidad=Math.min(20,cantidadLinea(state.clienteCart[index])+delta);
+  if(cantidad<=0){ quitarDelCarrito(index); return; }
+  state.clienteCart[index].cantidad=cantidad;
+  state.clientePedidoError='';
+  render();
+}
 function quitarDelCarrito(index){
-  if(index<0 || index>=state.clienteCart.length) return;
+  if(state.clientePedidoEnviando || index<0 || index>=state.clienteCart.length) return;
   state.clienteCart.splice(index,1);
+  state.clientePedidoError='';
   if(!state.clienteCart.length) state.modal=null;
   render();
 }
-function vaciarCarrito(){ state.clienteCart=[]; state.modal=null; state.clienteRepetirAviso=''; render(); }
+function vaciarCarrito(){ if(state.clientePedidoEnviando) return; state.clienteCart=[]; state.modal=null; state.clienteRepetirAviso=''; state.clientePedidoError=''; render(); }
 function repetirUltimaRonda(){
   const mesa=findMesa(state.clienteMesa);
   if(!mesa || !mesa.pedido || mesa.cuentaPedida) return;
@@ -807,7 +839,7 @@ function repetirUltimaRonda(){
     const precio=variante?variante.precio:precioBase(p);
     if(!Number.isFinite(precio)){ omitidos++; return; }
     const nombre=p.nombre+(variante?' — '+variante.nombre:'')+(opcion?' ('+opcion+')':'');
-    state.clienteCart.push({
+    agregarLineaCarrito({
       productoId:p.id, variante:variante?variante.nombre:null, opcion:opcion||null,
       observacion:item.notas||'', nombre, precio, notas:item.notas||'',
     });
@@ -816,19 +848,34 @@ function repetirUltimaRonda(){
   state.clienteRepetirAviso=agregados ? `${agregados} ítem(s) agregados${omitidos?' · '+omitidos+' requieren elegir de nuevo':''}` : 'Esta ronda requiere elegir sus opciones de nuevo.';
   render();
 }
-function enviarPedido(){
-  if(!state.clienteCart.length) return;
-  const items = state.clienteCart.map(item=>{
+async function enviarPedido(){
+  if(!state.clienteCart.length || state.clientePedidoEnviando) return;
+  const esRonda=Boolean(findMesa(state.clienteMesa)&&findMesa(state.clienteMesa).pedido);
+  const unidades=cantidadCarrito();
+  const items = state.clienteCart.flatMap(item=>Array.from({length:cantidadLinea(item)},()=>{
     const payload = {productoId:item.productoId, observacion:item.observacion};
     if(item.variante) payload.variante = item.variante;
     if(item.opcion) payload.opcion = item.opcion;
     return payload;
-  });
-  send({type:'pedido_nuevo', mesa:state.clienteMesa, items});
-  state.clienteCart = [];
-  state.clienteRepetirAviso='';
-  state.modal=null;
+  }));
+  state.clientePedidoEnviando=true;
+  state.clientePedidoError='';
   render();
+  try{
+    const response=await send({type:'pedido_nuevo', mesa:state.clienteMesa, items});
+    let payload={};
+    if(response){ try{ payload=await response.json(); }catch(e){} }
+    if(!response || !response.ok) throw new Error(payload.error || 'No pudimos conectar con Rabieta. Revisá tu conexión y probá de nuevo.');
+    state.clienteCart=[];
+    state.clienteRepetirAviso='';
+    state.modal={type:'pedido-enviado',unidades,esRonda};
+  }catch(error){
+    state.clientePedidoError=error && error.message ? error.message : 'No pudimos enviar el pedido. Probá de nuevo.';
+    state.modal={type:'cart'};
+  }finally{
+    state.clientePedidoEnviando=false;
+    render();
+  }
 }
 function llamarMozo(){ state.modal = {type:'confirm-mozo'}; render(); }
 function confirmarLlamarMozo(){
@@ -871,7 +918,7 @@ function agregarRecomendacion(id){
   if(p.variantes || p.opciones){ abrirRecomendacion(id); return; }
   const precio = precioBase(p);
   if(!Number.isFinite(precio)) return;
-  state.clienteCart.push({productoId:id,variante:null,opcion:null,observacion:'',nombre:p.nombre,precio,notas:''});
+  agregarLineaCarrito({productoId:id,variante:null,opcion:null,observacion:'',nombre:p.nombre,precio,notas:''});
   state.clienteAsistenteAgregado=id;
   render();
 }

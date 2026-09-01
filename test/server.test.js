@@ -959,6 +959,11 @@ test('el servidor reconstruye productos y precios desde el menú', async () => {
   assert.match(appSource, /Revisá tu carrito/);
   assert.match(appSource, /function quitarDelCarrito\(index\)/);
   assert.match(appSource, /variante:variante\?variante\.nombre:null, opcion:opcion\|\|null/);
+  assert.match(appSource, /function cambiarCantidadCarrito\(index,delta\)/);
+  assert.match(appSource, /flatMap\(item=>Array\.from\(\{length:cantidadLinea\(item\)\}/);
+  assert.match(appSource, /Tu carrito sigue intacto/);
+  assert.match(appSource, /Reintentar envío/);
+  assert.match(appSource, /type:'pedido-enviado'/);
 });
 
 test('productos, variantes y opciones inválidas no modifican estado', async () => {
