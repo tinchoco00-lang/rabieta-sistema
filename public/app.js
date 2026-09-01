@@ -714,6 +714,9 @@ function avanzarItem(n,itemId){
   const i=item ? PEDIDO_ESTADOS.indexOf(item.estado) : -1;
   if(i>=0 && i<PEDIDO_ESTADOS.length-1) send({type:'pedido_estado', mesa:n, itemId, estado:PEDIDO_ESTADOS[i+1]});
 }
+function confirmarEntrega(n,itemId){
+  send({type:'pedido_estado', mesa:n, itemId, estado:'entregado'});
+}
 
 // Reemplaza el KDS único por dos colas independientes. La clasificación vive
 // en el servidor; este panel solo la muestra y conserva las acciones por ítem.
@@ -745,11 +748,32 @@ function ticketHtml(m,destino){
         <span class="item-mod">${itemElapsedLabel(it)}</span>
         ${it.estado==='enviado'?`<button class="btn primary sm" onclick="avanzarItem(${m.numero},${it.id})">Empezar a preparar</button>`:''}
         ${it.estado==='preparando'?`<button class="btn good sm" onclick="avanzarItem(${m.numero},${it.id})">Marcar listo</button>`:''}
-        ${it.estado==='listo'?`<button class="btn dark sm" onclick="avanzarItem(${m.numero},${it.id})">Entregado en mesa</button>`:''}
+        ${it.estado==='listo'?`<span class="handoff-waiting">Esperando retiro de salón</span>`:''}
       </div></li>`).join('')}</ul></div>`;
 }
 
 /* ---------------- MOZO ---------------- */
+function itemsListosParaEntregar(mozo){
+  const listos=[];
+  state.mesas.forEach(mesa=>{
+    if(mozo && mesa.mozo!==mozo) return;
+    if(!mesa.pedido) return;
+    mesa.pedido.items.filter(item=>item.estado==='listo').forEach(item=>listos.push({mesa,item}));
+  });
+  return listos.sort((a,b)=>(a.item.estadoTs.listo||a.item.enviadoTs)-(b.item.estadoTs.listo||b.item.enviadoTs));
+}
+function colaEntregaHtml(mozo){
+  const listos=itemsListosParaEntregar(mozo);
+  return `<div class="section-h">${ic('plate')} Listo para llevar (${listos.length})</div>
+    <p class="handoff-help">Cocina y Barra ya terminaron estos ítems. Confirmá la entrega recién cuando lleguen a la mesa.</p>
+    <div class="handoff-grid">${listos.length?listos.map(({mesa,item})=>`<article class="handoff-card">
+      <div class="handoff-top"><strong>Mesa ${mesa.numero}</strong><span class="pill normal">${DESTINO_LABELS[itemDestino(item)]}</span></div>
+      <div class="handoff-item">${escapeHtml(item.nombre)}</div>
+      ${item.notas?`<div class="handoff-notes">“${escapeHtml(item.notas)}”</div>`:''}
+      <div class="handoff-meta">Listo hace ${fmtSec(timeAgoSec((item.estadoTs&&item.estadoTs.listo)||item.enviadoTs))}</div>
+      <button class="btn good sm block" onclick="confirmarEntrega(${mesa.numero},${item.id})">Confirmar entrega en mesa</button>
+    </article>`).join(''):'<div class="empty">No hay platos ni bebidas esperando retiro.</div>'}</div>`;
+}
 function viewMozo(){
   const misMesas = state.mesas.filter(m=>m.mozo===state.mozoActivo && (m.ocupada || alertasAbiertas(m).length));
   const misAlertas = todasAlertasAbiertas().filter(x=>x.mesa.mozo===state.mozoActivo);
@@ -757,6 +781,7 @@ function viewMozo(){
     <p class="view-sub">Sos: <select onchange="cambiarMozo(this.value)">${MOZOS.map(m=>`<option ${m===state.mozoActivo?'selected':''}>${m}</option>`).join('')}</select></p>
     <div class="section-h">${ic('bell')} Tus alertas (${misAlertas.length})</div>
     ${misAlertas.length ? misAlertas.map(({mesa,alerta})=>alertRowHtml(mesa,alerta,true)).join('') : '<div class="empty">Sin alertas pendientes.</div>'}
+    ${colaEntregaHtml(state.mozoActivo)}
     <div class="section-h">Tus mesas</div>
     <div class="mesa-grid">${misMesas.length ? misMesas.map(m=>mesaTileHtml(m)).join('') : '<div class="empty">Sin mesas activas.</div>'}</div>`;
 }
@@ -800,6 +825,7 @@ function viewEncargado(){
     ${escaladas.length ? `<div class="card" style="border-color:var(--critical);margin-bottom:16px;">
       <div style="font-weight:800;color:#ff9797;font-size:13px;margin-bottom:8px;">${ic('warning')} ${escaladas.length} alerta(s) escalada(s)</div>
       ${escaladas.map(({mesa,alerta})=>alertRowHtml(mesa,alerta,true)).join('')}</div>` : ''}
+    ${colaEntregaHtml(null)}
     <div class="section-h">Plano de salón</div>
     <div class="mesa-grid">${state.mesas.map(m=>{
       const prio=prioridadMax(alertasAbiertas(m));
@@ -824,6 +850,8 @@ function viewDueno(){
   const urgentes = todasAlertasAbiertas().filter(x=>x.alerta.prioridad==='urgente').length;
   const analytics = state.analytics || {pagosConfirmados:0,ventasDemo:0,tiempoPagoTotalSec:0,itemsVendidos:0,productos:{},resenas:[]};
   const pedidosActivos = state.mesas.filter(m=>m.pedido).length;
+  const itemsEsperandoSalon = itemsListosParaEntregar(null);
+  const esperaSalonMax = itemsEsperandoSalon.reduce((max,{item})=>Math.max(max,timeAgoSec((item.estadoTs&&item.estadoTs.listo)||item.enviadoTs)),0);
   const ticketPromedio = analytics.pagosConfirmados ? Math.round(analytics.ventasDemo/analytics.pagosConfirmados) : 0;
   const tiempoPagoPromedio = analytics.pagosConfirmados ? Math.round(analytics.tiempoPagoTotalSec/analytics.pagosConfirmados) : 0;
   const topProductos = Object.values(analytics.productos||{}).sort((a,b)=>b.cantidad-a.cantidad).slice(0,5);
@@ -844,6 +872,7 @@ function viewDueno(){
     <div class="grid cols-4" style="margin-top:14px;">
       ${statTile('Mesas ocupadas', mesasOcupadas+' / '+MESAS_TOTAL, null, null)}
       ${statTile('Pedidos activos', String(pedidosActivos), 'ahora', null)}
+      ${statTile('Esperando salón', String(itemsEsperandoSalon.length), itemsEsperandoSalon.length?'máximo '+fmtSec(esperaSalonMax):'sin retiros pendientes', esperaSalonMax>120?'downAlert':null)}
       ${statTile('Alertas activas', String(alertasN), urgentes>0?urgentes+' urgente(s)':'todo tranquilo', urgentes>0?'downAlert':null)}
       ${statTile('Experiencia', ratingPromedio, resenas.length?resenas.length+' opinión(es) · '+resenasCriticas+' a recuperar':'sin opiniones todavía', resenasCriticas?'downAlert':null)}
     </div>

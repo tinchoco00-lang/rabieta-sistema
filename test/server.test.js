@@ -834,6 +834,17 @@ test('3D y AR mantienen una foto útil y explican dispositivos incompatibles', (
   assert.match(source, /No se pudo abrir la cámara AR/);
 });
 
+test('el traspaso de ítems listos se confirma desde salón y no desde Cocina o Barra', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  assert.match(source, /function itemsListosParaEntregar\(mozo\)/);
+  assert.match(source, /item\.estado==='listo'/);
+  assert.match(source, /Confirmar entrega en mesa/);
+  assert.match(source, /confirmarEntrega\(\$\{mesa\.numero\},\$\{item\.id\}\)/);
+  assert.match(source, /Esperando retiro de salón/);
+  assert.match(source, /statTile\('Esperando salón'/);
+  assert.doesNotMatch(source, /it\.estado==='listo'\?`<button[^`]+avanzarItem/);
+});
+
 test('el asistente recomienda solo productos reales con precio y declara su alcance local', () => {
   const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
   assert.match(source, /function recomendacionesAsistente\(perfil\)/);
