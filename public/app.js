@@ -601,8 +601,9 @@ function viewCliente(){
         <div class="step ${i<idx?'done':i===idx?'current':''}"><div class="bar"></div>
           <div class="circle">${i<idx?'✓':i+1}</div><div class="lbl">${PEDIDO_LABELS[s]}</div></div>`).join('')}
       </div>
-      <ul style="font-size:13px;margin:0;padding-left:18px;color:var(--ink-2);">
-        ${mesa.pedido.items.map(it=>`<li>${escapeHtml(it.nombre)}${it.notas?` — "${escapeHtml(it.notas)}"`:''} <span class="pill ${itemEstadoClass(it.estado)}">${PEDIDO_LABELS[it.estado]}</span></li>`).join('')}
+      <ul class="customer-order-items">
+        ${mesa.pedido.items.map(it=>`<li><div>${escapeHtml(it.nombre)}${it.notas?` — "${escapeHtml(it.notas)}"`:''}</div>
+          <div class="customer-order-meta"><span class="pill ${itemEstadoClass(it.estado)}">${PEDIDO_LABELS[it.estado]}</span><span>${itemElapsedLabel(it)}</span></div></li>`).join('')}
       </ul>${pagoHtml}</div>`;
   }
   const openAlerts = alertasAbiertas(mesa);

@@ -1005,6 +1005,12 @@ test('3D y AR mantienen una foto útil y explican dispositivos incompatibles', (
   assert.match(source, /No se pudo abrir la cámara AR/);
 });
 
+test('cliente ve estado y tiempo realtime de cada ítem del pedido', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  assert.match(source, /class="customer-order-items"/);
+  assert.match(source, /class="customer-order-meta"[\s\S]*itemElapsedLabel\(it\)/);
+});
+
 test('el traspaso de ítems listos se confirma desde salón y no desde Cocina o Barra', () => {
   const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
   assert.match(source, /function itemsListosParaEntregar\(mozo\)/);
