@@ -208,14 +208,21 @@ test('Encargado carga un escenario sintético visible de punta a punta', async (
   const appSource = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
   assert.match(appSource, /state\.presentacionCargada = msg\.state\.presentacionCargada === true/);
   assert.match(appSource, /Recorrido de demo · 5 minutos/);
-  assert.match(appSource, /mesaDemoLinkHtml\(1,'Abrir cliente'/);
+  assert.match(appSource, /mesaDemoLinkHtml\(1,state\.demoPasosVistos\.has\(1\)\?'Volver a abrir':'Empezar demo','primary','user',1\)/);
   assert.match(appSource, /type:'mesa-preview',numero,path:mesa\.path/);
   assert.match(appSource, /title="Vista cliente de Mesa \$\{state\.modal\.numero\}"/);
+  assert.match(appSource, /Modo presentador · paso \$\{paso\} de 5/);
+  assert.match(appSource, /Seguir a Cocina \+ Barra/);
+  assert.match(appSource, /Abrir cuenta cliente/);
+  assert.match(appSource, /Repetir recorrido/);
+  assert.match(appSource, /Paso 2 · tocá esta tarjeta/);
+  assert.match(appSource, /Paso 3 · entregá este ítem/);
+  assert.match(appSource, /Paso 3 · resolvé este reclamo/);
   assert.match(appSource, /preview=1\$\{hash\}/);
   assert.match(appSource, /root\.dataset\.modalKey===modalKey/);
   assert.doesNotMatch(appSource, /window\.open\(mesaAccessUrl/);
   assert.match(fs.readFileSync(path.join(root, 'public', 'mesa.html'), 'utf8'), /clienteSplashDismissed = params\.get\('preview'\) === '1'/);
-  assert.match(appSource, /irPasoDemo\('dueno'\)/);
+  assert.match(appSource, /irPasoDemo\('dueno',null,5\)/);
   assert.equal((await action({ type: 'reset_demo' }, encargado.token)).status, 200);
 });
 

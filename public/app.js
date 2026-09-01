@@ -98,6 +98,7 @@ let state = {
   clienteAsistenteAgregado:null, clienteResenaError:'', clienteResenaEnviando:false,
   clienteResenaDraft:{puntuacion:null,comentario:'',crmConsentimiento:false,crmCanal:'whatsapp',crmContacto:'',crmNombre:''},
   mozoActivo:MOZOS[0], modal:null, mesaLinks:null, mesaLinksLoading:false, mesaLinksError:'', presentacionCargada:false,
+  demoPasoActual:1, demoPasosVistos:new Set(),
 };
 
 function money(n){ return n===null || n===undefined ? 'A confirmar' : '$'+n.toLocaleString('es-AR'); }
@@ -295,6 +296,9 @@ function render(){
   else if(state.role==='encargado') app.innerHTML = viewEncargado();
   else if(state.role==='dueno') app.innerHTML = viewDueno();
   else if(state.role==='qrs') app.innerHTML = viewMesaQrs();
+  if(state.presentacionCargada && state.role!=='encargado' && state.role!=='cliente' && STAFF_ALLOWED_VIEWS.includes('encargado')){
+    app.insertAdjacentHTML('afterbegin', demoDockHtml());
+  }
   const restoreTargets = app.querySelectorAll('.cat-tabs, .tiles3d');
   restoreTargets.forEach(el=>{
     const match = scrollPos.find(([cls])=>cls===el.className);
@@ -350,14 +354,15 @@ function mesaPreviewUrl(path){
 function mesaLink(numero){
   return state.mesaLinks && state.mesaLinks.mesas.find(mesa=>mesa.numero===numero);
 }
-function mesaDemoLinkHtml(numero,label,kind,icon){
+function mesaDemoLinkHtml(numero,label,kind,icon,paso){
   const mesa=mesaLink(numero);
   if(!mesa) return `<button class="btn ${kind} sm" disabled>${ic(icon)} Preparando acceso…</button>`;
-  return `<button class="btn ${kind} sm" onclick="abrirVistaMesaDemo(${numero})">${ic(icon)} ${escapeHtml(label)}</button>`;
+  return `<button class="btn ${kind} sm" onclick="abrirVistaMesaDemo(${numero}${paso?','+paso:''})">${ic(icon)} ${escapeHtml(label)}</button>`;
 }
-function abrirVistaMesaDemo(numero){
+function abrirVistaMesaDemo(numero,paso){
   const mesa=mesaLink(numero);
   if(!mesa) return;
+  if(paso) marcarPasoDemo(paso,false);
   state.modal={type:'mesa-preview',numero,path:mesa.path};
   render();
 }
@@ -416,10 +421,17 @@ function renderModal(){
   if(root.dataset.modalKey===modalKey && root.firstElementChild) return;
   root.dataset.modalKey=modalKey;
   if(state.modal.type==='mesa-preview'){
+    const demoActions = state.presentacionCargada && STAFF_ALLOWED_VIEWS.includes('encargado')
+      ? (state.modal.numero===1
+        ? `<div class="mesa-preview-next"><span>La vista cambia en vivo cuando Cocina y Barra avanzan el pedido.</span><button class="btn primary sm" onclick="closeModal();irPasoDemo('cocina',null,2)">${ic('flame')} Seguir a Cocina + Barra</button></div>`
+        : state.modal.numero===3
+          ? `<div class="mesa-preview-next"><span>La cuenta conserva el pedido completo y muestra el total confirmado.</span><button class="btn good sm" onclick="closeModal();irPasoDemo('dueno',null,5)">${ic('chart')} Ver resultado final</button></div>`
+          : '')
+      : '';
     root.innerHTML = `<div class="modal-bg mesa-preview-bg" onclick="closeModal(event)">
       <div class="modal mesa-preview-modal" onclick="event.stopPropagation()">
         <div class="mesa-preview-head"><div><span class="presentation-kicker">Vista cliente en vivo</span><strong>Mesa ${state.modal.numero}</strong></div><button class="btn ghost sm" onclick="closeModal()">Cerrar</button></div>
-        <iframe src="${escapeHtml(mesaPreviewUrl(state.modal.path))}" title="Vista cliente de Mesa ${state.modal.numero}"></iframe>
+        <iframe src="${escapeHtml(mesaPreviewUrl(state.modal.path))}" title="Vista cliente de Mesa ${state.modal.numero}"></iframe>${demoActions}
       </div></div>`;
   } else if(state.modal.type==='3d'){
     const modelo = modeloParaPlato(state.modal.id);
@@ -901,9 +913,11 @@ function ticketHtml(m,destino){
   const oldestTs = itemsActivos.reduce((oldest,it)=>Math.min(oldest,it.enviadoTs), state.clockMs);
   const edad = timeAgoSec(oldestTs);
   const late = itemsActivos.some(it=>it.estado==='preparando') && edad>240;
-  return `<div class="ticket ${late?'late':''}">
+  const demoTarget = state.presentacionCargada && STAFF_ALLOWED_VIEWS.includes('encargado') && m.numero===1;
+  return `<div class="ticket ${late?'late':''}${demoTarget?' demo-target':''}">
     <div class="head"><span class="mesa">MESA ${m.numero}</span>
       <span class="pill ${itemEstadoClass(m.pedido.estado)}">${estadoPedidoLabel(m)}</span></div>
+    ${demoTarget?`<span class="demo-target-badge">Paso 2 · tocá esta tarjeta</span>`:''}
     <div class="timer">hace ${fmtSec(edad)}</div>
     <ul>${itemsActivos.map(it=>`<li style="margin-bottom:10px;">
       <div>${escapeHtml(it.nombre)} <span class="item-mod">${DESTINO_LABELS[itemDestino(it)]}</span>${it.notas?` <span class="item-mod">— "${escapeHtml(it.notas)}"</span>`:''}</div>
@@ -930,8 +944,9 @@ function colaEntregaHtml(mozo){
   const listos=itemsListosParaEntregar(mozo);
   return `<div class="section-h">${ic('plate')} Listo para llevar (${listos.length})</div>
     <p class="handoff-help">Cocina y Barra ya terminaron estos ítems. Confirmá la entrega recién cuando lleguen a la mesa.</p>
-    <div class="handoff-grid">${listos.length?listos.map(({mesa,item})=>`<article class="handoff-card">
+    <div class="handoff-grid">${listos.length?listos.map(({mesa,item})=>`<article class="handoff-card ${state.presentacionCargada && STAFF_ALLOWED_VIEWS.includes('encargado') && mesa.numero===1?'demo-target':''}">
       <div class="handoff-top"><strong>Mesa ${mesa.numero}</strong><span class="pill normal">${DESTINO_LABELS[itemDestino(item)]}</span></div>
+      ${state.presentacionCargada && STAFF_ALLOWED_VIEWS.includes('encargado') && mesa.numero===1?'<span class="demo-target-badge">Paso 3 · entregá este ítem</span>':''}
       <div class="handoff-item">${escapeHtml(item.nombre)}</div>
       ${item.notas?`<div class="handoff-notes">“${escapeHtml(item.notas)}”</div>`:''}
       <div class="handoff-meta">Listo hace ${fmtSec(timeAgoSec((item.estadoTs&&item.estadoTs.listo)||item.enviadoTs))}</div>
@@ -972,9 +987,10 @@ function mesaTileHtml(m){
 }
 function alertRowHtml(mesa,a,acciones){
   const edad = timeAgoSec(a.creadoTs);
-  return `<div class="alert-row ${a.escalado?'escalado':''}">
+  const demoTarget = state.presentacionCargada && STAFF_ALLOWED_VIEWS.includes('encargado') && mesa.numero===4 && acciones;
+  return `<div class="alert-row ${a.escalado?'escalado':''}${demoTarget?' demo-target':''}">
     <div><div class="msg">Mesa ${mesa.numero} — ${escapeHtml(a.label)}${a.mensaje?`: "${escapeHtml(a.mensaje)}"`:''}</div>
-    <div class="meta"><span class="pill ${a.prioridad}">${a.prioridad.toUpperCase()}</span> hace ${fmtSec(edad)} ${a.escalado?` · ${ic('warning')} ESCALADO`:''} ${a.estado==='atencion'?' · en atención':''}</div></div>
+    ${demoTarget?'<span class="demo-target-badge">Paso 3 · resolvé este reclamo</span>':''}<div class="meta"><span class="pill ${a.prioridad}">${a.prioridad.toUpperCase()}</span> hace ${fmtSec(edad)} ${a.escalado?` · ${ic('warning')} ESCALADO`:''} ${a.estado==='atencion'?' · en atención':''}</div></div>
     ${acciones?`<div class="actions">${a.estado==='recibido'?`<button class="btn dark sm" onclick="marcarAtencion(${a.id})">En atención</button>`:''}
       <button class="btn good sm" onclick="resolverAlerta(${a.id})">Resolver</button></div>`:''}</div>`;
 }
@@ -1022,26 +1038,69 @@ function demoStepStatus(numero){
   if(numero===5) return mesa.pago ? `Pago demo confirmado · reseña ${state.analytics.resenas[0] ? state.analytics.resenas[0].puntuacion+'/5' : 'lista'}` : 'Cierre demo listo';
   return estadoPedidoLabel(mesa);
 }
-function irPasoDemo(role,mozo){
+const DEMO_PASOS = {
+  1:{titulo:'Cliente · Mesa 1'}, 2:{titulo:'Cocina + Barra'}, 3:{titulo:'Salón · Sofía'},
+  4:{titulo:'Cliente · Cuenta'}, 5:{titulo:'Dueño · Resultado'},
+};
+function marcarPasoDemo(paso,redibujar=true){
+  state.demoPasoActual=paso;
+  state.demoPasosVistos.add(paso);
+  if(redibujar) render();
+}
+function irPasoDemo(role,mozo,paso){
   if(mozo) state.mozoActivo=mozo;
+  if(paso) marcarPasoDemo(paso,false);
   setRole(role);
   window.scrollTo({top:0,behavior:'smooth'});
 }
+function volverRecorridoDemo(){
+  setRole('encargado');
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+function siguientePasoDemo(){
+  const actual=state.demoPasoActual;
+  if(actual===2) return irPasoDemo('mozo','Sofía',3);
+  if(actual===3){ marcarPasoDemo(4,false); return abrirVistaMesaDemo(3); }
+  if(actual===5){ marcarPasoDemo(5,false); return volverRecorridoDemo(); }
+  volverRecorridoDemo();
+}
+function reiniciarRecorridoVisual(){
+  state.demoPasosVistos.clear();
+  state.demoPasoActual=1;
+  render();
+}
+function demoDockHtml(){
+  const paso=state.demoPasoActual;
+  const meta=DEMO_PASOS[paso] || DEMO_PASOS[1];
+  const siguiente=paso===2?'Seguir a Salón':paso===3?'Abrir cuenta cliente':paso===5?'Finalizar recorrido':'Volver al recorrido';
+  return `<aside class="presentation-dock" aria-label="Control del recorrido de demostración">
+    <div><span class="presentation-kicker">Modo presentador · paso ${paso} de 5</span><strong>${escapeHtml(meta.titulo)}</strong></div>
+    <div class="presentation-dock-actions"><button class="btn ghost sm" onclick="volverRecorridoDemo()">Ver recorrido</button><button class="btn primary sm" onclick="siguientePasoDemo()">${escapeHtml(siguiente)}</button></div>
+  </aside>`;
+}
+function demoStepClass(paso){
+  return `${state.demoPasoActual===paso?' active':''}${state.demoPasosVistos.has(paso)?' visited':''}`;
+}
 function presentacionGuideHtml(){
+  const vistos=state.demoPasosVistos.size;
+  const completo=vistos===5;
   return `<section class="presentation-panel" aria-label="Recorrido de presentación">
-    <div class="presentation-head"><div><span class="presentation-kicker">Escenario sintético activo</span><h2>Recorrido de demo · 5 minutos</h2><p>Abrí cada estación en orden. Los estados cambian en vivo en todos los dispositivos.</p></div><span class="pill libre">${ic('checkring')} Listo para presentar</span></div>
+    <div class="presentation-head"><div><span class="presentation-kicker">Escenario sintético activo</span><h2>Recorrido de demo · 5 minutos</h2><p>Abrí cada estación en orden. Un control visible mantiene el hilo entre roles y previews.</p></div><span class="pill libre">${ic('checkring')} ${completo?'Recorrido completo':'Listo para presentar'}</span></div>
+    <div class="presentation-progress"><div><span style="width:${vistos*20}%"></span></div><b>${vistos}/5 estaciones recorridas</b>${completo?'<button class="btn ghost sm" onclick="reiniciarRecorridoVisual()">Repetir recorrido</button>':''}</div>
     ${state.mesaLinksError?`<div class="presentation-error">${escapeHtml(state.mesaLinksError)} <button class="btn ghost sm" onclick="cargarMesaLinks()">Reintentar</button></div>`:''}
     <div class="presentation-steps">
-      <article class="presentation-step"><span class="step-number">1</span><div><strong>Cliente · Mesa 1</strong><p>${escapeHtml(demoStepStatus(1))}</p></div>${mesaDemoLinkHtml(1,'Abrir cliente','primary','user')}</article>
-      <article class="presentation-step"><span class="step-number">2</span><div><strong>Cocina + Barra</strong><p>Avanzá Hummus y Agua en colas separadas.</p></div><button class="btn dark sm" onclick="irPasoDemo('cocina')">${ic('flame')} Abrir KDS</button></article>
-      <article class="presentation-step"><span class="step-number">3</span><div><strong>Salón · Sofía</strong><p>Retirá Agua de Mesa 1 y atendé ${demoStepStatus(4).toLowerCase()}.</p></div><button class="btn dark sm" onclick="irPasoDemo('mozo','Sofía')">${ic('plate')} Abrir Salón</button></article>
-      <article class="presentation-step"><span class="step-number">4</span><div><strong>Cliente · Cuenta</strong><p>Mesa 3: ${escapeHtml(demoStepStatus(3))}.</p></div>${mesaDemoLinkHtml(3,'Abrir cuenta','dark','receipt')}</article>
-      <article class="presentation-step"><span class="step-number">5</span><div><strong>Dueño · Resultado</strong><p>Mesa 5: ${escapeHtml(demoStepStatus(5))}. Analytics y CRM son sintéticos.</p></div><button class="btn good sm" onclick="irPasoDemo('dueno')">${ic('chart')} Abrir analytics</button></article>
+      <article class="presentation-step${demoStepClass(1)}"><span class="step-number">${state.demoPasosVistos.has(1)?ic('checkring'):'1'}</span><div><strong>Cliente · Mesa 1</strong><p>${escapeHtml(demoStepStatus(1))}</p></div>${mesaDemoLinkHtml(1,state.demoPasosVistos.has(1)?'Volver a abrir':'Empezar demo','primary','user',1)}</article>
+      <article class="presentation-step${demoStepClass(2)}"><span class="step-number">${state.demoPasosVistos.has(2)?ic('checkring'):'2'}</span><div><strong>Cocina + Barra</strong><p>Avanzá Hummus y Agua en colas separadas.</p></div><button class="btn dark sm" onclick="irPasoDemo('cocina',null,2)">${ic('flame')} Abrir KDS</button></article>
+      <article class="presentation-step${demoStepClass(3)}"><span class="step-number">${state.demoPasosVistos.has(3)?ic('checkring'):'3'}</span><div><strong>Salón · Sofía</strong><p>Retirá Agua de Mesa 1 y atendé ${demoStepStatus(4).toLowerCase()}.</p></div><button class="btn dark sm" onclick="irPasoDemo('mozo','Sofía',3)">${ic('plate')} Abrir Salón</button></article>
+      <article class="presentation-step${demoStepClass(4)}"><span class="step-number">${state.demoPasosVistos.has(4)?ic('checkring'):'4'}</span><div><strong>Cliente · Cuenta</strong><p>Mesa 3: ${escapeHtml(demoStepStatus(3))}.</p></div>${mesaDemoLinkHtml(3,'Abrir cuenta','dark','receipt',4)}</article>
+      <article class="presentation-step${demoStepClass(5)}"><span class="step-number">${state.demoPasosVistos.has(5)?ic('checkring'):'5'}</span><div><strong>Dueño · Resultado</strong><p>Mesa 5: ${escapeHtml(demoStepStatus(5))}. Analytics y CRM son sintéticos.</p></div><button class="btn good sm" onclick="irPasoDemo('dueno',null,5)">${ic('chart')} Abrir analytics</button></article>
     </div>
   </section>`;
 }
 function cargarEscenarioDemo(){
-  if(confirm('Esto reemplaza el estado demo actual para TODOS los dispositivos conectados con un escenario de presentación. ¿Confirmás?')) send({type:'demo_escenario_cargar'});
+  if(confirm('Esto reemplaza el estado demo actual para TODOS los dispositivos conectados con un escenario de presentación. ¿Confirmás?')){
+    state.demoPasosVistos.clear(); state.demoPasoActual=1; send({type:'demo_escenario_cargar'});
+  }
 }
 function resetTodo(){
   if(confirm('Esto reinicia el estado para TODOS los dispositivos conectados ahora mismo (mesas, pedidos, alertas). ¿Confirmás?')) send({type:'reset_demo'});
