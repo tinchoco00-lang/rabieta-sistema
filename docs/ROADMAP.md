@@ -11,6 +11,8 @@ Este documento separa el estado comprobado de posibles trabajos futuros. Nada pe
 - Identidad HMAC opcional por mesa; sin `MESA_TOKEN_SECRET` permanece un modo legacy no autenticado.
 - Validacion de pedidos contra la carta, protecciones operativas basicas, tests y CI.
 - Los estados de cocina avanzan solamente mediante una accion autenticada del personal; no existe avance automatico de demo.
+- Preparacion y entrega avanzan por item; el resumen del pedido no oculta que quedan items mas atrasados.
+- Solicitud, confirmacion de pago demo y liberacion de mesa son pasos separados; el modo demo no mueve dinero ni simula una confirmacion externa.
 
 ## Fase 0 - Base de desarrollo seguro
 
@@ -23,7 +25,7 @@ Esta fase establece controles de desarrollo. No resuelve los riesgos funcionales
 ## Fase 1 - Piloto operativo seguro
 
 - confirmar mesas, sectores, carta, precios, modificadores y flujo real del local;
-- modelar preparacion y entrega por item/sector, segun la decision explicita del dueno;
+- confirmar el ruteo real de cada producto a cocina, barra u otro sector e incorporarlo sin inferirlo de categorias comerciales;
 - autenticacion y autorizacion adecuadas al piloto;
 - generar, rotar y distribuir QR por mesa de forma operativa;
 - definir degradacion segura ante caidas de red o persistencia;

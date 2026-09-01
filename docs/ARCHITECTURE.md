@@ -16,7 +16,9 @@ Sin `DATABASE_URL`, el estado operativo vive solamente en memoria y un reinicio 
 
 Esta tabla de fila unica es una capa transitoria de continuidad para el MVP. No es el esquema relacional definitivo del futuro SaaS, no agrega multi-tenant y no resuelve auditoria, historial, metricas del piloto ni concurrencia entre multiples procesos.
 
-El dominio actual mantiene un solo `pedido` por mesa y un unico estado para todos sus items. Esto contradice el flujo objetivo ya confirmado, donde los platos pueden prepararse y entregarse por partes y deben rutearse a sectores diferentes. La correccion requiere un cambio compatible y probado; no debe documentarse como implementada antes de existir en el codigo.
+El dominio actual mantiene un solo `pedido` activo por mesa, pero cada item tiene identidad, estado y timestamp de envio propios. El personal avanza cada item explicitamente y los adicionales nuevos no cambian el estado de los anteriores. `pedido.estado` se conserva como resumen compatible del item menos avanzado; la interfaz muestra el estado individual para no ocultar entregas parciales. Al recuperar el JSONB anterior, el servidor completa estos campos sin descartar el pedido existente.
+
+La carta todavia no define el sector operativo de cada producto. Sus categorias comerciales no deben confundirse automaticamente con cocina, barra u otra estacion. Ese ruteo sigue pendiente de confirmar con el local antes de incorporarlo al modelo.
 
 ## Interfaces verificables
 
@@ -25,7 +27,8 @@ El dominio actual mantiene un solo `pedido` por mesa y un unico estado para todo
 - `POST /api/staff-login` compara el PIN recibido con `STAFF_PIN` o el valor local por defecto.
 - `POST /api/staff-logout` revoca el token de staff presentado.
 - `POST /api/action` valida y cambia el estado; cuando PostgreSQL está activo confirma la escritura antes de responder éxito.
-- Los pedidos permanecen en `enviado` hasta que una accion autenticada de staff confirma la transicion a `preparando`; el reloj no simula actividad de cocina.
+- Cada item permanece en `enviado` hasta que una accion autenticada de staff confirma su transicion a `preparando`; el reloj no simula actividad de cocina.
+- La solicitud de cuenta conserva el pedido. En modo demostracion, staff puede registrar una confirmacion de pago calculada por el servidor y luego liberar la mesa; no existe proveedor, transaccion ni confirmacion bancaria real.
 - `GET /events?mesa=N` distribuye mediante SSE solamente el estado de la mesa solicitada.
 - `GET /api/staff-events` distribuye el estado completo al personal y exige un Bearer token válido en el header.
 - Si `MESA_TOKEN_SECRET` está configurado, las acciones públicas y el stream cliente verifican un HMAC-SHA256 vinculado al número de mesa mediante `X-Mesa-Token`. El secreto y los tokens no se persisten.

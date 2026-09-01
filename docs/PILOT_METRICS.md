@@ -48,8 +48,8 @@ Toda mejora debe vigilar tambien:
 
 ## Estado de instrumentacion
 
-**VERIFICADO:** el MVP actual tiene un reloj de sesion, timestamp inicial del pedido y timestamps de alertas. El panel de dueno calcula importes de pedidos presentes en la sesion.
+**VERIFICADO:** el MVP actual tiene un reloj de sesion, identidad, estado y timestamp de envio por item, ademas de timestamps de alertas. Esto permite observar entregas parciales durante la sesion, pero no constituye un historial auditable. El panel de dueno calcula importes de pedidos presentes en la sesion.
 
-**PENDIENTE:** no existe un ledger historico de eventos, estados por item/sector, apertura/cierre confiable de mesa, turnos, cubiertos, conciliacion con POS/pagos, costos, inventario, identidad de cliente ni medicion de uptime desde el local. Por lo tanto, hoy no se puede calcular de forma confiable la mayoria de las metricas anteriores.
+**PENDIENTE:** no existe un ledger historico de eventos, ruteo por sector confirmado, timestamps inmutables de cada transicion, apertura/cierre confiable de mesa, turnos, cubiertos, conciliacion con POS/pagos, costos, inventario, identidad de cliente ni medicion de uptime desde el local. Por lo tanto, hoy no se puede calcular de forma confiable la mayoria de las metricas anteriores.
 
 La siguiente capa de instrumentacion debe conservar eventos crudos con reloj real, identificadores, actor/canal y motivo, y derivar metricas reproducibles. Su esquema definitivo y politica de retencion requieren una decision de arquitectura y privacidad antes de usar datos reales.

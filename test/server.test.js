@@ -92,6 +92,14 @@ async function getStateFrom(url, mesa = 1, mesaToken) {
 
 async function getState() { return getStateFrom(baseUrl); }
 
+async function getStaffState() {
+  const response = await fetch(`${baseUrl}/api/staff-events`, { headers: { authorization: `Bearer ${staffToken}` } });
+  const reader = response.body.getReader();
+  const event = await readSseEvent(reader);
+  await reader.cancel();
+  return event.message.state;
+}
+
 function tokenForMesa(secret, mesa) {
   return crypto.createHmac('sha256', secret).update(`mesa:${mesa}`).digest('hex');
 }
@@ -162,6 +170,174 @@ test('un pedido permanece enviado hasta que cocina confirma la preparación', as
   assert.equal(laterState.mesas[0].pedido.estado, 'enviado');
   assert.equal((await action({ type: 'pedido_estado', mesa: 1, estado: 'preparando' }, staffToken)).status, 200);
   assert.equal((await getState()).mesas[0].pedido.estado, 'preparando');
+  await resetState();
+});
+
+test('cocina avanza cada item por separado y el pedido termina al entregar todos', async () => {
+  await resetState();
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [
+    { productoId: 'hummus-rabieta' },
+    { productoId: 'burrata' },
+  ] })).status, 200);
+
+  let pedido = (await getState()).mesas[0].pedido;
+  const [hummus, burrata] = pedido.items;
+  assert.notEqual(hummus.id, burrata.id);
+  assert.deepEqual(pedido.items.map(item => item.estado), ['enviado', 'enviado']);
+  assert.equal((await action({ type: 'pedido_estado', mesa: 1, estado: 'preparando' }, staffToken)).status, 400);
+  assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId: hummus.id, estado: 'listo' }, staffToken)).status, 409);
+  assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId: 999999, estado: 'preparando' }, staffToken)).status, 404);
+
+  for (const estado of ['preparando', 'listo', 'entregado']) {
+    assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId: hummus.id, estado }, staffToken)).status, 200);
+  }
+  pedido = (await getState()).mesas[0].pedido;
+  assert.equal(pedido.items[0].estado, 'entregado');
+  assert.equal(pedido.items[1].estado, 'enviado');
+  assert.equal(pedido.estado, 'enviado');
+
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [
+    { productoId: 'papas-bravas' },
+  ] })).status, 200);
+  pedido = (await getState()).mesas[0].pedido;
+  const papas = pedido.items[2];
+  assert.equal(pedido.items[0].id, hummus.id);
+  assert.equal(pedido.items[0].estado, 'entregado');
+  assert.deepEqual(pedido.items.slice(1).map(item => item.estado), ['enviado', 'enviado']);
+
+  for (const itemId of [burrata.id, papas.id]) {
+    for (const estado of ['preparando', 'listo', 'entregado']) {
+      assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId, estado }, staffToken)).status, 200);
+    }
+  }
+  pedido = (await getState()).mesas[0].pedido;
+  assert.deepEqual(pedido.items.map(item => item.estado), ['entregado', 'entregado', 'entregado']);
+  assert.equal(pedido.estado, 'entregado');
+  await resetState();
+});
+
+test('cada avance de cocina conserva una marca de tiempo auditable por ítem', async () => {
+  await resetState();
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'hummus-rabieta' }] })).status, 200);
+  let item = (await getState()).mesas[0].pedido.items[0];
+  assert.deepEqual(item.estadoTs, { enviado: item.enviadoTs });
+
+  assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId: item.id, estado: 'preparando' }, staffToken)).status, 200);
+  item = (await getState()).mesas[0].pedido.items[0];
+  assert.equal(item.estadoTs.enviado, item.enviadoTs);
+  assert.equal(item.estadoTs.preparando, (await getState()).clockMs);
+
+  assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId: item.id, estado: 'listo' }, staffToken)).status, 200);
+  item = (await getState()).mesas[0].pedido.items[0];
+  assert.ok(Number.isFinite(item.estadoTs.listo));
+  await resetState();
+});
+
+test('los ítems se enrutan a Cocina o Barra desde una configuración demo del servidor', async () => {
+  await resetState();
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [
+    { productoId: 'hummus-rabieta' },
+    { productoId: 'american-ipa-latitudes' },
+  ] })).status, 200);
+  const items = (await getState()).mesas[0].pedido.items;
+  assert.equal(items[0].destino, 'cocina');
+  assert.equal(items[1].destino, 'barra');
+  await resetState();
+});
+
+test('cuenta y pago demo conservan el pedido hasta que staff libera la mesa', async () => {
+  await resetState();
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [
+    { productoId: 'hummus-rabieta' },
+    { productoId: 'burrata' },
+  ] })).status, 200);
+
+  assert.equal((await action({ type: 'pago_demo_confirmar', mesa: 1 })).status, 401);
+  assert.equal((await action({ type: 'pedir_cuenta', mesa: 1 })).status, 200);
+  assert.equal((await action({ type: 'pedir_cuenta', mesa: 1 })).status, 409);
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'papas-bravas' }] })).status, 409);
+
+  let mesa = (await getState()).mesas[0];
+  const cuentaAlert = mesa.alertas.find(alerta => alerta.tipo === 'cuenta');
+  assert.equal(mesa.cuentaPedida, true);
+  assert.equal(mesa.pago, null);
+  assert.ok(cuentaAlert);
+  assert.equal((await action({ type: 'mesa_liberar', mesa: 1 }, staffToken)).status, 409);
+  assert.equal((await getState()).mesas[0].ocupada, true);
+
+  assert.equal((await action({ type: 'alerta_resolver', alertaId: cuentaAlert.id }, staffToken)).status, 200);
+  mesa = (await getState()).mesas[0];
+  assert.equal(mesa.ocupada, true);
+  assert.equal(mesa.pedido.items.length, 2);
+  assert.equal(mesa.cuentaPedida, true);
+
+  assert.equal((await action({ type: 'pago_demo_confirmar', mesa: 1 }, staffToken)).status, 200);
+  mesa = (await getState()).mesas[0];
+  assert.deepEqual(mesa.pago, {
+    modo: 'demo', estado: 'confirmado', total: 7700, confirmadoTs: mesa.pago.confirmadoTs,
+  });
+  assert.ok(Number.isFinite(mesa.pago.confirmadoTs));
+  assert.equal(mesa.pedido.items.length, 2);
+  assert.equal((await action({ type: 'pago_demo_confirmar', mesa: 1 }, staffToken)).status, 409);
+
+  let analytics = (await getStaffState()).analytics;
+  assert.equal(analytics.pagosConfirmados, 1);
+  assert.equal(analytics.ventasDemo, 7700);
+  assert.equal(analytics.itemsVendidos, 2);
+  assert.deepEqual(analytics.productos['hummus-rabieta'], { nombre: 'Hummus Rabieta', cantidad: 1, total: 4600 });
+  assert.deepEqual(analytics.productos.burrata, { nombre: 'Burrata', cantidad: 1, total: 3100 });
+
+  assert.equal((await action({ type: 'mesa_liberar', mesa: 1 }, staffToken)).status, 200);
+  mesa = (await getState()).mesas[0];
+  assert.equal(mesa.ocupada, false);
+  assert.equal(mesa.pedido, null);
+  assert.equal(mesa.cuentaPedida, false);
+  assert.equal(mesa.pago, null);
+  analytics = (await getStaffState()).analytics;
+  assert.equal(analytics.pagosConfirmados, 1);
+  assert.equal(analytics.ventasDemo, 7700);
+  await resetState();
+});
+
+test('pago demo rechaza cuentas con precios pendientes', async () => {
+  await resetState();
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'rabas-romana' }] })).status, 200);
+  assert.equal((await action({ type: 'pedir_cuenta', mesa: 1 })).status, 200);
+  assert.equal((await action({ type: 'pago_demo_confirmar', mesa: 1 }, staffToken)).status, 409);
+  assert.equal((await getState()).mesas[0].pago, null);
+  await resetState();
+});
+
+test('la mesa puede dejar una única reseña post-pago y solo staff ve el historial', async () => {
+  await resetState();
+  assert.equal((await action({ type: 'resena_enviar', mesa: 1, puntuacion: 5 })).status, 409);
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'hummus-rabieta' }] })).status, 200);
+  assert.equal((await action({ type: 'pedir_cuenta', mesa: 1 })).status, 200);
+  assert.equal((await action({ type: 'pago_demo_confirmar', mesa: 1 }, staffToken)).status, 200);
+  assert.equal((await action({ type: 'resena_enviar', mesa: 1, puntuacion: 0 })).status, 400);
+  assert.equal((await action({
+    type: 'resena_enviar', mesa: 1, puntuacion: 4, comentario: 'Muy buena atención <script>alert(1)</script>',
+  })).status, 200);
+  assert.equal((await action({ type: 'resena_enviar', mesa: 1, puntuacion: 5 })).status, 409);
+
+  const publicState = await getState();
+  assert.equal(publicState.analytics, undefined);
+  assert.equal(publicState.mesas[0].resenaEnviada, true);
+  let analytics = (await getStaffState()).analytics;
+  assert.equal(analytics.resenas.length, 1);
+  assert.deepEqual(analytics.resenas[0], {
+    id: analytics.resenas[0].id,
+    mesa: 1,
+    puntuacion: 4,
+    comentario: 'Muy buena atención <script>alert(1)</script>',
+    creadoTs: analytics.resenas[0].creadoTs,
+  });
+  assert.ok(Number.isInteger(analytics.resenas[0].id));
+  assert.ok(Number.isFinite(analytics.resenas[0].creadoTs));
+
+  assert.equal((await action({ type: 'mesa_liberar', mesa: 1 }, staffToken)).status, 200);
+  analytics = (await getStaffState()).analytics;
+  assert.equal(analytics.resenas.length, 1);
   await resetState();
 });
 
@@ -542,7 +718,13 @@ test('el servidor reconstruye productos y precios desde el menú', async () => {
   const response = await action({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'hummus-rabieta', observacion: '<img src=x onerror=alert(1)>', nombre: 'Falso', precio: 1 }] });
   assert.equal(response.status, 200);
   const item = (await getState()).mesas[0].pedido.items[0];
-  assert.deepEqual(item, { productoId: 'hummus-rabieta', nombre: 'Hummus Rabieta', precio: 4600, notas: '<img src=x onerror=alert(1)>' });
+  assert.ok(Number.isInteger(item.id));
+  assert.equal(item.estado, 'enviado');
+  assert.ok(Number.isFinite(item.enviadoTs));
+  assert.deepEqual(
+    { productoId: item.productoId, nombre: item.nombre, precio: item.precio, notas: item.notas },
+    { productoId: 'hummus-rabieta', nombre: 'Hummus Rabieta', precio: 4600, notas: '<img src=x onerror=alert(1)>' }
+  );
 
   const configured = await action({ type: 'pedido_nuevo', mesa: 2, items: [
     { productoId: 'tablita-quesos-fiambres', variante: 'Individual (sin bebida)' },
@@ -637,4 +819,26 @@ test('los textos libres se escapan en renders con innerHTML', () => {
   const escaped = vm.runInNewContext(`${implementation[0]}; escapeHtml(payload)`, { payload: malicious });
   assert.equal(escaped, '&lt;img src=x onerror=&quot;globalThis.xss=true&quot;&gt; &amp; &#39;ataque&#39;');
   assert.doesNotMatch(escaped, /<img|onerror="/);
+
+  const timeImplementation = source.match(/function timeAgoSec\(ts\)\{[^\n]+\}/);
+  assert.ok(timeImplementation, 'debe existir el calculo de antiguedad operativa');
+  const elapsedSeconds = vm.runInNewContext(`${timeImplementation[0]}; timeAgoSec(20)`, { state: { clockMs: 65 } });
+  assert.equal(elapsedSeconds, 45);
+});
+
+test('3D y AR mantienen una foto útil y explican dispositivos incompatibles', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  assert.match(source, /id="fallback3d"/);
+  assert.match(source, /onerror="modelo3dError\(\)"/);
+  assert.match(source, /mv\.canActivateAR===false/);
+  assert.match(source, /No se pudo abrir la cámara AR/);
+});
+
+test('el asistente recomienda solo productos reales con precio y declara su alcance local', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  assert.match(source, /function recomendacionesAsistente\(perfil\)/);
+  assert.match(source, /filter\(p=>Number\.isFinite\(precioBase\(p\)\)\)/);
+  assert.match(source, /no envía datos ni usa un servicio externo/);
+  assert.match(source, /Confirmá con el personal por contaminación cruzada/);
+  assert.doesNotMatch(source, /fetch\(['"]\/api\/recomend/);
 });

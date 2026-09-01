@@ -35,8 +35,14 @@ const ICONS = {
 function ic(name, cls){ return `<svg class="i-ic${cls?' '+cls:''}" viewBox="0 0 24 24">${ICONS[name]||''}</svg>`; }
 
 const PEDIDO_ESTADOS = ['enviado','preparando','listo','entregado'];
+const DESTINO_LABELS = {cocina:'Cocina', barra:'Barra'};
 const PEDIDO_LABELS = {enviado:'Recibido', preparando:'En preparación', listo:'Listo', entregado:'Entregado'};
 const MOZOS = ['Martín','Sofía','Lucas'];
+const ASISTENTE_OPCIONES = [
+  {id:'compartir',label:'Para compartir'}, {id:'contundente',label:'Algo contundente'},
+  {id:'liviano',label:'Algo más liviano'}, {id:'sin_tacc',label:'Sin TACC'},
+  {id:'dulce',label:'Un postre'},
+];
 const HELP_CATEGORIAS = [
   {id:'no_llego',  label:'No llegó mi pedido',        prioridad:'urgente'},
   {id:'incorrecto',label:'Mi pedido está incorrecto',  prioridad:'urgente'},
@@ -73,10 +79,11 @@ let STAFF_TOKEN = null;
 let MESA_TOKEN = null;
 
 let state = {
-  clockMs:0, mesas:[],
+  clockMs:0, mesas:[], analytics:{pagosConfirmados:0,ventasDemo:0,tiempoPagoTotalSec:0,itemsVendidos:0,productos:{},resenas:[]},
   // ui local, no viene del servidor:
   role:null, clienteMesa:null, clienteCat:null, clienteFiltroSinTacc:false,
   clienteCart:[], clienteExpand:null, clienteHelpOpen:false, clienteSplashDismissed:false,
+  clienteAsistenteOpen:false, clientePreferencia:null, clienteResenaError:'', clienteResenaEnviando:false,
   mozoActivo:MOZOS[0], modal:null,
 };
 
@@ -86,14 +93,21 @@ function escapeHtml(value){
     '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
   })[char]);
 }
-function timeAgoSec(ts){ return Math.max(0, Math.floor((state.clockMs - ts)/1000)); }
+function timeAgoSec(ts){ return Math.max(0, Math.floor(state.clockMs - ts)); }
 function fmtSec(s){ const m=Math.floor(s/60), r=s%60; return (m>0? m+'m ':'')+r+'s'; }
 function findMesa(n){ return state.mesas.find(m=>m.numero===n); }
 function findProducto(id){ for(const c of MENU_DATA.categorias) for(const p of c.productos) if(p.id===id) return p; }
 function todosLosProductos(){ const out=[]; MENU_DATA.categorias.forEach(c=>c.productos.forEach(p=>out.push({...p,categoriaId:c.id}))); return out; }
 function precioBase(p){ if(p.variantes && p.variantes.length) return p.variantes[0].precio; return p.precio; }
 function mesaBusy(m){ return !!m.pedido; }
-function estadoPedidoLabel(m){ return m.pedido ? PEDIDO_LABELS[m.pedido.estado] : 'Libre'; }
+function estadoPedidoLabel(m){
+  if(!m.pedido) return 'Libre';
+  const entregados = m.pedido.items.filter(it=>it.estado==='entregado').length;
+  if(entregados>0 && entregados<m.pedido.items.length) return `${entregados}/${m.pedido.items.length} entregados`;
+  return PEDIDO_LABELS[m.pedido.estado];
+}
+function itemEstadoClass(estado){ return estado==='enviado'?'importante':estado==='preparando'?'normal':'libre'; }
+function pedidoTotal(m){ return m.pedido ? m.pedido.items.reduce((sum,item)=>sum+(item.precio||0),0) : 0; }
 function alertasAbiertas(m){ return m.alertas.filter(a=>a.estado!=='resuelto'); }
 function prioridadMax(alertas){
   if(alertas.some(a=>a.prioridad==='urgente')) return 'urgente';
@@ -120,6 +134,7 @@ function aplicarMensajeRealtime(data, onFirstSnapshot){
     MESAS_TOTAL = msg.mesasTotal || MESAS_TOTAL;
     state.clockMs = msg.state.clockMs;
     state.mesas = msg.state.mesas;
+    if(msg.state.analytics) state.analytics = msg.state.analytics;
     detectarNuevasAlertas();
     if(onFirstSnapshot){ onFirstSnapshot(); onFirstSnapshot=null; }
     render();
@@ -290,18 +305,27 @@ function renderModal(){
   if(!state.modal){ root.innerHTML=''; return; }
   if(state.modal.type==='3d'){
     const modelo = modeloParaPlato(state.modal.id);
+    const producto = findProducto(state.modal.id);
+    const poster = producto && producto.imagen ? producto.imagen : '/img/hero-barra.jpg';
     root.innerHTML = `<div class="modal-bg" onclick="closeModal(event)">
       <div class="modal modal-3d" onclick="event.stopPropagation()">
         <div class="stage3d-real">
           <model-viewer id="mv3d" src="${modelo.url}" camera-controls auto-rotate auto-rotate-delay="300"
             ar ar-modes="scene-viewer webxr quick-look" shadow-intensity="1" exposure="1"
+            poster="${poster}" alt="Vista 3D genérica para ${escapeHtml(state.modal.nombre)}" loading="eager" reveal="auto"
+            onload="modelo3dListo()" onerror="modelo3dError()"
             style="width:100%;height:100%;background:transparent;"></model-viewer>
+          <div id="fallback3d" class="fallback3d" hidden>
+            <img src="${poster}" alt="Foto de ${escapeHtml(state.modal.nombre)}">
+            <span>La foto real queda disponible aunque el modelo 3D no cargue.</span>
+          </div>
         </div>
         <div class="body3d">
           <span class="badge-preview">3D real · modelo genérico, todavía no es el escaneo del plato</span>
-          <h3>${state.modal.nombre}</h3>
+          <h3>${escapeHtml(state.modal.nombre)}</h3>
           <p>Activá la cámara, enfocá tu mesa, y el plato aparece ahí arriba en tamaño real — como si ya te lo hubieran servido. También podés arrastrar acá abajo para girarlo sin cámara.</p>
           <button class="btn callout block" onclick="activarAR()">${ic('cube')} Ver en mi mesa con la cámara</button>
+          <div id="arStatus" class="ar-status" aria-live="polite">Cargando la experiencia 3D…</div>
           <p class="ar-fineprint">Funciona con cámara en Android (Chrome). En iPhone y en la compu se ve girando en pantalla por ahora. Lo único pendiente de verdad es reemplazar este modelo genérico — ${modelo.nombre} — por el escaneo 3D real de <b>${state.modal.nombre}</b> — eso es un paso de producción aparte.</p>
           <button class="btn dark block" onclick="closeModal()">Cerrar</button>
         </div>
@@ -329,9 +353,39 @@ function renderModal(){
 }
 function openModal3d(id, nombre){ state.modal = {type:'3d', id, nombre}; render(); }
 function closeModal(e){ state.modal=null; render(); }
-function activarAR(){
+function setArStatus(message, isError){
+  const status = document.getElementById('arStatus');
+  if(!status) return;
+  status.textContent = message;
+  status.classList.toggle('error', !!isError);
+}
+function modelo3dListo(){
   const mv = document.getElementById('mv3d');
-  if(mv && mv.activateAR) mv.activateAR();
+  setArStatus(mv && mv.canActivateAR ? 'Modelo listo. Tu dispositivo puede abrir la cámara.' : 'Modelo listo para girar. La cámara AR depende del dispositivo.');
+}
+function modelo3dError(){
+  const mv = document.getElementById('mv3d');
+  const fallback = document.getElementById('fallback3d');
+  if(mv) mv.hidden = true;
+  if(fallback) fallback.hidden = false;
+  setArStatus('No se pudo cargar el modelo 3D. Podés seguir viendo la foto y pedir normalmente.', true);
+}
+async function activarAR(){
+  const mv = document.getElementById('mv3d');
+  if(!mv || typeof mv.activateAR!=='function'){
+    setArStatus('La experiencia 3D todavía está cargando. Probá de nuevo en unos segundos.', true);
+    return;
+  }
+  if(mv.canActivateAR===false){
+    setArStatus('Este dispositivo no ofrece cámara AR. Igual podés arrastrar el modelo para verlo en 3D.', true);
+    return;
+  }
+  try{
+    await mv.activateAR();
+    setArStatus('Cámara AR iniciada. Mové el teléfono para detectar la mesa.');
+  }catch(e){
+    setArStatus('No se pudo abrir la cámara AR. Revisá el permiso de cámara o usá la vista 3D.', true);
+  }
 }
 
 /* ---------------- CLIENTE ---------------- */
@@ -347,6 +401,63 @@ function banner3dHtml(){
         ${p.imagen ? `<img class="tile3d-img" src="${p.imagen}" alt="${p.nombre}">` : `<span class="em">${ic('plate')}</span>`}
         <span class="nm">${p.nombre}</span><span class="cta">Ver en 3D</span></button>`).join('')}
     </div></div>`;
+}
+
+function puntuarRecomendacion(p, perfil){
+  const categoria = p.categoriaId;
+  const texto = `${p.nombre} ${p.descripcion||''}`.toLowerCase();
+  if(perfil==='sin_tacc') return p.filtro_dietario && p.filtro_dietario.includes('sin_tacc') ? 20 : -1;
+  if(perfil==='dulce') return categoria==='sobremesa' ? 15+(p.candidato_destacado?1:0) : -1;
+  let score = 0;
+  if(perfil==='compartir'){
+    if(p.para_compartir) score += 12;
+    if(['tablas-y-picadas','caliente','pizzas'].includes(categoria)) score += 6;
+  }
+  if(perfil==='contundente'){
+    if(['entrepanes','cocina-resistencia','pizzas'].includes(categoria)) score += 8;
+    if(/burger|milanesa|bife|bondiola|asado/.test(texto)) score += 5;
+  }
+  if(perfil==='liviano'){
+    if(['mezcolanzas','sin-tacc'].includes(categoria)) score += 10;
+    if(/ensalada|rúcula|vegetal|hummus/.test(texto)) score += 4;
+  }
+  if(score>0 && p.candidato_destacado) score++;
+  return score || -1;
+}
+function recomendacionesAsistente(perfil){
+  return todosLosProductos()
+    .filter(p=>Number.isFinite(precioBase(p)))
+    .map(p=>({p,score:puntuarRecomendacion(p,perfil)}))
+    .filter(item=>item.score>0)
+    .sort((a,b)=>b.score-a.score || a.p.nombre.localeCompare(b.p.nombre,'es'))
+    .slice(0,3).map(item=>item.p);
+}
+function asistenteCartaHtml(){
+  if(!state.clienteAsistenteOpen){
+    return `<div class="ai-assistant compact"><div><span class="ai-badge">Recomendación inteligente · demo local</span>
+      <strong>¿No sabés qué pedir?</strong><p>Te orientamos con la carta real de Rabieta.</p></div>
+      <button class="btn primary sm" onclick="toggleAsistente()">Ayudame a elegir</button></div>`;
+  }
+  const recomendaciones = state.clientePreferencia ? recomendacionesAsistente(state.clientePreferencia) : [];
+  return `<div class="ai-assistant">
+    <div class="ai-head"><div><span class="ai-badge">Asistente Rabieta</span><strong>¿Qué te pinta hoy?</strong></div>
+      <button class="btn ghost sm" onclick="toggleAsistente()">Cerrar</button></div>
+    <div class="ai-options">${ASISTENTE_OPCIONES.map(op=>`<button class="${state.clientePreferencia===op.id?'active':''}" onclick="setPreferenciaAsistente('${op.id}')">${op.label}</button>`).join('')}</div>
+    ${state.clientePreferencia ? `<div class="ai-results">
+      ${recomendaciones.map(p=>`<button onclick="abrirRecomendacion('${p.id}')"><span><strong>${escapeHtml(p.nombre)}</strong><small>${escapeHtml(MENU_DATA.categorias.find(c=>c.id===p.categoriaId).nombre)}</small></span><b>${money(precioBase(p))}</b></button>`).join('')}
+    </div>${state.clientePreferencia==='sin_tacc'?`<p class="ai-warning">${ic('warning')} Según la carta marcada Sin TACC. Confirmá con el personal por contaminación cruzada.</p>`:''}` : '<p class="ai-empty">Elegí una opción y te mostramos hasta tres platos con precio confirmado.</p>'}
+    <p class="ai-fineprint">Funciona localmente con reglas sobre la carta; no envía datos ni usa un servicio externo.</p>
+  </div>`;
+}
+function toggleAsistente(){ state.clienteAsistenteOpen=!state.clienteAsistenteOpen; render(); }
+function setPreferenciaAsistente(perfil){
+  if(ASISTENTE_OPCIONES.some(op=>op.id===perfil)){ state.clientePreferencia=perfil; render(); }
+}
+function abrirRecomendacion(id){
+  const producto = todosLosProductos().find(p=>p.id===id);
+  if(!producto) return;
+  state.clienteCat=producto.categoriaId; state.clienteExpand=id; state.clienteAsistenteOpen=false; render();
+  setTimeout(()=>{ const dish=document.getElementById('dish-'+id); if(dish) dish.scrollIntoView({behavior:'smooth',block:'center'}); },0);
 }
 
 function splashHtml(mesa){
@@ -394,6 +505,11 @@ function viewCliente(){
   let pedidoStatusHtml = '';
   if(mesa.pedido){
     const idx = PEDIDO_ESTADOS.indexOf(mesa.pedido.estado);
+    const pagoHtml = mesa.pago && mesa.pago.estado==='confirmado'
+      ? `<div class="mock-banner" style="margin:12px 0 0;">${ic('checkring')} Pago de demostración confirmado por ${money(mesa.pago.total)}. No se movió dinero real.</div>${resenaHtml(mesa)}`
+      : mesa.cuentaPedida
+        ? `<div class="mock-banner" style="margin:12px 0 0;">${ic('receipt')} Cuenta solicitada por ${money(pedidoTotal(mesa))}. El personal está preparando el cobro.</div>`
+        : '';
     pedidoStatusHtml = `<div class="card">
       <div style="font-weight:800;font-size:13.5px;margin-bottom:4px;">Tu pedido</div>
       <div class="status-stepper">${PEDIDO_ESTADOS.map((s,i)=>`
@@ -401,8 +517,8 @@ function viewCliente(){
           <div class="circle">${i<idx?'✓':i+1}</div><div class="lbl">${PEDIDO_LABELS[s]}</div></div>`).join('')}
       </div>
       <ul style="font-size:13px;margin:0;padding-left:18px;color:var(--ink-2);">
-        ${mesa.pedido.items.map(it=>`<li>${escapeHtml(it.nombre)}${it.notas?` — "${escapeHtml(it.notas)}"`:''}</li>`).join('')}
-      </ul></div>`;
+        ${mesa.pedido.items.map(it=>`<li>${escapeHtml(it.nombre)}${it.notas?` — "${escapeHtml(it.notas)}"`:''} <span class="pill ${itemEstadoClass(it.estado)}">${PEDIDO_LABELS[it.estado]}</span></li>`).join('')}
+      </ul>${pagoHtml}</div>`;
   }
   const openAlerts = alertasAbiertas(mesa);
   const alertHtml = openAlerts.length ? `<div class="card" style="border-color:var(--warning);">
@@ -422,6 +538,7 @@ function viewCliente(){
       <span class="badge-mesa">MESA ${mesa.numero}</span>
     </div>
     ${banner3dHtml()}
+    ${asistenteCartaHtml()}
     ${pedidoStatusHtml}${alertHtml}
 
     <div class="filter-chips">
@@ -431,22 +548,26 @@ function viewCliente(){
       ${MENU_DATA.categorias.map(c=>`<button class="${c.id===state.clienteCat?'active':''}" onclick="setCat('${c.id}')">${c.nombre}</button>`).join('')}
     </div>
     <div class="dish-list">
-      ${productos.length ? productos.map(p=>dishCardHtml(p)).join('') : '<div class="empty">Ningún producto de esta categoría es apto Sin TACC.</div>'}
+      ${productos.length ? productos.map(p=>dishCardHtml(p, mesa.cuentaPedida)).join('') : '<div class="empty">Ningún producto de esta categoría es apto Sin TACC.</div>'}
     </div>
     <div class="action-row">
       <button class="btn callout" onclick="llamarMozo()">${ic('bell')} Llamar al mozo</button>
-      <button class="btn dark" onclick="pedirCuenta()">${ic('receipt')} Pedir la cuenta</button>
+      ${mesa.pago && mesa.pago.estado==='confirmado'
+        ? `<button class="btn good" disabled>${ic('checkring')} Pago demo confirmado</button>`
+        : mesa.cuentaPedida
+          ? `<button class="btn dark" disabled>${ic('receipt')} Cuenta solicitada</button>`
+          : `<button class="btn dark" onclick="pedirCuenta()">${ic('receipt')} Pedir la cuenta</button>`}
       <button class="btn critical" onclick="toggleHelp()">${ic('help')} Necesito ayuda</button>
     </div>
     ${state.clienteHelpOpen ? helpPanelHtml() : ''}
-    ${state.clienteCart.length ? `<div class="cart-bar">
+    ${state.clienteCart.length && !mesa.cuentaPedida ? `<div class="cart-bar">
       <div><div class="cart-total">${money(cartTotal)}${cartPendientes?' + '+cartPendientes+' a confirmar':''}</div>
       <div class="cart-info">${state.clienteCart.length} ítem(s) en el carrito</div></div>
       <button class="btn primary" onclick="enviarPedido()">Enviar pedido a cocina →</button></div>` : ''}
   `;
 }
 
-function dishCardHtml(p){
+function dishCardHtml(p, bloqueado){
   const expanded = state.clienteExpand===p.id;
   const esCombo = p.tipo==='combo';
   const precio = precioBase(p);
@@ -463,15 +584,17 @@ function dishCardHtml(p){
       ${p.para_compartir?'<span class="tag">Para compartir</span>':''}
     </div>
     ${esDestacado?`<button class="btn-3d" onclick="openModal3d('${p.id}','${p.nombre.replace(/'/g,"\\'")}')">${ic('cube')} Ver en 3D</button>`:''}
-    ${expanded ? dishDetailHtml(p) : `<div style="margin-top:8px;"><button class="btn dark sm" onclick="toggleDish('${p.id}')">Agregar al pedido</button></div>`}
+    ${bloqueado
+      ? '<div style="margin-top:8px;"><span class="pill importante">Cuenta en proceso</span></div>'
+      : expanded ? dishDetailHtml(p) : `<div style="margin-top:8px;"><button class="btn dark sm" onclick="toggleDish('${p.id}')">Agregar al pedido</button></div>`}
   `;
   if(p.imagen){
-    return `<div class="dish"><div class="dish-row">
+    return `<div class="dish" id="dish-${p.id}"><div class="dish-row">
       <img class="dish-thumb" src="${p.imagen}" alt="${p.nombre}">
       <div class="dish-body">${cuerpo}</div>
     </div></div>`;
   }
-  return `<div class="dish">${cuerpo}</div>`;
+  return `<div class="dish" id="dish-${p.id}">${cuerpo}</div>`;
 }
 function dishDetailHtml(p){
   let variantePicker = '';
@@ -535,7 +658,33 @@ function confirmarLlamarMozo(){
   render();
   setTimeout(()=>{ if(state.modal && state.modal.type==='mozo-enviado'){ state.modal=null; render(); } }, 4500);
 }
-function pedirCuenta(){ send({type:'pedir_cuenta', mesa:state.clienteMesa}); }
+function pedirCuenta(){ state.clienteCart=[]; send({type:'pedir_cuenta', mesa:state.clienteMesa}); render(); }
+function resenaHtml(mesa){
+  if(mesa.resenaEnviada) return `<div class="review-card review-thanks">${ic('checkring')} Gracias. Tu opinión ya llegó al equipo de Rabieta.</div>`;
+  return `<div class="review-card">
+    <div class="review-title">¿Cómo estuvo tu experiencia?</div>
+    <div class="review-sub">Tu respuesta queda en este panel demo y ayuda a detectar qué mejorar.</div>
+    <div class="rating-pick" role="radiogroup" aria-label="Puntuación del 1 al 5">
+      ${[1,2,3,4,5].map(n=>`<label><input type="radio" name="puntuacion-resena" value="${n}"><span>${n}</span></label>`).join('')}
+    </div>
+    <textarea class="nota review-comment" id="comentarioResena" maxlength="500" placeholder="Contanos qué te gustó o qué mejorarías (opcional)"></textarea>
+    ${state.clienteResenaError?`<div class="review-error">${escapeHtml(state.clienteResenaError)}</div>`:''}
+    <button class="btn primary sm" ${state.clienteResenaEnviando?'disabled':''} onclick="enviarResena()">${state.clienteResenaEnviando?'Enviando…':'Enviar opinión'}</button>
+  </div>`;
+}
+async function enviarResena(){
+  const selected = document.querySelector('input[name="puntuacion-resena"]:checked');
+  if(!selected){ state.clienteResenaError='Elegí una puntuación del 1 al 5.'; render(); return; }
+  const comentario = (document.getElementById('comentarioResena')||{}).value || '';
+  state.clienteResenaError=''; state.clienteResenaEnviando=true; render();
+  const response = await send({type:'resena_enviar', mesa:state.clienteMesa, puntuacion:Number(selected.value), comentario});
+  state.clienteResenaEnviando=false;
+  if(!response || !response.ok){
+    let payload={}; try{ payload=await response.json(); }catch(e){}
+    state.clienteResenaError=payload.error || 'No pudimos enviar tu opinión. Probá de nuevo.';
+    render();
+  }
+}
 function enviarAyuda(id){ send({type:'ayuda', mesa:state.clienteMesa, categoria:id}); state.clienteHelpOpen=false; render(); }
 function enviarAyudaLibre(){
   const val = (document.getElementById('freeHelp')||{}).value || '';
@@ -556,28 +705,48 @@ function helpPanelHtml(){
 }
 
 /* ---------------- COCINA ---------------- */
-function viewCocina(){
-  const activos = state.mesas.filter(m=>m.pedido && m.pedido.estado!=='entregado');
-  return `<h1 class="view-title">COCINA</h1><p class="view-sub">KDS — comandas en vivo, sin papel.</p>
-    <div class="kds-grid">${activos.length ? activos.map(m=>ticketHtml(m)).join('') : '<div class="empty">No hay comandas activas.</div>'}</div>`;
+function itemElapsedLabel(it){
+  const stageTs = it.estadoTs && Number.isFinite(it.estadoTs[it.estado]) ? it.estadoTs[it.estado] : it.enviadoTs;
+  return `hace ${fmtSec(timeAgoSec(stageTs))} en esta etapa`;
 }
-function ticketHtml(m){
-  const edad = timeAgoSec(m.pedido.enviadoTs);
-  const late = m.pedido.estado==='preparando' && edad>240;
+function avanzarItem(n,itemId){
+  const m=findMesa(n); const item=m.pedido.items.find(it=>it.id===itemId);
+  const i=item ? PEDIDO_ESTADOS.indexOf(item.estado) : -1;
+  if(i>=0 && i<PEDIDO_ESTADOS.length-1) send({type:'pedido_estado', mesa:n, itemId, estado:PEDIDO_ESTADOS[i+1]});
+}
+
+// Reemplaza el KDS único por dos colas independientes. La clasificación vive
+// en el servidor; este panel solo la muestra y conserva las acciones por ítem.
+function itemDestino(it){ return it.destino==='barra'?'barra':'cocina'; }
+function viewCocina(){
+  const activos = state.mesas.filter(m=>m.pedido && m.pedido.items.some(it=>it.estado!=='entregado'));
+  const destinos = ['cocina','barra'];
+  return `<h1 class="view-title">COCINA + BARRA</h1><p class="view-sub">KDS — colas en vivo separadas por destino. Configuración demo: validar sectores con el local.</p>
+    <div class="kds-destinos">${destinos.map(destino=>{
+      const tickets = activos.filter(m=>m.pedido.items.some(it=>it.estado!=='entregado' && itemDestino(it)===destino));
+      const itemCount = tickets.reduce((count,m)=>count+m.pedido.items.filter(it=>it.estado!=='entregado' && itemDestino(it)===destino).length,0);
+      return `<section class="kds-destino"><div class="section-h">${ic(destino==='barra'?'receipt':'flame')} ${DESTINO_LABELS[destino]} <span class="kds-count">${itemCount}</span></div>
+        <div class="kds-grid">${tickets.length?tickets.map(m=>ticketHtml(m,destino)).join(''):`<div class="empty">Sin ítems para ${DESTINO_LABELS[destino].toLowerCase()}.</div>`}</div></section>`;
+    }).join('')}</div>`;
+}
+function ticketHtml(m,destino){
+  const itemsActivos = m.pedido.items.filter(it=>it.estado!=='entregado' && (!destino || itemDestino(it)===destino));
+  const oldestTs = itemsActivos.reduce((oldest,it)=>Math.min(oldest,it.enviadoTs), state.clockMs);
+  const edad = timeAgoSec(oldestTs);
+  const late = itemsActivos.some(it=>it.estado==='preparando') && edad>240;
   return `<div class="ticket ${late?'late':''}">
     <div class="head"><span class="mesa">MESA ${m.numero}</span>
-      <span class="pill ${m.pedido.estado==='enviado'?'importante':m.pedido.estado==='preparando'?'normal':'libre'}">${PEDIDO_LABELS[m.pedido.estado]}</span></div>
+      <span class="pill ${itemEstadoClass(m.pedido.estado)}">${estadoPedidoLabel(m)}</span></div>
     <div class="timer">hace ${fmtSec(edad)}</div>
-    <ul>${m.pedido.items.map(it=>`<li>${escapeHtml(it.nombre)}${it.notas?` <span class="item-mod">— "${escapeHtml(it.notas)}"</span>`:''}</li>`).join('')}</ul>
-    <div style="display:flex;gap:6px;">
-      ${m.pedido.estado==='enviado'?`<button class="btn primary sm block" onclick="avanzarPedido(${m.numero})">Empezar a preparar</button>`:''}
-      ${m.pedido.estado==='preparando'?`<button class="btn good sm block" onclick="avanzarPedido(${m.numero})">Marcar listo</button>`:''}
-      ${m.pedido.estado==='listo'?`<button class="btn dark sm block" onclick="avanzarPedido(${m.numero})">Entregado en mesa</button>`:''}
-    </div></div>`;
-}
-function avanzarPedido(n){
-  const m=findMesa(n); const i=PEDIDO_ESTADOS.indexOf(m.pedido.estado);
-  if(i<PEDIDO_ESTADOS.length-1) send({type:'pedido_estado', mesa:n, estado:PEDIDO_ESTADOS[i+1]});
+    <ul>${itemsActivos.map(it=>`<li style="margin-bottom:10px;">
+      <div>${escapeHtml(it.nombre)} <span class="item-mod">${DESTINO_LABELS[itemDestino(it)]}</span>${it.notas?` <span class="item-mod">— "${escapeHtml(it.notas)}"</span>`:''}</div>
+      <div style="display:flex;align-items:center;gap:6px;margin-top:5px;">
+        <span class="pill ${itemEstadoClass(it.estado)}">${PEDIDO_LABELS[it.estado]}</span>
+        <span class="item-mod">${itemElapsedLabel(it)}</span>
+        ${it.estado==='enviado'?`<button class="btn primary sm" onclick="avanzarItem(${m.numero},${it.id})">Empezar a preparar</button>`:''}
+        ${it.estado==='preparando'?`<button class="btn good sm" onclick="avanzarItem(${m.numero},${it.id})">Marcar listo</button>`:''}
+        ${it.estado==='listo'?`<button class="btn dark sm" onclick="avanzarItem(${m.numero},${it.id})">Entregado en mesa</button>`:''}
+      </div></li>`).join('')}</ul></div>`;
 }
 
 /* ---------------- MOZO ---------------- */
@@ -592,11 +761,25 @@ function viewMozo(){
     <div class="mesa-grid">${misMesas.length ? misMesas.map(m=>mesaTileHtml(m)).join('') : '<div class="empty">Sin mesas activas.</div>'}</div>`;
 }
 function cambiarMozo(v){ state.mozoActivo=v; render(); }
+function cuentaActionsHtml(m){
+  if(!m.cuentaPedida) return '';
+  if(m.pago && m.pago.estado==='confirmado'){
+    return `<div style="margin-top:10px;"><span class="pill libre">Pago demo confirmado · ${money(m.pago.total)}</span>
+      <button class="btn good sm block" style="margin-top:8px;" onclick="liberarMesa(${m.numero})">Cerrar y liberar mesa</button></div>`;
+  }
+  return `<div style="margin-top:10px;"><strong>${money(pedidoTotal(m))}</strong>
+    <button class="btn primary sm block" style="margin-top:8px;" onclick="confirmarPagoDemo(${m.numero})">Confirmar pago demo</button></div>`;
+}
+function confirmarPagoDemo(n){ send({type:'pago_demo_confirmar', mesa:n}); }
+function liberarMesa(n){
+  if(confirm(`Esto cierra la cuenta demo y libera la Mesa ${n}. ¿Confirmás?`)) send({type:'mesa_liberar', mesa:n});
+}
 function mesaTileHtml(m){
   const prio = prioridadMax(alertasAbiertas(m));
   return `<div class="mesa-tile ${prio?'alerta-'+prio:''}"><div class="num">Mesa ${m.numero}</div>
     <div class="estado">${m.pedido?estadoPedidoLabel(m):'Sentados'}${m.cuentaPedida?' · cuenta':''}</div>
-    ${alertasAbiertas(m).length?`<span class="pill ${prio}">${alertasAbiertas(m).length} alerta(s)</span>`:`<span class="pill ocupada">OK</span>`}</div>`;
+    ${alertasAbiertas(m).length?`<span class="pill ${prio}">${alertasAbiertas(m).length} alerta(s)</span>`:`<span class="pill ocupada">OK</span>`}
+    ${cuentaActionsHtml(m)}</div>`;
 }
 function alertRowHtml(mesa,a,acciones){
   const edad = timeAgoSec(a.creadoTs);
@@ -622,7 +805,8 @@ function viewEncargado(){
       const prio=prioridadMax(alertasAbiertas(m));
       return `<div class="mesa-tile ${prio?'alerta-'+prio:''}"><div class="num">Mesa ${m.numero}</div>
         <div class="estado">${m.ocupada?(m.pedido?estadoPedidoLabel(m):'Sentados'):'Libre'} · ${m.mozo}</div>
-        ${alertasAbiertas(m).length?`<span class="pill ${prio}">${alertasAbiertas(m).length} alerta(s)</span>`:`<span class="pill ${m.ocupada?'ocupada':'libre'}">${m.ocupada?'Ocupada':'Libre'}</span>`}</div>`;
+        ${alertasAbiertas(m).length?`<span class="pill ${prio}">${alertasAbiertas(m).length} alerta(s)</span>`:`<span class="pill ${m.ocupada?'ocupada':'libre'}">${m.ocupada?'Ocupada':'Libre'}</span>`}
+        ${cuentaActionsHtml(m)}</div>`;
     }).join('')}</div>
     <div class="section-h">Cola de alertas</div>
     ${todas.length ? todas.map(({mesa,alerta})=>alertRowHtml(mesa,alerta,true)).join('') : `<div class="empty">${ic('checkring')} No hay alertas abiertas.</div>`}
@@ -638,16 +822,38 @@ function viewDueno(){
   const mesasOcupadas = state.mesas.filter(m=>m.ocupada).length;
   const alertasN = todasAlertasAbiertas().length;
   const urgentes = todasAlertasAbiertas().filter(x=>x.alerta.prioridad==='urgente').length;
-  const ventasDemo = state.mesas.reduce((s,m)=> s + (m.pedido? m.pedido.items.reduce((a,it)=>a+(it.precio||0),0):0), 0);
+  const analytics = state.analytics || {pagosConfirmados:0,ventasDemo:0,tiempoPagoTotalSec:0,itemsVendidos:0,productos:{},resenas:[]};
+  const pedidosActivos = state.mesas.filter(m=>m.pedido).length;
+  const ticketPromedio = analytics.pagosConfirmados ? Math.round(analytics.ventasDemo/analytics.pagosConfirmados) : 0;
+  const tiempoPagoPromedio = analytics.pagosConfirmados ? Math.round(analytics.tiempoPagoTotalSec/analytics.pagosConfirmados) : 0;
+  const topProductos = Object.values(analytics.productos||{}).sort((a,b)=>b.cantidad-a.cantidad).slice(0,5);
+  const resenas = Array.isArray(analytics.resenas) ? analytics.resenas : [];
+  const ratingPromedio = resenas.length ? (resenas.reduce((sum,r)=>sum+r.puntuacion,0)/resenas.length).toFixed(1) : '—';
+  const resenasCriticas = resenas.filter(r=>r.puntuacion<=3).length;
+  const resenasRecientes = [...resenas].reverse().slice(0,6);
   const productosPendientes = todosLosProductos().filter(p=>precioBase(p)===null).length;
   return `<h1 class="view-title">DUEÑO</h1>
-    <p class="view-sub">Panel de negocio. ${productosPendientes} productos todavía sin precio confirmado — se excluyen del cálculo de ventas.</p>
-    <div class="mock-banner">${ic('clipboard')} Este dashboard usa datos reales de la carta y pedidos reales de esta sesión — pero no hay caja/POS conectado, así que "ventas" es sólo lo pedido desde este sistema hoy.</div>
+    <p class="view-sub">Panel de negocio de esta sesión. ${productosPendientes} productos todavía sin precio confirmado.</p>
+    <div class="mock-banner">${ic('clipboard')} Los cobros son confirmaciones de demostración acumuladas por este sistema. No hay caja, POS ni dinero real conectado.</div>
     <div class="grid cols-4">
-      ${statTile('Ventas (hoy, este sistema)', money(ventasDemo), 'pedidos por esta app', null)}
+      ${statTile('Cobrado demo', money(analytics.ventasDemo), analytics.pagosConfirmados+' cuenta(s)', null)}
+      ${statTile('Ticket promedio', money(ticketPromedio), 'cuentas confirmadas', null)}
+      ${statTile('Tiempo para pagar', fmtSec(tiempoPagoPromedio), 'promedio desde solicitud', null)}
+      ${statTile('Ítems cobrados', String(analytics.itemsVendidos), 'en esta sesión', null)}
+    </div>
+    <div class="grid cols-4" style="margin-top:14px;">
       ${statTile('Mesas ocupadas', mesasOcupadas+' / '+MESAS_TOTAL, null, null)}
+      ${statTile('Pedidos activos', String(pedidosActivos), 'ahora', null)}
       ${statTile('Alertas activas', String(alertasN), urgentes>0?urgentes+' urgente(s)':'todo tranquilo', urgentes>0?'downAlert':null)}
-      ${statTile('Precios a confirmar', String(productosPendientes), 'productos', null)}
+      ${statTile('Experiencia', ratingPromedio, resenas.length?resenas.length+' opinión(es) · '+resenasCriticas+' a recuperar':'sin opiniones todavía', resenasCriticas?'downAlert':null)}
+    </div>
+    <div class="section-h">Más vendidos de la sesión</div>
+    <div class="grid cols-3">
+      ${topProductos.length ? topProductos.map((p,index)=>`<div class="insight"><span>${index+1}. ${escapeHtml(p.nombre)}</span><b>${p.cantidad} · ${money(p.total)}</b></div>`).join('') : '<div class="empty">Los productos aparecerán cuando se confirme el primer pago demo.</div>'}
+    </div>
+    <div class="section-h">Opiniones post-pago</div>
+    <div class="grid cols-3">
+      ${resenasRecientes.length ? resenasRecientes.map(r=>`<div class="insight review-insight"><span>Mesa ${r.mesa} · ${r.puntuacion}/5 · hace ${fmtSec(timeAgoSec(r.creadoTs))}</span><b>${r.comentario?escapeHtml(r.comentario):'Sin comentario'}</b></div>`).join('') : '<div class="empty">Las opiniones aparecerán después de un pago demo confirmado.</div>'}
     </div>
     <div class="section-h">Platos con 3D real activado</div>
     <div class="grid cols-3">
