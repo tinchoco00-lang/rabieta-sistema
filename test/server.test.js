@@ -459,8 +459,10 @@ test('cuenta y pago demo conservan el pedido hasta que staff libera la mesa', as
   assert.equal((await action({ type: 'pago_demo_confirmar', mesa: 1 }, staffToken)).status, 200);
   mesa = (await getState()).mesas[0];
   assert.deepEqual(mesa.pago, {
-    modo: 'demo', estado: 'confirmado', total: 7700, confirmadoTs: mesa.pago.confirmadoTs,
+    modo: 'demo', estado: 'confirmado', medio: 'staff', total: 7700,
+    referencia: mesa.pago.referencia, confirmadoTs: mesa.pago.confirmadoTs,
   });
+  assert.match(mesa.pago.referencia, /^RAB-01-\d{6}$/);
   assert.ok(Number.isFinite(mesa.pago.confirmadoTs));
   assert.equal(mesa.pedido.items.length, 2);
   assert.equal((await action({ type: 'pago_demo_confirmar', mesa: 1 }, staffToken)).status, 409);
@@ -490,6 +492,26 @@ test('pago demo rechaza cuentas con precios pendientes', async () => {
   assert.equal((await action({ type: 'pedir_cuenta', mesa: 1 })).status, 200);
   assert.equal((await action({ type: 'pago_demo_confirmar', mesa: 1 }, staffToken)).status, 409);
   assert.equal((await getState()).mesas[0].pago, null);
+  await resetState();
+});
+
+test('cliente completa checkout sandbox y recibe comprobante sin credenciales staff', async () => {
+  await resetState();
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [
+    { productoId: 'hummus-rabieta' }, { productoId: 'burrata' },
+  ] })).status, 200);
+  assert.equal((await action({ type: 'pago_sandbox_confirmar', mesa: 1, medio: 'tarjeta' })).status, 409);
+  assert.equal((await action({ type: 'pedir_cuenta', mesa: 1 })).status, 200);
+  assert.equal((await action({ type: 'pago_sandbox_confirmar', mesa: 1, medio: 'efectivo' })).status, 400);
+  assert.equal((await action({ type: 'pago_sandbox_confirmar', mesa: 1, medio: 'mercado_pago' })).status, 200);
+
+  const mesa = (await getState()).mesas[0];
+  assert.equal(mesa.pago.modo, 'demo');
+  assert.equal(mesa.pago.estado, 'confirmado');
+  assert.equal(mesa.pago.medio, 'mercado_pago');
+  assert.equal(mesa.pago.total, 7700);
+  assert.match(mesa.pago.referencia, /^RAB-01-\d{6}$/);
+  assert.ok(mesa.alertas.filter(alerta => alerta.tipo === 'cuenta').every(alerta => alerta.estado === 'resuelto'));
   await resetState();
 });
 
@@ -1126,4 +1148,15 @@ test('el asistente ofrece consulta libre local, resultados accionables y declara
   assert.match(engine, /Confirmá con el personal por contaminación cruzada/);
   assert.match(mesaHtml, /recommender\.js/);
   assert.doesNotMatch(source, /fetch\(['"]\/api\/recomend/);
+});
+
+test('dueño ve un embudo operativo vivo con foco sugerido', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  assert.match(source, /Embudo operativo ahora/);
+  assert.match(source, /label:'Sin pedido'/);
+  assert.match(source, /label:'En producción'/);
+  assert.match(source, /label:'Esperando salón'/);
+  assert.match(source, /label:'Cuenta abierta'/);
+  assert.match(source, /label:'Pagadas'/);
+  assert.match(source, /Foco sugerido/);
 });

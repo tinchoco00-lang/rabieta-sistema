@@ -54,9 +54,10 @@ const STAFF_TOKEN_TTL_MS = Number.isFinite(configuredTokenTtl) && configuredToke
 const STAFF_TOKENS = new Map();
 const MESA_TOKEN_SECRET = process.env.MESA_TOKEN_SECRET || null;
 const MAX_BODY_BYTES = 32 * 1024;
-const PUBLIC_ACTIONS = new Set(['pedido_nuevo', 'llamar_mozo', 'pedir_cuenta', 'ayuda', 'resena_enviar']);
+const PUBLIC_ACTIONS = new Set(['pedido_nuevo', 'llamar_mozo', 'pedir_cuenta', 'ayuda', 'resena_enviar', 'pago_sandbox_confirmar']);
 const STAFF_ACTIONS = new Set(['pedido_estado', 'alerta_atender', 'alerta_resolver', 'pago_demo_confirmar', 'mesa_liberar', 'demo_escenario_cargar', 'reset_demo']);
-const MESA_ACTIONS = new Set(['pedido_nuevo', 'pedido_estado', 'llamar_mozo', 'pedir_cuenta', 'ayuda', 'resena_enviar', 'pago_demo_confirmar', 'mesa_liberar']);
+const MESA_ACTIONS = new Set(['pedido_nuevo', 'pedido_estado', 'llamar_mozo', 'pedir_cuenta', 'ayuda', 'resena_enviar', 'pago_sandbox_confirmar', 'pago_demo_confirmar', 'mesa_liberar']);
+const PAGO_SANDBOX_MEDIOS = new Set(['tarjeta', 'mercado_pago']);
 const PEDIDO_ESTADOS = ['enviado', 'preparando', 'listo', 'entregado'];
 const HELP_CATEGORIES = {
   no_llego: { label: 'No llegó mi pedido', prioridad: 'urgente' },
@@ -623,14 +624,23 @@ function handleAction(msg) {
       m.resenaEnviada = true;
       break;
     }
+    case 'pago_sandbox_confirmar':
     case 'pago_demo_confirmar': {
       if (!m.pedido || !m.cuentaPedida) return actionError(409, 'La cuenta no fue solicitada');
       if (m.pago) return actionError(409, 'El pago demo ya fue confirmado');
       if (m.pedido.items.some(item => !Number.isFinite(item.precio))) {
         return actionError(409, 'Hay precios pendientes de confirmar');
       }
+      const medio = msg.type === 'pago_sandbox_confirmar' ? msg.medio : 'staff';
+      if (msg.type === 'pago_sandbox_confirmar' && !PAGO_SANDBOX_MEDIOS.has(medio)) {
+        return actionError(400, 'Medio de pago sandbox inválido');
+      }
       const total = m.pedido.items.reduce((sum, item) => sum + item.precio, 0);
-      m.pago = { modo: 'demo', estado: 'confirmado', total, confirmadoTs: state.clockMs };
+      m.pago = {
+        modo: 'demo', estado: 'confirmado', medio, total,
+        referencia: `RAB-${String(m.numero).padStart(2, '0')}-${String(uid()).padStart(6, '0')}`,
+        confirmadoTs: state.clockMs,
+      };
       recordPaymentAnalytics(m);
       m.alertas.forEach(alertaCuenta => {
         if (alertaCuenta.tipo === 'cuenta' && alertaCuenta.estado !== 'resuelto') alertaCuenta.estado = 'resuelto';

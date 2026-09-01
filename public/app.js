@@ -97,6 +97,7 @@ let state = {
   clienteAsistenteOpen:false, clientePreferencia:null, clienteAsistenteConsulta:'', clienteAsistenteRespuesta:null,
   clienteAsistenteAgregado:null, clienteResenaError:'', clienteResenaEnviando:false,
   clienteRepetirAviso:'', clientePedidoEnviando:false, clientePedidoError:'',
+  clientePagoMedio:'tarjeta', clientePagoEnviando:false, clientePagoError:'',
   clienteResenaDraft:{puntuacion:null,comentario:'',crmConsentimiento:false,crmCanal:'whatsapp',crmContacto:'',crmNombre:''},
   mozoActivo:MOZOS[0], modal:null, mesaLinks:null, mesaLinksLoading:false, mesaLinksError:'', presentacionCargada:false,
   demoPasoActual:1, demoPasosVistos:new Set(),
@@ -511,6 +512,25 @@ function renderModal(){
         <p>Tu llamado fue recibido. Un mozo se va a acercar a la <b>Mesa ${state.clienteMesa}</b> en breve.</p>
         <button class="btn primary block" onclick="closeModal()">Entendido</button>
       </div></div>`;
+  } else if(state.modal.type==='checkout'){
+    const mesa = findMesa(state.clienteMesa);
+    const total = mesa ? pedidoTotal(mesa) : 0;
+    root.innerHTML = `<div class="modal-bg" onclick="closeModal(event)">
+      <div class="modal checkout-modal" onclick="event.stopPropagation()">
+        <div class="checkout-head"><span class="checkout-lock">${ic('lock')} SANDBOX SEGURO</span><h3>Pagá desde la mesa</h3><p>Simulación completa para la demo. No se cobra dinero ni se solicitan datos reales.</p></div>
+        <div class="checkout-summary">
+          ${(mesa&&mesa.pedido?mesa.pedido.items:[]).map(item=>`<div><span>${escapeHtml(item.nombre)}</span><b>${money(item.precio)}</b></div>`).join('')}
+          <div class="checkout-total"><span>Total</span><b>${money(total)}</b></div>
+        </div>
+        <div class="checkout-label">Elegí cómo simular el pago</div>
+        <div class="payment-methods">
+          <button class="${state.clientePagoMedio==='tarjeta'?'active':''}" onclick="elegirMedioPago('tarjeta')"><b>Tarjeta demo</b><span>•••• 4242</span></button>
+          <button class="${state.clientePagoMedio==='mercado_pago'?'active':''}" onclick="elegirMedioPago('mercado_pago')"><b>Mercado Pago</b><span>Cuenta sandbox</span></button>
+        </div>
+        ${state.clientePagoError?`<div class="review-error">${escapeHtml(state.clientePagoError)}</div>`:''}
+        <button class="btn primary block" ${state.clientePagoEnviando?'disabled':''} onclick="confirmarPagoSandbox()">${state.clientePagoEnviando?'Procesando…':'Confirmar pago demo por '+money(total)}</button>
+        <button class="btn ghost block" style="margin-top:8px;" onclick="closeModal()">Volver</button>
+      </div></div>`;
   }
 }
 function openModal3d(id, nombre){ state.modal = {type:'3d', id, nombre}; render(); }
@@ -660,9 +680,9 @@ function viewCliente(){
     const idx = PEDIDO_ESTADOS.indexOf(mesa.pedido.estado);
     const variasRondas = mesa.pedido.items.some(it=>(it.ronda||1)>1);
     const pagoHtml = mesa.pago && mesa.pago.estado==='confirmado'
-      ? `<div class="mock-banner" style="margin:12px 0 0;">${ic('checkring')} Pago de demostración confirmado por ${money(mesa.pago.total)}. No se movió dinero real.</div>${resenaHtml(mesa)}`
+      ? `<div class="payment-receipt"><span>${ic('checkring')}</span><div><b>Pago demo aprobado</b><small>${money(mesa.pago.total)} · ${mesa.pago.medio==='mercado_pago'?'Mercado Pago sandbox':mesa.pago.medio==='tarjeta'?'Tarjeta demo •••• 4242':'Confirmado por staff'}<br>Comprobante ${escapeHtml(mesa.pago.referencia||'demo')}</small></div></div>${resenaHtml(mesa)}`
       : mesa.cuentaPedida
-        ? `<div class="mock-banner" style="margin:12px 0 0;">${ic('receipt')} Cuenta solicitada por ${money(pedidoTotal(mesa))}. El personal está preparando el cobro.</div>`
+        ? `<div class="checkout-callout"><div><b>${ic('receipt')} Tu cuenta está lista</b><span>Total ${money(pedidoTotal(mesa))} · podés completar el flujo sin dinero real.</span></div><button class="btn primary sm" onclick="abrirCheckout()">Pagar en sandbox</button></div>`
         : '';
     pedidoStatusHtml = `<div class="card">
       <div style="font-weight:800;font-size:13.5px;margin-bottom:4px;">Tu pedido</div>
@@ -713,7 +733,7 @@ function viewCliente(){
       ${mesa.pago && mesa.pago.estado==='confirmado'
         ? `<button class="btn good" disabled>${ic('checkring')} Pago demo confirmado</button>`
         : mesa.cuentaPedida
-          ? `<button class="btn dark" disabled>${ic('receipt')} Cuenta solicitada</button>`
+          ? `<button class="btn primary" onclick="abrirCheckout()">${ic('lock')} Abrir pago sandbox</button>`
           : `<button class="btn dark" onclick="pedirCuenta()">${ic('receipt')} Pedir la cuenta</button>`}
       <button class="btn critical" onclick="toggleHelp()">${ic('help')} Necesito ayuda</button>
     </div>
@@ -885,6 +905,19 @@ function confirmarLlamarMozo(){
   setTimeout(()=>{ if(state.modal && state.modal.type==='mozo-enviado'){ state.modal=null; render(); } }, 4500);
 }
 function pedirCuenta(){ state.clienteCart=[]; send({type:'pedir_cuenta', mesa:state.clienteMesa}); render(); }
+function abrirCheckout(){ state.clientePagoError=''; state.modal={type:'checkout'}; render(); }
+function elegirMedioPago(medio){ state.clientePagoMedio=medio; render(); }
+async function confirmarPagoSandbox(){
+  if(state.clientePagoEnviando) return;
+  state.clientePagoEnviando=true; state.clientePagoError=''; render();
+  const response = await send({type:'pago_sandbox_confirmar', mesa:state.clienteMesa, medio:state.clientePagoMedio});
+  state.clientePagoEnviando=false;
+  if(!response || !response.ok){
+    let payload={}; try{ payload=await response.json(); }catch(e){}
+    state.clientePagoError=payload.error || 'No pudimos completar el pago demo. Probá de nuevo.'; render(); return;
+  }
+  state.modal=null; render();
+}
 function resenaHtml(mesa){
   const draft = state.clienteResenaDraft;
   if(mesa.resenaEnviada) return `<div class="review-card review-thanks">${ic('checkring')} Gracias. Tu opinión ya llegó al equipo de Rabieta.</div>`;
@@ -1229,10 +1262,23 @@ function viewDueno(){
   const crmContactos = Array.isArray(analytics.crmContactos) ? analytics.crmContactos : [];
   const crmRecientes = [...crmContactos].reverse().slice(0,6);
   const productosPendientes = todosLosProductos().filter(p=>precioBase(p)===null).length;
+  const flujo = [
+    {label:'Sin pedido',value:state.mesas.filter(m=>m.ocupada&&!m.pedido).length,hint:'mesas sentadas'},
+    {label:'En producción',value:state.mesas.filter(m=>m.pedido&&!m.cuentaPedida&&m.pedido.items.some(i=>i.estado==='enviado'||i.estado==='preparando')).length,hint:'cocina o barra'},
+    {label:'Esperando salón',value:itemsEsperandoSalon.length,hint:'ítems listos'},
+    {label:'Cuenta abierta',value:state.mesas.filter(m=>m.cuentaPedida&&!m.pago).length,hint:'esperando pago'},
+    {label:'Pagadas',value:state.mesas.filter(m=>m.pago&&m.pago.estado==='confirmado').length,hint:'listas para liberar'},
+  ];
+  const cuello = flujo.reduce((mayor,paso)=>paso.value>mayor.value?paso:mayor,flujo[0]);
   return `<h1 class="view-title">DUEÑO</h1>
     <p class="view-sub">Panel de negocio de esta sesión. ${productosPendientes} productos todavía sin precio confirmado.</p>
     ${state.presentacionCargada?`<div class="mock-banner">${ic('checkring')} Escenario sintético de presentación activo. Estas métricas no corresponden a clientes ni ventas reales.</div>`:''}
     <div class="mock-banner">${ic('clipboard')} Los cobros son confirmaciones de demostración acumuladas por este sistema. No hay caja, POS ni dinero real conectado.</div>
+    <div class="section-h">Embudo operativo ahora</div>
+    <div class="owner-funnel">
+      ${flujo.map((paso,index)=>`<div class="funnel-step ${paso.value?'active':''}"><span class="funnel-index">${index+1}</span><div><b>${paso.label}</b><small>${paso.hint}</small></div><strong>${paso.value}</strong></div>`).join('')}
+    </div>
+    <div class="owner-focus ${cuello.value?'attention':''}">${cuello.value?`${ic('warning')} Foco sugerido: <b>${cuello.label}</b> concentra ${cuello.value} unidad(es) ahora.`:`${ic('checkring')} No hay cuellos de botella activos en este momento.`}</div>
     <div class="grid cols-4">
       ${statTile('Cobrado demo', money(analytics.ventasDemo), analytics.pagosConfirmados+' cuenta(s)', null)}
       ${statTile('Ticket promedio', money(ticketPromedio), 'cuentas confirmadas', null)}
