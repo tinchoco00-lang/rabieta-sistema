@@ -39,20 +39,25 @@ Esta fila JSONB es una capa transitoria de continuidad para el MVP. No es el
 esquema relacional definitivo del futuro SaaS, no es multi-tenant y todavía no
 aporta historial ni auditoría.
 
-El PIN compartido de personal genera un token temporal en memoria para autorizar
-las acciones internas. Esos tokens no se guardan en PostgreSQL y dejan de ser
-válidos al reiniciar el proceso. Todavía no existen usuarios individuales,
-sesiones persistentes ni autorización real por roles.
+El acceso de personal genera un token temporal ligado al rol elegido. Mozo,
+Cocina, Encargado y Dueño reciben vistas y acciones distintas; por ejemplo,
+Cocina no puede cobrar o marcar entregas y sólo Encargado accede a los QR. Para
+la demo todos pueden usar `STAFF_PIN`. En el piloto se configuran PIN distintos
+con `STAFF_PIN_MOZO`, `STAFF_PIN_COCINA`, `STAFF_PIN_ENCARGADO` y
+`STAFF_PIN_DUENO`. Los tokens no se guardan en PostgreSQL y dejan de ser válidos
+al reiniciar el proceso. Todavía no existen usuarios individuales ni sesiones
+persistentes.
 
 La variable opcional `MESA_TOKEN_SECRET` activa la identidad HMAC de mesa. Con
 ella configurada, cada acción y stream público debe presentar en
 `X-Mesa-Token` el token correspondiente al mismo número de mesa. El secreto y
 los tokens no se guardan en PostgreSQL ni se escriben en logs. Si la variable
 no existe, el servidor conserva temporalmente el modo compatible sin identidad
-de mesa y registra un warning seguro. La generación y distribución de los QR
-autorizados sigue siendo un paso operativo pendiente: no se debe activar esta
-variable hasta contar con ese procedimiento y un entorno autorizado para el
-secreto.
+de mesa y registra un warning seguro. Con la variable activa, el panel interno
+`QR / Mesas` genera los 22 códigos y enlaces vinculados a una sola mesa; el
+endpoint que los entrega exige una sesión de Encargado y nunca expone el secreto. La
+impresión, rotación y colocación física definitiva debe hacerse únicamente en
+el entorno autorizado del local.
 
 ## Cómo ponerlo en internet — paso a paso, sin usar la terminal
 

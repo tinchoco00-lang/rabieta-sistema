@@ -27,7 +27,7 @@ Esta fase establece controles de desarrollo. No resuelve los riesgos funcionales
 - confirmar mesas, sectores, carta, precios, modificadores y flujo real del local;
 - confirmar el ruteo real de cada producto a cocina, barra u otro sector e incorporarlo sin inferirlo de categorias comerciales;
 - autenticacion y autorizacion adecuadas al piloto;
-- generar, rotar y distribuir QR por mesa de forma operativa;
+- validar en el local la impresión, colocación y rotación operativa de los QR por mesa ya generados por el panel;
 - definir degradacion segura ante caidas de red o persistencia;
 - observabilidad y runbook del turno.
 

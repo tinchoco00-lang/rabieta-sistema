@@ -30,11 +30,23 @@ const MESAS_TOTAL = MENU_DATA._meta.mesas.placeholder_sugerido; // ver _meta.mes
 const MOZOS = ['Martín', 'Sofía', 'Lucas'];
 const SLA = { urgente: 20, importante: 40, normal: 65 }; // segundos — comprimido para demo, configurable
 
-// PIN de acceso al panel de personal. Esto NO es seguridad real (no hay
-// usuarios, ni contraseñas por persona, ni cifrado de sesión) — es un
-// candado simple para que un cliente que adivina la URL no entre directo.
-// Antes de un uso real hace falta autenticación de verdad (ver README).
+// Cada sesión de staff queda ligada a un rol. Para la demo todos los roles
+// pueden compartir STAFF_PIN; en el piloto se configura un PIN distinto por
+// rol sin cambiar el producto.
 const STAFF_PIN = process.env.STAFF_PIN || '1234';
+const STAFF_ROLES = new Set(['mozo', 'cocina', 'encargado', 'dueno']);
+const STAFF_PINS = {
+  mozo: process.env.STAFF_PIN_MOZO || STAFF_PIN,
+  cocina: process.env.STAFF_PIN_COCINA || STAFF_PIN,
+  encargado: process.env.STAFF_PIN_ENCARGADO || STAFF_PIN,
+  dueno: process.env.STAFF_PIN_DUENO || STAFF_PIN,
+};
+const STAFF_ROLE_VIEWS = {
+  mozo: ['mozo'],
+  cocina: ['cocina'],
+  encargado: ['encargado', 'mozo', 'cocina', 'dueno', 'qrs'],
+  dueno: ['dueno'],
+};
 const configuredTokenTtl = Number(process.env.STAFF_TOKEN_TTL_MS);
 const STAFF_TOKEN_TTL_MS = Number.isFinite(configuredTokenTtl) && configuredTokenTtl > 0
   ? configuredTokenTtl
@@ -43,7 +55,7 @@ const STAFF_TOKENS = new Map();
 const MESA_TOKEN_SECRET = process.env.MESA_TOKEN_SECRET || null;
 const MAX_BODY_BYTES = 32 * 1024;
 const PUBLIC_ACTIONS = new Set(['pedido_nuevo', 'llamar_mozo', 'pedir_cuenta', 'ayuda', 'resena_enviar', 'pago_sandbox_confirmar']);
-const STAFF_ACTIONS = new Set(['pedido_estado', 'alerta_atender', 'alerta_resolver', 'pago_demo_confirmar', 'mesa_liberar', 'reset_demo']);
+const STAFF_ACTIONS = new Set(['pedido_estado', 'alerta_atender', 'alerta_resolver', 'pago_demo_confirmar', 'mesa_liberar', 'demo_escenario_cargar', 'reset_demo']);
 const MESA_ACTIONS = new Set(['pedido_nuevo', 'pedido_estado', 'llamar_mozo', 'pedir_cuenta', 'ayuda', 'resena_enviar', 'pago_sandbox_confirmar', 'pago_demo_confirmar', 'mesa_liberar']);
 const PAGO_SANDBOX_MEDIOS = new Set(['tarjeta', 'mercado_pago']);
 const PEDIDO_ESTADOS = ['enviado', 'preparando', 'listo', 'entregado'];
@@ -79,7 +91,23 @@ let uidCounter = 1;
 function uid() { return uidCounter++; }
 
 function seedAnalytics() {
-  return { pagosConfirmados: 0, ventasDemo: 0, tiempoPagoTotalSec: 0, itemsVendidos: 0, productos: {}, resenas: [] };
+  return {
+    pagosConfirmados: 0,
+    ventasDemo: 0,
+    tiempoPagoTotalSec: 0,
+    itemsVendidos: 0,
+    itemsListos: 0,
+    itemsEntregados: 0,
+    tiempoPreparacionTotalSec: 0,
+    tiempoPaseTotalSec: 0,
+    destinos: {
+      cocina: { itemsListos: 0, tiempoPreparacionTotalSec: 0 },
+      barra: { itemsListos: 0, tiempoPreparacionTotalSec: 0 },
+    },
+    productos: {},
+    resenas: [],
+    crmContactos: [],
+  };
 }
 
 function seedState() {
@@ -87,7 +115,7 @@ function seedState() {
   for (let i = 1; i <= MESAS_TOTAL; i++) {
     mesas.push({ numero: i, mozo: MOZOS[i % MOZOS.length], ocupada: false, pedido: null, cuentaPedida: false, cuentaPedidaTs: null, pago: null, resenaEnviada: false, alertas: [] });
   }
-  return { clockMs: 0, mesas, analytics: seedAnalytics() };
+  return { clockMs: 0, mesas, analytics: seedAnalytics(), presentacionCargada: false };
 }
 let state = seedState();
 let mutationQueue = Promise.resolve();
@@ -99,9 +127,19 @@ function enqueueMutation(task) {
 }
 
 function pruneExpiredStaffTokens(now = Date.now()) {
-  for (const [token, expiresAt] of STAFF_TOKENS) {
-    if (expiresAt <= now) STAFF_TOKENS.delete(token);
+  for (const [token, session] of STAFF_TOKENS) {
+    if (session.expiresAt <= now) STAFF_TOKENS.delete(token);
   }
+}
+
+function staffRoleCan(role, msg) {
+  if (role === 'encargado') return true;
+  if (role === 'mozo') {
+    return ['alerta_atender', 'alerta_resolver', 'pago_demo_confirmar', 'mesa_liberar'].includes(msg.type)
+      || (msg.type === 'pedido_estado' && msg.estado === 'entregado');
+  }
+  if (role === 'cocina') return msg.type === 'pedido_estado' && msg.estado !== 'entregado';
+  return false;
 }
 
 function findMesa(n) { return state.mesas.find(m => m.numero === Number(n)); }
@@ -117,6 +155,11 @@ function authorizeMesaRequest(req, mesa) {
   const expected = crypto.createHmac('sha256', MESA_TOKEN_SECRET).update(`mesa:${mesa}`).digest();
   const supplied = Buffer.from(token, 'hex');
   return crypto.timingSafeEqual(expected, supplied) ? { ok: true } : { ok: false, status: 403 };
+}
+
+function accessTokenForMesa(mesa) {
+  if (!MESA_TOKEN_SECRET || !validMesaNumber(mesa)) return null;
+  return crypto.createHmac('sha256', MESA_TOKEN_SECRET).update(`mesa:${mesa}`).digest('hex');
 }
 
 function actionError(status, error) { return { ok: false, status, error }; }
@@ -137,6 +180,31 @@ function normalizeOptionalText(value, field, maxLength = 500) {
   return { ok: true, value: normalized };
 }
 
+function normalizeCrmContact(msg) {
+  const hasContactData = msg.crmCanal != null || msg.crmContacto != null || msg.crmNombre != null;
+  if (msg.crmConsentimiento !== true) {
+    return hasContactData
+      ? actionError(400, 'El consentimiento es obligatorio para guardar un contacto')
+      : { ok: true, value: null };
+  }
+  if (!['whatsapp', 'email'].includes(msg.crmCanal)) return actionError(400, 'Canal de contacto inválido');
+  const contacto = normalizeOptionalText(msg.crmContacto, 'Contacto', 160);
+  if (!contacto.ok) return contacto;
+  if (!contacto.value) return actionError(400, 'El contacto es obligatorio al aceptar novedades');
+  if (msg.crmCanal === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contacto.value)) {
+    return actionError(400, 'Email inválido');
+  }
+  if (msg.crmCanal === 'whatsapp') {
+    const digits = contacto.value.replace(/\D/g, '');
+    if (digits.length < 8 || digits.length > 15 || !/^[+\d\s().-]+$/.test(contacto.value)) {
+      return actionError(400, 'WhatsApp inválido');
+    }
+  }
+  const nombre = normalizeOptionalText(msg.crmNombre, 'Nombre', 80);
+  if (!nombre.ok) return nombre;
+  return { ok: true, value: { canal: msg.crmCanal, contacto: contacto.value, nombre: nombre.value } };
+}
+
 function buildPedidoItem(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return actionError(400, 'Ítem inválido');
   if (typeof input.productoId !== 'string') return actionError(400, 'productoId inválido');
@@ -146,11 +214,14 @@ function buildPedidoItem(input) {
 
   let nombre = producto.nombre;
   let precio = producto.precio;
+  let varianteSeleccionada = null;
+  let opcionSeleccionada = null;
 
   if (Array.isArray(producto.variantes) && producto.variantes.length) {
     if (typeof input.variante !== 'string') return actionError(400, 'Variante requerida');
     const variante = producto.variantes.find(candidate => candidate.nombre === input.variante);
     if (!variante) return actionError(400, 'Variante inválida');
+    varianteSeleccionada = variante.nombre;
     nombre += ' — ' + variante.nombre;
     precio = variante.precio;
   } else if (input.variante != null) {
@@ -161,6 +232,7 @@ function buildPedidoItem(input) {
     if (typeof input.opcion !== 'string' || !producto.opciones.includes(input.opcion)) {
       return actionError(400, 'Opción inválida');
     }
+    opcionSeleccionada = input.opcion;
     nombre += ' (' + input.opcion + ')';
   } else if (input.opcion != null) {
     return actionError(400, 'Opción inválida');
@@ -171,7 +243,10 @@ function buildPedidoItem(input) {
 
   return {
     ok: true,
-    item: { productoId: producto.id, nombre, precio, notas: observacion.value, destino: producto.destino },
+    item: {
+      productoId: producto.id, nombre, precio, notas: observacion.value, destino: producto.destino,
+      variante: varianteSeleccionada, opcion: opcionSeleccionada,
+    },
   };
 }
 
@@ -201,11 +276,39 @@ function recordPaymentAnalytics(mesa, analytics = state.analytics, clock = state
   });
 }
 
+function recordItemAnalytics(item, estado, analytics = state.analytics, clock = state.clockMs) {
+  if (estado === 'listo') {
+    const preparationTime = Math.max(0, clock - item.enviadoTs);
+    analytics.itemsListos++;
+    analytics.tiempoPreparacionTotalSec += preparationTime;
+    const destination = DESTINOS_PRODUCCION.has(item.destino) ? item.destino : DESTINO_DEFAULT;
+    analytics.destinos[destination].itemsListos++;
+    analytics.destinos[destination].tiempoPreparacionTotalSec += preparationTime;
+  }
+  if (estado === 'entregado') {
+    const readyTs = item.estadoTs && Number.isFinite(item.estadoTs.listo) ? item.estadoTs.listo : clock;
+    analytics.itemsEntregados++;
+    analytics.tiempoPaseTotalSec += Math.max(0, clock - readyTs);
+  }
+}
+
 function normalizeAnalytics(value) {
   const analytics = seedAnalytics();
   if (!value || typeof value !== 'object' || Array.isArray(value)) return analytics;
-  for (const field of ['pagosConfirmados', 'ventasDemo', 'tiempoPagoTotalSec', 'itemsVendidos']) {
+  for (const field of [
+    'pagosConfirmados', 'ventasDemo', 'tiempoPagoTotalSec', 'itemsVendidos',
+    'itemsListos', 'itemsEntregados', 'tiempoPreparacionTotalSec', 'tiempoPaseTotalSec',
+  ]) {
     if (Number.isFinite(value[field]) && value[field] >= 0) analytics[field] = value[field];
+  }
+  if (value.destinos && typeof value.destinos === 'object' && !Array.isArray(value.destinos)) {
+    for (const destino of DESTINOS_PRODUCCION) {
+      const metrics = value.destinos[destino];
+      if (!metrics || typeof metrics !== 'object' || Array.isArray(metrics)) continue;
+      for (const field of ['itemsListos', 'tiempoPreparacionTotalSec']) {
+        if (Number.isFinite(metrics[field]) && metrics[field] >= 0) analytics.destinos[destino][field] = metrics[field];
+      }
+    }
   }
   if (value.productos && typeof value.productos === 'object' && !Array.isArray(value.productos)) {
     Object.entries(value.productos).forEach(([productoId, metrics]) => {
@@ -223,16 +326,38 @@ function normalizeAnalytics(value) {
       return [{ id: Number.isInteger(review.id) && review.id > 0 ? review.id : null, mesa: review.mesa, puntuacion: review.puntuacion, comentario, creadoTs: review.creadoTs }];
     });
   }
+  if (Array.isArray(value.crmContactos)) {
+    analytics.crmContactos = value.crmContactos.slice(-100).flatMap(contact => {
+      if (!contact || typeof contact !== 'object' || !validMesaNumber(contact.mesa) || !Number.isFinite(contact.consentimientoTs)) return [];
+      if (!['whatsapp', 'email'].includes(contact.canal)) return [];
+      const contacto = typeof contact.contacto === 'string' ? contact.contacto.trim().slice(0, 160) : '';
+      const nombre = typeof contact.nombre === 'string' ? contact.nombre.trim().slice(0, 80) : '';
+      if (!contacto) return [];
+      return [{
+        id: Number.isInteger(contact.id) && contact.id > 0 ? contact.id : null,
+        mesa: contact.mesa,
+        canal: contact.canal,
+        contacto,
+        nombre,
+        consentimientoTs: contact.consentimientoTs,
+        origen: 'post_pago',
+      }];
+    });
+  }
   return analytics;
 }
 
 function normalizeRecoveredState(recoveredState) {
   const hadAnalytics = recoveredState.analytics && typeof recoveredState.analytics === 'object';
   recoveredState.analytics = normalizeAnalytics(recoveredState.analytics);
+  recoveredState.presentacionCargada = recoveredState.presentacionCargada === true;
   let highestId = 0;
   const normalizedItemIds = new Set();
   recoveredState.analytics.resenas.forEach(review => {
     if (Number.isInteger(review.id) && review.id > highestId) highestId = review.id;
+  });
+  recoveredState.analytics.crmContactos.forEach(contact => {
+    if (Number.isInteger(contact.id) && contact.id > highestId) highestId = contact.id;
   });
   recoveredState.mesas.forEach(mesa => {
     mesa.resenaEnviada = mesa.resenaEnviada === true;
@@ -248,6 +373,9 @@ function normalizeRecoveredState(recoveredState) {
   recoveredState.analytics.resenas.forEach(review => {
     if (!Number.isInteger(review.id) || review.id <= 0) review.id = uid();
   });
+  recoveredState.analytics.crmContactos.forEach(contact => {
+    if (!Number.isInteger(contact.id) || contact.id <= 0) contact.id = uid();
+  });
 
   recoveredState.mesas.forEach(mesa => {
     if (!mesa.pago || mesa.pago.modo !== 'demo' || mesa.pago.estado !== 'confirmado') mesa.pago = null;
@@ -262,6 +390,7 @@ function normalizeRecoveredState(recoveredState) {
       if (!Number.isInteger(item.id) || item.id <= 0 || normalizedItemIds.has(item.id)) item.id = uid();
       normalizedItemIds.add(item.id);
       if (!PEDIDO_ESTADOS.includes(item.estado)) item.estado = legacyState;
+      if (!Number.isInteger(item.ronda) || item.ronda < 1) item.ronda = 1;
       const producto = PRODUCTOS.get(item.productoId);
       item.destino = producto && DESTINOS_PRODUCCION.has(producto.destino) ? producto.destino : DESTINO_DEFAULT;
       if (!Number.isFinite(item.enviadoTs)) {
@@ -290,13 +419,78 @@ function normalizeRecoveredState(recoveredState) {
   return recoveredState;
 }
 
+function seedPresentationScenario() {
+  const previousState = state;
+  state = seedState();
+  const run = message => {
+    const result = handleAction(message);
+    if (!result.ok) state = previousState;
+    return result;
+  };
+  const advance = (mesa, itemId, estado) => run({ type: 'pedido_estado', mesa, itemId, estado });
+
+  state.clockMs = 15;
+  let result = run({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'hummus-rabieta' }, { productoId: 'agua' }] });
+  if (!result.ok) return result;
+  const mesaUno = findMesa(1);
+  state.clockMs = 55;
+  result = advance(1, mesaUno.pedido.items[0].id, 'preparando'); if (!result.ok) return result;
+  result = advance(1, mesaUno.pedido.items[1].id, 'preparando'); if (!result.ok) return result;
+  state.clockMs = 105;
+  result = advance(1, mesaUno.pedido.items[1].id, 'listo'); if (!result.ok) return result;
+
+  state.clockMs = 125;
+  result = run({ type: 'pedido_nuevo', mesa: 2, items: [{ productoId: 'burger-rabieta' }, { productoId: 'papas-rabieta' }] });
+  if (!result.ok) return result;
+
+  state.clockMs = 145;
+  result = run({ type: 'pedido_nuevo', mesa: 3, items: [{ productoId: 'hummus-rabieta' }] });
+  if (!result.ok) return result;
+  const mesaTresItem = findMesa(3).pedido.items[0].id;
+  result = advance(3, mesaTresItem, 'preparando'); if (!result.ok) return result;
+  state.clockMs = 180;
+  result = advance(3, mesaTresItem, 'listo'); if (!result.ok) return result;
+  state.clockMs = 195;
+  result = advance(3, mesaTresItem, 'entregado'); if (!result.ok) return result;
+  result = run({ type: 'pedir_cuenta', mesa: 3 }); if (!result.ok) return result;
+
+  state.clockMs = 220;
+  result = run({ type: 'ayuda', mesa: 4, categoria: 'incorrecto', mensaje: 'Escenario demo: revisar el pedido' });
+  if (!result.ok) return result;
+
+  state.clockMs = 235;
+  result = run({ type: 'pedido_nuevo', mesa: 5, items: [{ productoId: 'brownie' }] });
+  if (!result.ok) return result;
+  const mesaCincoItem = findMesa(5).pedido.items[0].id;
+  result = advance(5, mesaCincoItem, 'preparando'); if (!result.ok) return result;
+  state.clockMs = 260;
+  result = advance(5, mesaCincoItem, 'listo'); if (!result.ok) return result;
+  state.clockMs = 275;
+  result = advance(5, mesaCincoItem, 'entregado'); if (!result.ok) return result;
+  result = run({ type: 'pedir_cuenta', mesa: 5 }); if (!result.ok) return result;
+  state.clockMs = 285;
+  result = run({ type: 'pago_demo_confirmar', mesa: 5 }); if (!result.ok) return result;
+  result = run({
+    type: 'resena_enviar', mesa: 5, puntuacion: 5, comentario: 'Escenario de presentación listo',
+    crmConsentimiento: true, crmCanal: 'email', crmContacto: 'demo@rabieta.local', crmNombre: 'Cliente demo',
+  });
+  if (!result.ok) return result;
+
+  state.clockMs = 300;
+  state.presentacionCargada = true;
+  return actionOk();
+}
+
 const sseClients = new Set();
 function estadoPayload(client) {
-  const visibleState = client.kind === 'staff'
-    ? state
-    : { clockMs: state.clockMs, mesas: [findMesa(client.mesa)] };
+  let visibleState;
+  if (client.kind === 'staff') {
+    visibleState = ['encargado', 'dueno'].includes(client.role) ? state : { clockMs: state.clockMs, mesas: state.mesas };
+  } else {
+    visibleState = { clockMs: state.clockMs, mesas: [findMesa(client.mesa)] };
+  }
   const message = client.kind === 'staff'
-    ? { type: 'estado', state: visibleState, mesasTotal: MESAS_TOTAL }
+    ? { type: 'estado', state: visibleState, mesasTotal: MESAS_TOTAL, role: client.role, allowedViews: STAFF_ROLE_VIEWS[client.role] }
     : { type: 'estado', state: visibleState };
   return 'data: ' + JSON.stringify(message) + '\n\n';
 }
@@ -325,14 +519,17 @@ function handleAction(msg) {
     case 'pedido_nuevo': {
       if (!Array.isArray(msg.items) || !msg.items.length) return actionError(400, 'El pedido no contiene ítems');
       if (m.cuentaPedida) return actionError(409, 'La cuenta ya fue solicitada');
+      const ronda = m.pedido
+        ? m.pedido.items.reduce((max, item) => Math.max(max, Number.isInteger(item.ronda) ? item.ronda : 1), 1) + 1
+        : 1;
       const items = [];
       for (const input of msg.items) {
         const built = buildPedidoItem(input);
         if (!built.ok) return built;
-        items.push({ ...built.item, id: uid(), estado: 'enviado', enviadoTs: state.clockMs, estadoTs: { enviado: state.clockMs } });
+        items.push({ ...built.item, id: uid(), ronda, estado: 'enviado', enviadoTs: state.clockMs, estadoTs: { enviado: state.clockMs } });
       }
       m.ocupada = true;
-      if (m.pedido && m.pedido.estado !== 'entregado') {
+      if (m.pedido) {
         m.pedido.items.push(...items);
         syncPedidoEstado(m.pedido);
       } else {
@@ -353,6 +550,7 @@ function handleAction(msg) {
       item.estado = msg.estado;
       if (!item.estadoTs || typeof item.estadoTs !== 'object' || Array.isArray(item.estadoTs)) item.estadoTs = {};
       item.estadoTs[msg.estado] = state.clockMs;
+      recordItemAnalytics(item, msg.estado);
       syncPedidoEstado(m.pedido);
       break;
     }
@@ -409,8 +607,20 @@ function handleAction(msg) {
       }
       const comentario = normalizeOptionalText(msg.comentario, 'Comentario');
       if (!comentario.ok) return comentario;
+      const crmContact = normalizeCrmContact(msg);
+      if (!crmContact.ok) return crmContact;
       state.analytics.resenas.push({ id: uid(), mesa: m.numero, puntuacion: msg.puntuacion, comentario: comentario.value, creadoTs: state.clockMs });
       if (state.analytics.resenas.length > 100) state.analytics.resenas.splice(0, state.analytics.resenas.length - 100);
+      if (crmContact.value) {
+        state.analytics.crmContactos.push({
+          id: uid(),
+          mesa: m.numero,
+          ...crmContact.value,
+          consentimientoTs: state.clockMs,
+          origen: 'post_pago',
+        });
+        if (state.analytics.crmContactos.length > 100) state.analytics.crmContactos.splice(0, state.analytics.crmContactos.length - 100);
+      }
       m.resenaEnviada = true;
       break;
     }
@@ -442,6 +652,11 @@ function handleAction(msg) {
         return actionError(409, 'La mesa solo puede liberarse después de confirmar el pago');
       }
       m.ocupada = false; m.pedido = null; m.cuentaPedida = false; m.cuentaPedidaTs = null; m.pago = null; m.resenaEnviada = false; m.alertas = [];
+      break;
+    }
+    case 'demo_escenario_cargar': {
+      const result = seedPresentationScenario();
+      if (!result.ok) return result;
       break;
     }
     case 'reset_demo': {
@@ -551,13 +766,18 @@ function extractBearerToken(req) {
 }
 
 function validStaffToken(token) {
-  const expiresAt = token ? STAFF_TOKENS.get(token) : null;
-  if (!expiresAt) return false;
-  if (expiresAt <= Date.now()) {
+  const session = token ? STAFF_TOKENS.get(token) : null;
+  if (!session) return false;
+  if (session.expiresAt <= Date.now()) {
     STAFF_TOKENS.delete(token);
     return false;
   }
   return true;
+}
+
+function staffSession(req) {
+  const token = extractBearerToken(req);
+  return token ? { token, ...STAFF_TOKENS.get(token) } : null;
 }
 
 function applyRateLimit(req, res, limiter, scope) {
@@ -601,11 +821,16 @@ function handleHttpRequest(req, res) {
         sendJson(res, 400, { ok: false, error: 'PIN inválido' });
         return;
       }
-      if (body.pin !== STAFF_PIN) { sendJson(res, 401, { ok: false }); return; }
+      const role = body.role == null ? 'encargado' : body.role;
+      if (typeof role !== 'string' || !STAFF_ROLES.has(role)) {
+        sendJson(res, 400, { ok: false, error: 'Rol inválido' });
+        return;
+      }
+      if (body.pin !== STAFF_PINS[role]) { sendJson(res, 401, { ok: false }); return; }
       pruneExpiredStaffTokens();
       const token = crypto.randomBytes(32).toString('hex');
-      STAFF_TOKENS.set(token, Date.now() + STAFF_TOKEN_TTL_MS);
-      sendJson(res, 200, { ok: true, token });
+      STAFF_TOKENS.set(token, { expiresAt: Date.now() + STAFF_TOKEN_TTL_MS, role });
+      sendJson(res, 200, { ok: true, token, role, allowedViews: STAFF_ROLE_VIEWS[role] });
     });
     return;
   }
@@ -617,6 +842,24 @@ function handleHttpRequest(req, res) {
       if (client.kind === 'staff' && client.token === token) closeSseClient(client);
     });
     sendJson(res, 200, { ok: true });
+    return;
+  }
+  if (u.pathname === '/api/mesa-links' && req.method === 'GET') {
+    const session = staffSession(req);
+    if (!session) {
+      sendJson(res, 401, { ok: false, error: 'Autenticación requerida' });
+      return;
+    }
+    if (session.role !== 'encargado') {
+      sendJson(res, 403, { ok: false, error: 'El rol no tiene acceso a los QR de mesa' });
+      return;
+    }
+    const mesas = state.mesas.map(mesa => {
+      const accessToken = accessTokenForMesa(mesa.numero);
+      const path = `/mesa.html?mesa=${mesa.numero}${accessToken ? `#token=${accessToken}` : ''}`;
+      return { numero: mesa.numero, mozo: mesa.mozo, ocupada: mesa.ocupada, path };
+    });
+    sendJson(res, 200, { ok: true, secure: Boolean(MESA_TOKEN_SECRET), mesas });
     return;
   }
   if (u.pathname === '/api/action' && req.method === 'POST') {
@@ -631,9 +874,16 @@ function handleHttpRequest(req, res) {
           return;
         }
       }
-      if (body && STAFF_ACTIONS.has(body.type) && !extractBearerToken(req)) {
-        sendJson(res, 401, { ok: false, error: 'Autenticación requerida' });
-        return;
+      if (body && STAFF_ACTIONS.has(body.type)) {
+        const session = staffSession(req);
+        if (!session) {
+          sendJson(res, 401, { ok: false, error: 'Autenticación requerida' });
+          return;
+        }
+        if (!staffRoleCan(session.role, body)) {
+          sendJson(res, 403, { ok: false, error: 'El rol no puede realizar esta acción' });
+          return;
+        }
       }
       enqueueMutation(async () => {
         const previousState = structuredClone(state);
@@ -683,12 +933,12 @@ function handleHttpRequest(req, res) {
     return;
   }
   if (u.pathname === '/api/staff-events' && req.method === 'GET') {
-    const token = extractBearerToken(req);
-    if (!token) {
+    const session = staffSession(req);
+    if (!session) {
       sendJson(res, 401, { ok: false, error: 'Autenticación requerida' });
       return;
     }
-    const client = { kind: 'staff', token, res };
+    const client = { kind: 'staff', token: session.token, role: session.role, res };
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache, no-transform',

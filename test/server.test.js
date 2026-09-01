@@ -93,11 +93,23 @@ async function getStateFrom(url, mesa = 1, mesaToken) {
 async function getState() { return getStateFrom(baseUrl); }
 
 async function getStaffState() {
-  const response = await fetch(`${baseUrl}/api/staff-events`, { headers: { authorization: `Bearer ${staffToken}` } });
+  return (await getStaffStateWithToken(staffToken)).state;
+}
+
+async function getStaffStateWithToken(token) {
+  const response = await fetch(`${baseUrl}/api/staff-events`, { headers: { authorization: `Bearer ${token}` } });
   const reader = response.body.getReader();
   const event = await readSseEvent(reader);
   await reader.cancel();
-  return event.message.state;
+  return event.message;
+}
+
+async function loginAs(role) {
+  const response = await fetch(`${baseUrl}/api/staff-login`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pin: testPin, role }),
+  });
+  assert.equal(response.status, 200);
+  return response.json();
 }
 
 function tokenForMesa(secret, mesa) {
@@ -138,7 +150,154 @@ test('endpoints base y login de staff generan un token aleatorio', async () => {
   const result = await login.json();
   assert.equal(result.ok, true);
   assert.match(result.token, /^[a-f0-9]{64}$/);
+  assert.equal(result.role, 'encargado');
+  assert.deepEqual(result.allowedViews, ['encargado', 'mozo', 'cocina', 'dueno', 'qrs']);
   staffToken = result.token;
+});
+
+test('cada rol recibe sólo sus vistas, datos y acciones operativas', async () => {
+  await resetState();
+  const mozo = await loginAs('mozo');
+  const cocina = await loginAs('cocina');
+  const dueno = await loginAs('dueno');
+
+  assert.deepEqual(mozo.allowedViews, ['mozo']);
+  assert.deepEqual(cocina.allowedViews, ['cocina']);
+  assert.deepEqual(dueno.allowedViews, ['dueno']);
+  assert.equal((await getStaffStateWithToken(mozo.token)).state.analytics, undefined);
+  assert.ok((await getStaffStateWithToken(dueno.token)).state.analytics);
+  assert.equal((await fetch(`${baseUrl}/api/mesa-links`, { headers: { authorization: `Bearer ${mozo.token}` } })).status, 403);
+  assert.equal((await fetch(`${baseUrl}/api/mesa-links`, { headers: { authorization: `Bearer ${staffToken}` } })).status, 200);
+
+  assert.equal((await action({ type: 'reset_demo' }, dueno.token)).status, 403);
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'hummus-rabieta' }] })).status, 200);
+  const itemId = (await getState()).mesas[0].pedido.items[0].id;
+  assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId, estado: 'preparando' }, mozo.token)).status, 403);
+  assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId, estado: 'preparando' }, cocina.token)).status, 200);
+  assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId, estado: 'listo' }, cocina.token)).status, 200);
+  assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId, estado: 'entregado' }, cocina.token)).status, 403);
+  assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId, estado: 'entregado' }, mozo.token)).status, 200);
+  assert.equal((await action({ type: 'pago_demo_confirmar', mesa: 1 }, cocina.token)).status, 403);
+  await resetState();
+});
+
+test('Dueño entra directo a analytics sin pedir activar avisos operativos', () => {
+  const staffHtml = fs.readFileSync(path.join(root, 'public', 'staff.html'), 'utf8');
+  const appSource = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  assert.match(staffHtml, /if\(res\.role===['"]dueno['"]\) abrirPanelStaff\(\)/);
+  assert.match(appSource, /STAFF_ROLE!==['"]dueno['"]/);
+});
+
+test('Encargado carga un escenario sintético visible de punta a punta', async () => {
+  const encargado = await loginAs('encargado');
+  assert.equal((await action({ type: 'reset_demo' }, encargado.token)).status, 200);
+  const dueno = await loginAs('dueno');
+  assert.equal((await action({ type: 'demo_escenario_cargar' }, dueno.token)).status, 403);
+  assert.equal((await action({ type: 'demo_escenario_cargar' }, encargado.token)).status, 200);
+
+  const scenario = (await getStaffStateWithToken(encargado.token)).state;
+  assert.equal(scenario.presentacionCargada, true);
+  assert.deepEqual(scenario.mesas[0].pedido.items.map(item => [item.destino, item.estado]), [['cocina', 'preparando'], ['barra', 'listo']]);
+  assert.equal(scenario.mesas[1].pedido.items.length, 2);
+  assert.equal(scenario.mesas[2].cuentaPedida, true);
+  assert.equal(scenario.mesas[3].alertas[0].prioridad, 'urgente');
+  assert.equal(scenario.mesas[4].pago.estado, 'confirmado');
+  assert.equal(scenario.analytics.pagosConfirmados, 1);
+  assert.equal(scenario.analytics.resenas[0].puntuacion, 5);
+  assert.equal(scenario.analytics.crmContactos[0].contacto, 'demo@rabieta.local');
+  const appSource = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  assert.match(appSource, /state\.presentacionCargada = msg\.state\.presentacionCargada === true/);
+  assert.match(appSource, /Recorrido de demo · 5 minutos/);
+  assert.match(appSource, /mesaDemoLinkHtml\(1,state\.demoPasosVistos\.has\(1\)\?'Volver a abrir':'Empezar demo','primary','user',1\)/);
+  assert.match(appSource, /type:'mesa-preview',numero,path:mesa\.path/);
+  assert.match(appSource, /title="Vista cliente de Mesa \$\{state\.modal\.numero\}"/);
+  assert.match(appSource, /Modo presentador · paso \$\{paso\} de 5/);
+  assert.match(appSource, /Seguir a Cocina \+ Barra/);
+  assert.match(appSource, /Abrir cuenta cliente/);
+  assert.match(appSource, /Repetir recorrido/);
+  assert.match(appSource, /Paso 2 · tocá esta tarjeta/);
+  assert.match(appSource, /Paso 3 · entregá este ítem/);
+  assert.match(appSource, /Paso 3 · resolvé este reclamo/);
+  assert.match(appSource, /preview=1\$\{hash\}/);
+  assert.match(appSource, /root\.dataset\.modalKey===modalKey/);
+  assert.doesNotMatch(appSource, /window\.open\(mesaAccessUrl/);
+  assert.match(fs.readFileSync(path.join(root, 'public', 'mesa.html'), 'utf8'), /clienteSplashDismissed = params\.get\('preview'\) === '1'/);
+  assert.match(appSource, /irPasoDemo\('dueno',null,5\)/);
+  assert.equal((await action({ type: 'reset_demo' }, encargado.token)).status, 200);
+});
+
+test('recorrido completo QR a analytics funciona con roles separados', async () => {
+  staffToken = (await loginAs('encargado')).token;
+  await resetState();
+  const cocina = await loginAs('cocina');
+  const mozo = await loginAs('mozo');
+  const dueno = await loginAs('dueno');
+
+  const linksResponse = await fetch(`${baseUrl}/api/mesa-links`, {
+    headers: { authorization: `Bearer ${staffToken}` },
+  });
+  assert.equal(linksResponse.status, 200);
+  const links = await linksResponse.json();
+  assert.equal(links.mesas[0].numero, 1);
+  assert.match(links.mesas[0].path, /^\/mesa\.html\?mesa=1(?:#token=[a-f0-9]{64})?$/);
+
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [
+    { productoId: 'hummus-rabieta' },
+    { productoId: 'agua' },
+  ] })).status, 200);
+
+  let mesa = (await getState()).mesas[0];
+  assert.equal(mesa.ocupada, true);
+  assert.deepEqual(mesa.pedido.items.map(item => item.destino), ['cocina', 'barra']);
+
+  for (const item of mesa.pedido.items) {
+    assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId: item.id, estado: 'preparando' }, cocina.token)).status, 200);
+    assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId: item.id, estado: 'listo' }, cocina.token)).status, 200);
+    assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId: item.id, estado: 'entregado' }, mozo.token)).status, 200);
+  }
+
+  mesa = (await getState()).mesas[0];
+  assert.equal(mesa.pedido.estado, 'entregado');
+  assert.equal((await action({ type: 'pedir_cuenta', mesa: 1 })).status, 200);
+  mesa = (await getState()).mesas[0];
+  const alertaCuenta = mesa.alertas.find(alerta => alerta.tipo === 'cuenta');
+  assert.ok(alertaCuenta);
+  assert.equal((await action({ type: 'alerta_atender', alertaId: alertaCuenta.id }, mozo.token)).status, 200);
+  assert.equal((await action({ type: 'pago_demo_confirmar', mesa: 1 }, mozo.token)).status, 200);
+  assert.equal((await action({
+    type: 'resena_enviar', mesa: 1, puntuacion: 5, comentario: 'Demo punta a punta lista',
+    crmConsentimiento: true, crmCanal: 'whatsapp', crmContacto: '+54 11 5555 5555', crmNombre: 'Cliente demo',
+  })).status, 200);
+
+  const ownerState = (await getStaffStateWithToken(dueno.token)).state;
+  assert.equal(ownerState.analytics.pagosConfirmados, 1);
+  assert.equal(ownerState.analytics.itemsVendidos, 2);
+  assert.equal(ownerState.analytics.itemsListos, 2);
+  assert.equal(ownerState.analytics.itemsEntregados, 2);
+  assert.equal(ownerState.analytics.destinos.cocina.itemsListos, 1);
+  assert.equal(ownerState.analytics.destinos.barra.itemsListos, 1);
+  assert.ok(Number.isFinite(ownerState.analytics.tiempoPreparacionTotalSec));
+  assert.ok(Number.isFinite(ownerState.analytics.tiempoPaseTotalSec));
+  assert.equal(ownerState.analytics.resenas.length, 1);
+  assert.equal(ownerState.analytics.resenas[0].comentario, 'Demo punta a punta lista');
+  assert.deepEqual(ownerState.analytics.crmContactos[0], {
+    id: ownerState.analytics.crmContactos[0].id,
+    mesa: 1,
+    canal: 'whatsapp',
+    contacto: '+54 11 5555 5555',
+    nombre: 'Cliente demo',
+    consentimientoTs: ownerState.analytics.crmContactos[0].consentimientoTs,
+    origen: 'post_pago',
+  });
+  assert.equal((await action({ type: 'mesa_liberar', mesa: 1 }, mozo.token)).status, 200);
+
+  mesa = (await getState()).mesas[0];
+  assert.equal(mesa.ocupada, false);
+  assert.equal(mesa.pedido, null);
+  const retainedAnalytics = (await getStaffStateWithToken(dueno.token)).state.analytics;
+  assert.equal(retainedAnalytics.pagosConfirmados, 1);
+  assert.equal(retainedAnalytics.itemsEntregados, 2);
+  await resetState();
 });
 
 test('acciones internas requieren Bearer token y las públicas no', async () => {
@@ -216,6 +375,31 @@ test('cocina avanza cada item por separado y el pedido termina al entregar todos
   await resetState();
 });
 
+test('una segunda ronda conserva consumos ya entregados y acumula la cuenta', async () => {
+  await resetState();
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'hummus-rabieta' }] })).status, 200);
+  let pedido = (await getState()).mesas[0].pedido;
+  const firstItem = pedido.items[0];
+  for (const estado of ['preparando', 'listo', 'entregado']) {
+    assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId: firstItem.id, estado }, staffToken)).status, 200);
+  }
+  assert.equal((await getState()).mesas[0].pedido.estado, 'entregado');
+
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'agua' }] })).status, 200);
+  pedido = (await getState()).mesas[0].pedido;
+  assert.equal(pedido.items.length, 2);
+  assert.deepEqual(pedido.items.map(item => [item.ronda, item.estado]), [[1, 'entregado'], [2, 'enviado']]);
+  assert.equal(pedido.items[0].id, firstItem.id);
+  const expectedTotal = pedido.items.reduce((total, item) => total + item.precio, 0);
+
+  assert.equal((await action({ type: 'pedir_cuenta', mesa: 1 })).status, 200);
+  assert.equal((await action({ type: 'pago_demo_confirmar', mesa: 1 }, staffToken)).status, 200);
+  const mesa = (await getState()).mesas[0];
+  assert.equal(mesa.pago.total, expectedTotal);
+  assert.match(fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8'), /Revisar y.*enviar otra ronda/);
+  await resetState();
+});
+
 test('cada avance de cocina conserva una marca de tiempo auditable por ítem', async () => {
   await resetState();
   assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'hummus-rabieta' }] })).status, 200);
@@ -223,9 +407,10 @@ test('cada avance de cocina conserva una marca de tiempo auditable por ítem', a
   assert.deepEqual(item.estadoTs, { enviado: item.enviadoTs });
 
   assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId: item.id, estado: 'preparando' }, staffToken)).status, 200);
-  item = (await getState()).mesas[0].pedido.items[0];
+  const preparingState = await getState();
+  item = preparingState.mesas[0].pedido.items[0];
   assert.equal(item.estadoTs.enviado, item.enviadoTs);
-  assert.equal(item.estadoTs.preparando, (await getState()).clockMs);
+  assert.equal(item.estadoTs.preparando, preparingState.clockMs);
 
   assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId: item.id, estado: 'listo' }, staffToken)).status, 200);
   item = (await getState()).mesas[0].pedido.items[0];
@@ -330,7 +515,7 @@ test('cliente completa checkout sandbox y recibe comprobante sin credenciales st
   await resetState();
 });
 
-test('la mesa puede dejar una única reseña post-pago y solo staff ve el historial', async () => {
+test('la mesa puede dejar una única reseña post-pago y captar CRM solo con consentimiento', async () => {
   await resetState();
   assert.equal((await action({ type: 'resena_enviar', mesa: 1, puntuacion: 5 })).status, 409);
   assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'hummus-rabieta' }] })).status, 200);
@@ -338,7 +523,14 @@ test('la mesa puede dejar una única reseña post-pago y solo staff ve el histor
   assert.equal((await action({ type: 'pago_demo_confirmar', mesa: 1 }, staffToken)).status, 200);
   assert.equal((await action({ type: 'resena_enviar', mesa: 1, puntuacion: 0 })).status, 400);
   assert.equal((await action({
+    type: 'resena_enviar', mesa: 1, puntuacion: 4, crmCanal: 'email', crmContacto: 'cliente@demo.com',
+  })).status, 400);
+  assert.equal((await action({
+    type: 'resena_enviar', mesa: 1, puntuacion: 4, crmConsentimiento: true, crmCanal: 'email', crmContacto: 'email-invalido',
+  })).status, 400);
+  assert.equal((await action({
     type: 'resena_enviar', mesa: 1, puntuacion: 4, comentario: 'Muy buena atención <script>alert(1)</script>',
+    crmConsentimiento: true, crmCanal: 'email', crmContacto: 'cliente@demo.com', crmNombre: 'Ana Demo',
   })).status, 200);
   assert.equal((await action({ type: 'resena_enviar', mesa: 1, puntuacion: 5 })).status, 409);
 
@@ -356,10 +548,22 @@ test('la mesa puede dejar una única reseña post-pago y solo staff ve el histor
   });
   assert.ok(Number.isInteger(analytics.resenas[0].id));
   assert.ok(Number.isFinite(analytics.resenas[0].creadoTs));
+  assert.deepEqual(analytics.crmContactos[0], {
+    id: analytics.crmContactos[0].id,
+    mesa: 1,
+    canal: 'email',
+    contacto: 'cliente@demo.com',
+    nombre: 'Ana Demo',
+    consentimientoTs: analytics.crmContactos[0].consentimientoTs,
+    origen: 'post_pago',
+  });
+  assert.ok(Number.isInteger(analytics.crmContactos[0].id));
+  assert.ok(Number.isFinite(analytics.crmContactos[0].consentimientoTs));
 
   assert.equal((await action({ type: 'mesa_liberar', mesa: 1 }, staffToken)).status, 200);
   analytics = (await getStaffState()).analytics;
   assert.equal(analytics.resenas.length, 1);
+  assert.equal(analytics.crmContactos.length, 1);
   await resetState();
 });
 
@@ -514,6 +718,16 @@ test('identidad HMAC vincula token y acciones a una sola mesa sin afectar staff'
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pin: testPin }),
     });
     const { token: staffAccessToken } = await login.json();
+    assert.equal((await fetch(`${isolatedUrl}/api/mesa-links`)).status, 401);
+    const mesaLinksResponse = await fetch(`${isolatedUrl}/api/mesa-links`, {
+      headers: { authorization: `Bearer ${staffAccessToken}` },
+    });
+    assert.equal(mesaLinksResponse.status, 200);
+    const mesaLinks = await mesaLinksResponse.json();
+    assert.equal(mesaLinks.secure, true);
+    assert.equal(mesaLinks.mesas.length, 22);
+    assert.equal(mesaLinks.mesas[0].path, `/mesa.html?mesa=1#token=${mesaOneToken}`);
+    assert.doesNotMatch(JSON.stringify(mesaLinks), new RegExp(mesaSecret));
     const staffStream = await fetch(`${isolatedUrl}/api/staff-events`, {
       headers: { authorization: `Bearer ${staffAccessToken}` },
     });
@@ -756,8 +970,22 @@ test('el servidor reconstruye productos y precios desde el menú', async () => {
   const configuredItems = (await getStateFrom(baseUrl, 2)).mesas[0].pedido.items;
   assert.equal(configuredItems[0].nombre, 'Tablita de Quesos y Fiambres — Individual (sin bebida)');
   assert.equal(configuredItems[0].precio, 5640);
+  assert.equal(configuredItems[0].variante, 'Individual (sin bebida)');
+  assert.equal(configuredItems[0].opcion, null);
   assert.equal(configuredItems[1].nombre, '2 Empanadas de carne o verdura (Sin TACC) (carne)');
   assert.equal(configuredItems[1].precio, 2100);
+  assert.equal(configuredItems[1].variante, null);
+  assert.equal(configuredItems[1].opcion, 'carne');
+  const appSource = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  assert.match(appSource, /Agregar última ronda al carrito/);
+  assert.match(appSource, /Revisá tu carrito/);
+  assert.match(appSource, /function quitarDelCarrito\(index\)/);
+  assert.match(appSource, /variante:variante\?variante\.nombre:null, opcion:opcion\|\|null/);
+  assert.match(appSource, /function cambiarCantidadCarrito\(index,delta\)/);
+  assert.match(appSource, /flatMap\(item=>Array\.from\(\{length:cantidadLinea\(item\)\}/);
+  assert.match(appSource, /Tu carrito sigue intacto/);
+  assert.match(appSource, /Reintentar envío/);
+  assert.match(appSource, /type:'pedido-enviado'/);
 });
 
 test('productos, variantes y opciones inválidas no modifican estado', async () => {
@@ -854,6 +1082,24 @@ test('3D y AR mantienen una foto útil y explican dispositivos incompatibles', (
   assert.match(source, /onerror="modelo3dError\(\)"/);
   assert.match(source, /mv\.canActivateAR===false/);
   assert.match(source, /No se pudo abrir la cámara AR/);
+  assert.match(source, /Ningún plato tiene todavía un modelo 3D real publicable/);
+  assert.match(source, /GLB real de \$\{p\.nombre\}/);
+  assert.match(source, /USDZ real de \$\{p\.nombre\}/);
+  assert.match(source, /foto real de \$\{p\.nombre\}/);
+  assert.match(source, /Prototipo 3D\/AR en desarrollo/);
+  assert.doesNotMatch(source, /Platos con 3D real activado/);
+});
+
+test('cliente ve estado y tiempo realtime de cada ítem del pedido', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  assert.match(source, /class="customer-order-items"/);
+  assert.match(source, /class="customer-order-meta"[\s\S]*itemElapsedLabel\(it\)/);
+});
+
+test('cliente conserva confirmación visible cuando salón resuelve una solicitud', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  assert.match(source, /mesa\.alertas\.filter\(a=>a\.estado===['"]resuelto['"]\)/);
+  assert.match(source, /class="resolved-request"[\s\S]*Resuelto/);
 });
 
 test('el traspaso de ítems listos se confirma desde salón y no desde Cocina o Barra', () => {
@@ -867,12 +1113,40 @@ test('el traspaso de ítems listos se confirma desde salón y no desde Cocina o 
   assert.doesNotMatch(source, /it\.estado==='listo'\?`<button[^`]+avanzarItem/);
 });
 
-test('el asistente recomienda solo productos reales con precio y declara su alcance local', () => {
+test('el panel de staff genera QR de mesa localmente y conserva un enlace utilizable como respaldo', () => {
   const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
-  assert.match(source, /function recomendacionesAsistente\(perfil\)/);
-  assert.match(source, /filter\(p=>Number\.isFinite\(precioBase\(p\)\)\)/);
+  const styles = fs.readFileSync(path.join(root, 'public', 'rabieta.css'), 'utf8');
+  const staffHtml = fs.readFileSync(path.join(root, 'public', 'staff.html'), 'utf8');
+  const qrLicense = fs.readFileSync(path.join(root, 'public', 'vendor', 'qrcode.LICENSE.txt'), 'utf8');
+  assert.match(source, /fetch\('\/api\/mesa-links'/);
+  assert.match(source, /code=qrcode\(0,'M'\)/);
+  assert.match(source, /id:`mesa-qr-description-\$\{mesa\.numero\}`/);
+  assert.match(source, /Copiar enlace/);
+  assert.match(source, /target="_blank" rel="noopener"/);
+  assert.match(source, /Imprimir todos los QR/);
+  assert.match(source, /Impresión bloqueada sin identidad segura/);
+  assert.match(source, /document\.body\.classList\.add\('printing-qrs'\)/);
+  assert.match(source, /window\.addEventListener\('afterprint'/);
+  assert.match(styles, /@media print/);
+  assert.match(styles, /grid-template-columns:repeat\(3,1fr\)/);
+  assert.match(staffHtml, /\/vendor\/qrcode\.js/);
+  assert.doesNotMatch(staffHtml, /cdnjs|unpkg/);
+  assert.match(qrLicense, /MIT License/);
+  assert.doesNotMatch(source, /api\.qrserver|chart\.googleapis/);
+});
+
+test('el asistente ofrece consulta libre local, resultados accionables y declara su alcance', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  const engine = fs.readFileSync(path.join(root, 'public', 'recommender.js'), 'utf8');
+  const mesaHtml = fs.readFileSync(path.join(root, 'public', 'mesa.html'), 'utf8');
+  assert.match(source, /function consultarAsistente\(event\)/);
+  assert.match(source, /function agregarRecomendacion\(id\)/);
+  assert.match(source, /Escribí como hablarías con el mozo/);
+  assert.match(engine, /Number\.isFinite\(price\)/);
+  assert.match(engine, /unsafeRestriction/);
   assert.match(source, /no envía datos ni usa un servicio externo/);
-  assert.match(source, /Confirmá con el personal por contaminación cruzada/);
+  assert.match(engine, /Confirmá con el personal por contaminación cruzada/);
+  assert.match(mesaHtml, /recommender\.js/);
   assert.doesNotMatch(source, /fetch\(['"]\/api\/recomend/);
 });
 

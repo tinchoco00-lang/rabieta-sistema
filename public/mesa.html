@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@400;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/rabieta.css">
+<link rel="stylesheet" href="/rabieta.css?v=20260901-confidence1">
 <script type="module" src="https://unpkg.com/@google/model-viewer@3.5.0/dist/model-viewer.min.js"></script>
 </head>
 <body>
@@ -24,7 +24,8 @@
 </div>
 <div id="modalRoot"></div>
 
-<script src="/app.js"></script>
+<script src="/recommender.js?v=20260901-confidence1"></script>
+<script src="/app.js?v=20260901-confidence1"></script>
 <script>
   (function(){
     const params = new URLSearchParams(location.search);
@@ -42,6 +43,7 @@
     } else {
       state.role = 'cliente';
       state.clienteMesa = mesaN;
+      state.clienteSplashDismissed = params.get('preview') === '1';
       document.getElementById('app').innerHTML = '<div class="empty">Conectando con el local…</div>';
       let menuOk=false, estadoOk=false;
       function tryRender(){
