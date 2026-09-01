@@ -80,8 +80,17 @@ let STAFF_ROLE = null;
 let STAFF_ALLOWED_VIEWS = [];
 let MESA_TOKEN = null;
 
+function emptyAnalytics(){
+  return {
+    pagosConfirmados:0,ventasDemo:0,tiempoPagoTotalSec:0,itemsVendidos:0,
+    itemsListos:0,itemsEntregados:0,tiempoPreparacionTotalSec:0,tiempoPaseTotalSec:0,
+    destinos:{cocina:{itemsListos:0,tiempoPreparacionTotalSec:0},barra:{itemsListos:0,tiempoPreparacionTotalSec:0}},
+    productos:{},resenas:[]
+  };
+}
+
 let state = {
-  clockMs:0, mesas:[], analytics:{pagosConfirmados:0,ventasDemo:0,tiempoPagoTotalSec:0,itemsVendidos:0,productos:{},resenas:[]},
+  clockMs:0, mesas:[], analytics:emptyAnalytics(),
   // ui local, no viene del servidor:
   role:null, clienteMesa:null, clienteCat:null, clienteFiltroSinTacc:false,
   clienteCart:[], clienteExpand:null, clienteHelpOpen:false, clienteSplashDismissed:false,
@@ -136,7 +145,7 @@ function aplicarMensajeRealtime(data, onFirstSnapshot){
     MESAS_TOTAL = msg.mesasTotal || MESAS_TOTAL;
     state.clockMs = msg.state.clockMs;
     state.mesas = msg.state.mesas;
-    state.analytics = msg.state.analytics || {pagosConfirmados:0,ventasDemo:0,tiempoPagoTotalSec:0,itemsVendidos:0,productos:{},resenas:[]};
+    state.analytics = msg.state.analytics || emptyAnalytics();
     if(msg.role) STAFF_ROLE = msg.role;
     if(Array.isArray(msg.allowedViews)) STAFF_ALLOWED_VIEWS = msg.allowedViews;
     detectarNuevasAlertas();
@@ -918,12 +927,15 @@ function viewDueno(){
   const mesasOcupadas = state.mesas.filter(m=>m.ocupada).length;
   const alertasN = todasAlertasAbiertas().length;
   const urgentes = todasAlertasAbiertas().filter(x=>x.alerta.prioridad==='urgente').length;
-  const analytics = state.analytics || {pagosConfirmados:0,ventasDemo:0,tiempoPagoTotalSec:0,itemsVendidos:0,productos:{},resenas:[]};
+  const analytics = state.analytics || emptyAnalytics();
   const pedidosActivos = state.mesas.filter(m=>m.pedido).length;
   const itemsEsperandoSalon = itemsListosParaEntregar(null);
   const esperaSalonMax = itemsEsperandoSalon.reduce((max,{item})=>Math.max(max,timeAgoSec((item.estadoTs&&item.estadoTs.listo)||item.enviadoTs)),0);
   const ticketPromedio = analytics.pagosConfirmados ? Math.round(analytics.ventasDemo/analytics.pagosConfirmados) : 0;
   const tiempoPagoPromedio = analytics.pagosConfirmados ? Math.round(analytics.tiempoPagoTotalSec/analytics.pagosConfirmados) : 0;
+  const preparacionPromedio = analytics.itemsListos ? Math.round(analytics.tiempoPreparacionTotalSec/analytics.itemsListos) : 0;
+  const pasePromedio = analytics.itemsEntregados ? Math.round(analytics.tiempoPaseTotalSec/analytics.itemsEntregados) : 0;
+  const destinos = analytics.destinos || emptyAnalytics().destinos;
   const topProductos = Object.values(analytics.productos||{}).sort((a,b)=>b.cantidad-a.cantidad).slice(0,5);
   const resenas = Array.isArray(analytics.resenas) ? analytics.resenas : [];
   const ratingPromedio = resenas.length ? (resenas.reduce((sum,r)=>sum+r.puntuacion,0)/resenas.length).toFixed(1) : '—';
@@ -945,6 +957,13 @@ function viewDueno(){
       ${statTile('Esperando salón', String(itemsEsperandoSalon.length), itemsEsperandoSalon.length?'máximo '+fmtSec(esperaSalonMax):'sin retiros pendientes', esperaSalonMax>120?'downAlert':null)}
       ${statTile('Alertas activas', String(alertasN), urgentes>0?urgentes+' urgente(s)':'todo tranquilo', urgentes>0?'downAlert':null)}
       ${statTile('Experiencia', ratingPromedio, resenas.length?resenas.length+' opinión(es) · '+resenasCriticas+' a recuperar':'sin opiniones todavía', resenasCriticas?'downAlert':null)}
+    </div>
+    <div class="section-h">Rendimiento operativo acumulado</div>
+    <div class="grid cols-4">
+      ${statTile('Preparación promedio', fmtSec(preparacionPromedio), analytics.itemsListos+' ítem(s) listos', null)}
+      ${statTile('Pase a la mesa', fmtSec(pasePromedio), analytics.itemsEntregados+' ítem(s) entregados', pasePromedio>120?'downAlert':null)}
+      ${statTile('Cocina', fmtSec(destinos.cocina.itemsListos?Math.round(destinos.cocina.tiempoPreparacionTotalSec/destinos.cocina.itemsListos):0), destinos.cocina.itemsListos+' ítem(s) listos', null)}
+      ${statTile('Barra', fmtSec(destinos.barra.itemsListos?Math.round(destinos.barra.tiempoPreparacionTotalSec/destinos.barra.itemsListos):0), destinos.barra.itemsListos+' ítem(s) listos', null)}
     </div>
     <div class="section-h">Más vendidos de la sesión</div>
     <div class="grid cols-3">

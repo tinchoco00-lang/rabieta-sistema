@@ -226,6 +226,12 @@ test('recorrido completo QR a analytics funciona con roles separados', async () 
   const ownerState = (await getStaffStateWithToken(dueno.token)).state;
   assert.equal(ownerState.analytics.pagosConfirmados, 1);
   assert.equal(ownerState.analytics.itemsVendidos, 2);
+  assert.equal(ownerState.analytics.itemsListos, 2);
+  assert.equal(ownerState.analytics.itemsEntregados, 2);
+  assert.equal(ownerState.analytics.destinos.cocina.itemsListos, 1);
+  assert.equal(ownerState.analytics.destinos.barra.itemsListos, 1);
+  assert.ok(Number.isFinite(ownerState.analytics.tiempoPreparacionTotalSec));
+  assert.ok(Number.isFinite(ownerState.analytics.tiempoPaseTotalSec));
   assert.equal(ownerState.analytics.resenas.length, 1);
   assert.equal(ownerState.analytics.resenas[0].comentario, 'Demo punta a punta lista');
   assert.equal((await action({ type: 'mesa_liberar', mesa: 1 }, mozo.token)).status, 200);
@@ -233,7 +239,9 @@ test('recorrido completo QR a analytics funciona con roles separados', async () 
   mesa = (await getState()).mesas[0];
   assert.equal(mesa.ocupada, false);
   assert.equal(mesa.pedido, null);
-  assert.equal((await getStaffStateWithToken(dueno.token)).state.analytics.pagosConfirmados, 1);
+  const retainedAnalytics = (await getStaffStateWithToken(dueno.token)).state.analytics;
+  assert.equal(retainedAnalytics.pagosConfirmados, 1);
+  assert.equal(retainedAnalytics.itemsEntregados, 2);
   await resetState();
 });
 

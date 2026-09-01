@@ -90,7 +90,22 @@ let uidCounter = 1;
 function uid() { return uidCounter++; }
 
 function seedAnalytics() {
-  return { pagosConfirmados: 0, ventasDemo: 0, tiempoPagoTotalSec: 0, itemsVendidos: 0, productos: {}, resenas: [] };
+  return {
+    pagosConfirmados: 0,
+    ventasDemo: 0,
+    tiempoPagoTotalSec: 0,
+    itemsVendidos: 0,
+    itemsListos: 0,
+    itemsEntregados: 0,
+    tiempoPreparacionTotalSec: 0,
+    tiempoPaseTotalSec: 0,
+    destinos: {
+      cocina: { itemsListos: 0, tiempoPreparacionTotalSec: 0 },
+      barra: { itemsListos: 0, tiempoPreparacionTotalSec: 0 },
+    },
+    productos: {},
+    resenas: [],
+  };
 }
 
 function seedState() {
@@ -227,11 +242,39 @@ function recordPaymentAnalytics(mesa, analytics = state.analytics, clock = state
   });
 }
 
+function recordItemAnalytics(item, estado, analytics = state.analytics, clock = state.clockMs) {
+  if (estado === 'listo') {
+    const preparationTime = Math.max(0, clock - item.enviadoTs);
+    analytics.itemsListos++;
+    analytics.tiempoPreparacionTotalSec += preparationTime;
+    const destination = DESTINOS_PRODUCCION.has(item.destino) ? item.destino : DESTINO_DEFAULT;
+    analytics.destinos[destination].itemsListos++;
+    analytics.destinos[destination].tiempoPreparacionTotalSec += preparationTime;
+  }
+  if (estado === 'entregado') {
+    const readyTs = item.estadoTs && Number.isFinite(item.estadoTs.listo) ? item.estadoTs.listo : clock;
+    analytics.itemsEntregados++;
+    analytics.tiempoPaseTotalSec += Math.max(0, clock - readyTs);
+  }
+}
+
 function normalizeAnalytics(value) {
   const analytics = seedAnalytics();
   if (!value || typeof value !== 'object' || Array.isArray(value)) return analytics;
-  for (const field of ['pagosConfirmados', 'ventasDemo', 'tiempoPagoTotalSec', 'itemsVendidos']) {
+  for (const field of [
+    'pagosConfirmados', 'ventasDemo', 'tiempoPagoTotalSec', 'itemsVendidos',
+    'itemsListos', 'itemsEntregados', 'tiempoPreparacionTotalSec', 'tiempoPaseTotalSec',
+  ]) {
     if (Number.isFinite(value[field]) && value[field] >= 0) analytics[field] = value[field];
+  }
+  if (value.destinos && typeof value.destinos === 'object' && !Array.isArray(value.destinos)) {
+    for (const destino of DESTINOS_PRODUCCION) {
+      const metrics = value.destinos[destino];
+      if (!metrics || typeof metrics !== 'object' || Array.isArray(metrics)) continue;
+      for (const field of ['itemsListos', 'tiempoPreparacionTotalSec']) {
+        if (Number.isFinite(metrics[field]) && metrics[field] >= 0) analytics.destinos[destino][field] = metrics[field];
+      }
+    }
   }
   if (value.productos && typeof value.productos === 'object' && !Array.isArray(value.productos)) {
     Object.entries(value.productos).forEach(([productoId, metrics]) => {
@@ -382,6 +425,7 @@ function handleAction(msg) {
       item.estado = msg.estado;
       if (!item.estadoTs || typeof item.estadoTs !== 'object' || Array.isArray(item.estadoTs)) item.estadoTs = {};
       item.estadoTs[msg.estado] = state.clockMs;
+      recordItemAnalytics(item, msg.estado);
       syncPedidoEstado(m.pedido);
       break;
     }
