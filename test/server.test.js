@@ -211,8 +211,10 @@ test('Encargado carga un escenario sintético visible de punta a punta', async (
   assert.match(appSource, /mesaDemoLinkHtml\(1,'Abrir cliente'/);
   assert.match(appSource, /type:'mesa-preview',numero,path:mesa\.path/);
   assert.match(appSource, /title="Vista cliente de Mesa \$\{state\.modal\.numero\}"/);
+  assert.match(appSource, /preview=1\$\{hash\}/);
   assert.match(appSource, /root\.dataset\.modalKey===modalKey/);
   assert.doesNotMatch(appSource, /window\.open\(mesaAccessUrl/);
+  assert.match(fs.readFileSync(path.join(root, 'public', 'mesa.html'), 'utf8'), /clienteSplashDismissed = params\.get\('preview'\) === '1'/);
   assert.match(appSource, /irPasoDemo\('dueno'\)/);
   assert.equal((await action({ type: 'reset_demo' }, encargado.token)).status, 200);
 });

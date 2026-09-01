@@ -340,6 +340,12 @@ async function cargarMesaLinks(){
   if(state.role==='qrs' || state.role==='encargado') render();
 }
 function mesaAccessUrl(path){ return location.origin + path; }
+function mesaPreviewUrl(path){
+  const hashAt=path.indexOf('#');
+  const base=hashAt===-1?path:path.slice(0,hashAt);
+  const hash=hashAt===-1?'':path.slice(hashAt);
+  return mesaAccessUrl(`${base}${base.includes('?')?'&':'?'}preview=1${hash}`);
+}
 function mesaLink(numero){
   return state.mesaLinks && state.mesaLinks.mesas.find(mesa=>mesa.numero===numero);
 }
@@ -412,7 +418,7 @@ function renderModal(){
     root.innerHTML = `<div class="modal-bg mesa-preview-bg" onclick="closeModal(event)">
       <div class="modal mesa-preview-modal" onclick="event.stopPropagation()">
         <div class="mesa-preview-head"><div><span class="presentation-kicker">Vista cliente en vivo</span><strong>Mesa ${state.modal.numero}</strong></div><button class="btn ghost sm" onclick="closeModal()">Cerrar</button></div>
-        <iframe src="${escapeHtml(mesaAccessUrl(state.modal.path))}" title="Vista cliente de Mesa ${state.modal.numero}"></iframe>
+        <iframe src="${escapeHtml(mesaPreviewUrl(state.modal.path))}" title="Vista cliente de Mesa ${state.modal.numero}"></iframe>
       </div></div>`;
   } else if(state.modal.type==='3d'){
     const modelo = modeloParaPlato(state.modal.id);
