@@ -96,7 +96,7 @@ let state = {
   clienteCart:[], clienteExpand:null, clienteHelpOpen:false, clienteSplashDismissed:false,
   clienteAsistenteOpen:false, clientePreferencia:null, clienteResenaError:'', clienteResenaEnviando:false,
   clienteResenaDraft:{puntuacion:null,comentario:'',crmConsentimiento:false,crmCanal:'whatsapp',crmContacto:'',crmNombre:''},
-  mozoActivo:MOZOS[0], modal:null, mesaLinks:null, mesaLinksError:'',
+  mozoActivo:MOZOS[0], modal:null, mesaLinks:null, mesaLinksError:'', presentacionCargada:false,
 };
 
 function money(n){ return n===null || n===undefined ? 'A confirmar' : '$'+n.toLocaleString('es-AR'); }
@@ -147,6 +147,7 @@ function aplicarMensajeRealtime(data, onFirstSnapshot){
     state.clockMs = msg.state.clockMs;
     state.mesas = msg.state.mesas;
     state.analytics = msg.state.analytics || emptyAnalytics();
+    state.presentacionCargada = msg.state.presentacionCargada === true;
     if(msg.role) STAFF_ROLE = msg.role;
     if(Array.isArray(msg.allowedViews)) STAFF_ALLOWED_VIEWS = msg.allowedViews;
     detectarNuevasAlertas();
@@ -947,6 +948,7 @@ function viewEncargado(){
   const todas = todasAlertasAbiertas();
   const escaladas = todas.filter(x=>x.alerta.escalado);
   return `<h1 class="view-title">ENCARGADO</h1><p class="view-sub">Centro de control del salón — ${MESAS_TOTAL} mesas (placeholder, confirmar número real con el local).</p>
+    ${state.presentacionCargada?`<div class="mock-banner">${ic('checkring')} Escenario de presentación activo: recorré Cocina, Mozo y este panel para mostrar el flujo completo.</div>`:''}
     ${escaladas.length ? `<div class="card" style="border-color:var(--critical);margin-bottom:16px;">
       <div style="font-weight:800;color:#ff9797;font-size:13px;margin-bottom:8px;">${ic('warning')} ${escaladas.length} alerta(s) escalada(s)</div>
       ${escaladas.map(({mesa,alerta})=>alertRowHtml(mesa,alerta,true)).join('')}</div>` : ''}
@@ -962,7 +964,11 @@ function viewEncargado(){
     <div class="section-h">Cola de alertas</div>
     ${todas.length ? todas.map(({mesa,alerta})=>alertRowHtml(mesa,alerta,true)).join('') : `<div class="empty">${ic('checkring')} No hay alertas abiertas.</div>`}
     <div class="section-h">Administración</div>
+    <button class="btn primary sm" onclick="cargarEscenarioDemo()">${ic('clipboard')} Cargar escenario de presentación</button>
     <button class="btn ghost sm" onclick="resetTodo()">${ic('refresh')} Reiniciar todo (afecta a todos los dispositivos conectados)</button>`;
+}
+function cargarEscenarioDemo(){
+  if(confirm('Esto reemplaza el estado demo actual para TODOS los dispositivos conectados con un escenario de presentación. ¿Confirmás?')) send({type:'demo_escenario_cargar'});
 }
 function resetTodo(){
   if(confirm('Esto reinicia el estado para TODOS los dispositivos conectados ahora mismo (mesas, pedidos, alertas). ¿Confirmás?')) send({type:'reset_demo'});
@@ -992,6 +998,7 @@ function viewDueno(){
   const productosPendientes = todosLosProductos().filter(p=>precioBase(p)===null).length;
   return `<h1 class="view-title">DUEÑO</h1>
     <p class="view-sub">Panel de negocio de esta sesión. ${productosPendientes} productos todavía sin precio confirmado.</p>
+    ${state.presentacionCargada?`<div class="mock-banner">${ic('checkring')} Escenario sintético de presentación activo. Estas métricas no corresponden a clientes ni ventas reales.</div>`:''}
     <div class="mock-banner">${ic('clipboard')} Los cobros son confirmaciones de demostración acumuladas por este sistema. No hay caja, POS ni dinero real conectado.</div>
     <div class="grid cols-4">
       ${statTile('Cobrado demo', money(analytics.ventasDemo), analytics.pagosConfirmados+' cuenta(s)', null)}

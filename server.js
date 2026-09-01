@@ -55,7 +55,7 @@ const STAFF_TOKENS = new Map();
 const MESA_TOKEN_SECRET = process.env.MESA_TOKEN_SECRET || null;
 const MAX_BODY_BYTES = 32 * 1024;
 const PUBLIC_ACTIONS = new Set(['pedido_nuevo', 'llamar_mozo', 'pedir_cuenta', 'ayuda', 'resena_enviar']);
-const STAFF_ACTIONS = new Set(['pedido_estado', 'alerta_atender', 'alerta_resolver', 'pago_demo_confirmar', 'mesa_liberar', 'reset_demo']);
+const STAFF_ACTIONS = new Set(['pedido_estado', 'alerta_atender', 'alerta_resolver', 'pago_demo_confirmar', 'mesa_liberar', 'demo_escenario_cargar', 'reset_demo']);
 const MESA_ACTIONS = new Set(['pedido_nuevo', 'pedido_estado', 'llamar_mozo', 'pedir_cuenta', 'ayuda', 'resena_enviar', 'pago_demo_confirmar', 'mesa_liberar']);
 const PEDIDO_ESTADOS = ['enviado', 'preparando', 'listo', 'entregado'];
 const HELP_CATEGORIES = {
@@ -114,7 +114,7 @@ function seedState() {
   for (let i = 1; i <= MESAS_TOTAL; i++) {
     mesas.push({ numero: i, mozo: MOZOS[i % MOZOS.length], ocupada: false, pedido: null, cuentaPedida: false, cuentaPedidaTs: null, pago: null, resenaEnviada: false, alertas: [] });
   }
-  return { clockMs: 0, mesas, analytics: seedAnalytics() };
+  return { clockMs: 0, mesas, analytics: seedAnalytics(), presentacionCargada: false };
 }
 let state = seedState();
 let mutationQueue = Promise.resolve();
@@ -342,6 +342,7 @@ function normalizeAnalytics(value) {
 function normalizeRecoveredState(recoveredState) {
   const hadAnalytics = recoveredState.analytics && typeof recoveredState.analytics === 'object';
   recoveredState.analytics = normalizeAnalytics(recoveredState.analytics);
+  recoveredState.presentacionCargada = recoveredState.presentacionCargada === true;
   let highestId = 0;
   const normalizedItemIds = new Set();
   recoveredState.analytics.resenas.forEach(review => {
@@ -407,6 +408,68 @@ function normalizeRecoveredState(recoveredState) {
     });
   }
   return recoveredState;
+}
+
+function seedPresentationScenario() {
+  const previousState = state;
+  state = seedState();
+  const run = message => {
+    const result = handleAction(message);
+    if (!result.ok) state = previousState;
+    return result;
+  };
+  const advance = (mesa, itemId, estado) => run({ type: 'pedido_estado', mesa, itemId, estado });
+
+  state.clockMs = 15;
+  let result = run({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'hummus-rabieta' }, { productoId: 'agua' }] });
+  if (!result.ok) return result;
+  const mesaUno = findMesa(1);
+  state.clockMs = 55;
+  result = advance(1, mesaUno.pedido.items[0].id, 'preparando'); if (!result.ok) return result;
+  result = advance(1, mesaUno.pedido.items[1].id, 'preparando'); if (!result.ok) return result;
+  state.clockMs = 105;
+  result = advance(1, mesaUno.pedido.items[1].id, 'listo'); if (!result.ok) return result;
+
+  state.clockMs = 125;
+  result = run({ type: 'pedido_nuevo', mesa: 2, items: [{ productoId: 'burger-rabieta' }, { productoId: 'papas-rabieta' }] });
+  if (!result.ok) return result;
+
+  state.clockMs = 145;
+  result = run({ type: 'pedido_nuevo', mesa: 3, items: [{ productoId: 'hummus-rabieta' }] });
+  if (!result.ok) return result;
+  const mesaTresItem = findMesa(3).pedido.items[0].id;
+  result = advance(3, mesaTresItem, 'preparando'); if (!result.ok) return result;
+  state.clockMs = 180;
+  result = advance(3, mesaTresItem, 'listo'); if (!result.ok) return result;
+  state.clockMs = 195;
+  result = advance(3, mesaTresItem, 'entregado'); if (!result.ok) return result;
+  result = run({ type: 'pedir_cuenta', mesa: 3 }); if (!result.ok) return result;
+
+  state.clockMs = 220;
+  result = run({ type: 'ayuda', mesa: 4, categoria: 'incorrecto', mensaje: 'Escenario demo: revisar el pedido' });
+  if (!result.ok) return result;
+
+  state.clockMs = 235;
+  result = run({ type: 'pedido_nuevo', mesa: 5, items: [{ productoId: 'brownie' }] });
+  if (!result.ok) return result;
+  const mesaCincoItem = findMesa(5).pedido.items[0].id;
+  result = advance(5, mesaCincoItem, 'preparando'); if (!result.ok) return result;
+  state.clockMs = 260;
+  result = advance(5, mesaCincoItem, 'listo'); if (!result.ok) return result;
+  state.clockMs = 275;
+  result = advance(5, mesaCincoItem, 'entregado'); if (!result.ok) return result;
+  result = run({ type: 'pedir_cuenta', mesa: 5 }); if (!result.ok) return result;
+  state.clockMs = 285;
+  result = run({ type: 'pago_demo_confirmar', mesa: 5 }); if (!result.ok) return result;
+  result = run({
+    type: 'resena_enviar', mesa: 5, puntuacion: 5, comentario: 'Escenario de presentación listo',
+    crmConsentimiento: true, crmCanal: 'email', crmContacto: 'demo@rabieta.local', crmNombre: 'Cliente demo',
+  });
+  if (!result.ok) return result;
+
+  state.clockMs = 300;
+  state.presentacionCargada = true;
+  return actionOk();
 }
 
 const sseClients = new Set();
@@ -568,6 +631,11 @@ function handleAction(msg) {
         return actionError(409, 'La mesa solo puede liberarse después de confirmar el pago');
       }
       m.ocupada = false; m.pedido = null; m.cuentaPedida = false; m.cuentaPedidaTs = null; m.pago = null; m.resenaEnviada = false; m.alertas = [];
+      break;
+    }
+    case 'demo_escenario_cargar': {
+      const result = seedPresentationScenario();
+      if (!result.ok) return result;
       break;
     }
     case 'reset_demo': {

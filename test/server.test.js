@@ -188,6 +188,27 @@ test('Dueño entra directo a analytics sin pedir activar avisos operativos', () 
   assert.match(appSource, /STAFF_ROLE!==['"]dueno['"]/);
 });
 
+test('Encargado carga un escenario sintético visible de punta a punta', async () => {
+  const encargado = await loginAs('encargado');
+  assert.equal((await action({ type: 'reset_demo' }, encargado.token)).status, 200);
+  const dueno = await loginAs('dueno');
+  assert.equal((await action({ type: 'demo_escenario_cargar' }, dueno.token)).status, 403);
+  assert.equal((await action({ type: 'demo_escenario_cargar' }, encargado.token)).status, 200);
+
+  const scenario = (await getStaffStateWithToken(encargado.token)).state;
+  assert.equal(scenario.presentacionCargada, true);
+  assert.deepEqual(scenario.mesas[0].pedido.items.map(item => [item.destino, item.estado]), [['cocina', 'preparando'], ['barra', 'listo']]);
+  assert.equal(scenario.mesas[1].pedido.items.length, 2);
+  assert.equal(scenario.mesas[2].cuentaPedida, true);
+  assert.equal(scenario.mesas[3].alertas[0].prioridad, 'urgente');
+  assert.equal(scenario.mesas[4].pago.estado, 'confirmado');
+  assert.equal(scenario.analytics.pagosConfirmados, 1);
+  assert.equal(scenario.analytics.resenas[0].puntuacion, 5);
+  assert.equal(scenario.analytics.crmContactos[0].contacto, 'demo@rabieta.local');
+  assert.match(fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8'), /state\.presentacionCargada = msg\.state\.presentacionCargada === true/);
+  assert.equal((await action({ type: 'reset_demo' }, encargado.token)).status, 200);
+});
+
 test('recorrido completo QR a analytics funciona con roles separados', async () => {
   staffToken = (await loginAs('encargado')).token;
   await resetState();
