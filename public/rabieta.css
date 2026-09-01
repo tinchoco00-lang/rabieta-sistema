@@ -363,6 +363,7 @@
   .gate-card .ico{font-size:36px;margin-bottom:8px;color:var(--gold);}
   .gate-card h1{font-family:'Fredoka',sans-serif;font-weight:700;font-size:24px;margin:0 0 4px;letter-spacing:.02em;}
   .gate-card p{font-size:12.5px;color:var(--ink-2);line-height:1.55;margin:0 0 18px;}
+  .gate-card select{width:100%;margin-bottom:10px;padding:13px 14px;font-size:14px;}
   .gate-card input[type=password], .gate-card input[type=tel]{
     width:100%;text-align:center;font-size:22px;letter-spacing:.3em;padding:12px;border-radius:10px;
     border:1px solid var(--line-strong);background:var(--bg-elevated);color:var(--ink-1);

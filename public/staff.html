@@ -15,7 +15,13 @@
   <div class="gate-card">
     <div class="ico"><svg class="i-ic" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="1.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
     <h1>Personal de Rabieta</h1>
-    <p>Acceso interno — mozo, cocina, encargado y dueño. Esto es un PIN simple para esta prueba piloto, no es un login real con usuarios (eso queda para la siguiente etapa).</p>
+    <p>Elegí tu función e ingresá el PIN correspondiente. Cada sesión abre sólo las herramientas autorizadas para ese rol.</p>
+    <select id="roleInput" aria-label="Función del personal">
+      <option value="mozo">Mozo / Salón</option>
+      <option value="cocina">Cocina / Barra</option>
+      <option value="encargado">Encargado</option>
+      <option value="dueno">Dueño</option>
+    </select>
     <input type="tel" inputmode="numeric" id="pinInput" placeholder="••••" maxlength="8" autofocus>
     <div class="err" id="pinErr"></div>
     <button class="btn primary block" onclick="intentarPin()">Entrar</button>
@@ -52,14 +58,15 @@
 <script>
   function intentarPin(){
     const pin = document.getElementById('pinInput').value;
-    fetch('/api/staff-login', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({pin})})
+    const role = document.getElementById('roleInput').value;
+    fetch('/api/staff-login', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({pin,role})})
       .then(r=>r.json()).then(res=>{
         if(res.ok){
-          setStaffToken(res.token);
+          setStaffSession(res.token,res.role,res.allowedViews);
           document.getElementById('gate').style.display='none';
           document.getElementById('sndGate').style.display='flex';
         } else {
-          document.getElementById('pinErr').textContent = 'PIN incorrecto.';
+          document.getElementById('pinErr').textContent = 'PIN incorrecto para esta función.';
         }
       }).catch(()=>{ document.getElementById('pinErr').textContent='No se pudo conectar con el servidor.'; });
   }
@@ -70,7 +77,7 @@
     document.getElementById('sndGate').style.display='none';
     document.getElementById('shell').style.display='block';
     document.getElementById('demoBar').style.display='flex';
-    state.role = 'mozo';
+    state.role = STAFF_ALLOWED_VIEWS[0] || STAFF_ROLE;
     let menuOk=false, estadoOk=false;
     function tryRender(){ if(menuOk && estadoOk) render(); }
     conectar(function(){ estadoOk=true; tryRender(); });

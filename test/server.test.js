@@ -93,11 +93,23 @@ async function getStateFrom(url, mesa = 1, mesaToken) {
 async function getState() { return getStateFrom(baseUrl); }
 
 async function getStaffState() {
-  const response = await fetch(`${baseUrl}/api/staff-events`, { headers: { authorization: `Bearer ${staffToken}` } });
+  return (await getStaffStateWithToken(staffToken)).state;
+}
+
+async function getStaffStateWithToken(token) {
+  const response = await fetch(`${baseUrl}/api/staff-events`, { headers: { authorization: `Bearer ${token}` } });
   const reader = response.body.getReader();
   const event = await readSseEvent(reader);
   await reader.cancel();
-  return event.message.state;
+  return event.message;
+}
+
+async function loginAs(role) {
+  const response = await fetch(`${baseUrl}/api/staff-login`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pin: testPin, role }),
+  });
+  assert.equal(response.status, 200);
+  return response.json();
 }
 
 function tokenForMesa(secret, mesa) {
@@ -138,7 +150,35 @@ test('endpoints base y login de staff generan un token aleatorio', async () => {
   const result = await login.json();
   assert.equal(result.ok, true);
   assert.match(result.token, /^[a-f0-9]{64}$/);
+  assert.equal(result.role, 'encargado');
+  assert.deepEqual(result.allowedViews, ['encargado', 'mozo', 'cocina', 'qrs']);
   staffToken = result.token;
+});
+
+test('cada rol recibe sólo sus vistas, datos y acciones operativas', async () => {
+  await resetState();
+  const mozo = await loginAs('mozo');
+  const cocina = await loginAs('cocina');
+  const dueno = await loginAs('dueno');
+
+  assert.deepEqual(mozo.allowedViews, ['mozo']);
+  assert.deepEqual(cocina.allowedViews, ['cocina']);
+  assert.deepEqual(dueno.allowedViews, ['dueno']);
+  assert.equal((await getStaffStateWithToken(mozo.token)).state.analytics, undefined);
+  assert.ok((await getStaffStateWithToken(dueno.token)).state.analytics);
+  assert.equal((await fetch(`${baseUrl}/api/mesa-links`, { headers: { authorization: `Bearer ${mozo.token}` } })).status, 403);
+  assert.equal((await fetch(`${baseUrl}/api/mesa-links`, { headers: { authorization: `Bearer ${staffToken}` } })).status, 200);
+
+  assert.equal((await action({ type: 'reset_demo' }, dueno.token)).status, 403);
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'hummus-rabieta' }] })).status, 200);
+  const itemId = (await getState()).mesas[0].pedido.items[0].id;
+  assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId, estado: 'preparando' }, mozo.token)).status, 403);
+  assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId, estado: 'preparando' }, cocina.token)).status, 200);
+  assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId, estado: 'listo' }, cocina.token)).status, 200);
+  assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId, estado: 'entregado' }, cocina.token)).status, 403);
+  assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId, estado: 'entregado' }, mozo.token)).status, 200);
+  assert.equal((await action({ type: 'pago_demo_confirmar', mesa: 1 }, cocina.token)).status, 403);
+  await resetState();
 });
 
 test('acciones internas requieren Bearer token y las públicas no', async () => {

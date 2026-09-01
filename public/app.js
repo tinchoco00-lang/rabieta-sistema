@@ -76,6 +76,8 @@ let MESAS_TOTAL = 0;
 let liveReady = false; // true mientras el stream en vivo (SSE) está conectado
 let knownAlertIds = null; // null = todavía no llegó el primer snapshot
 let STAFF_TOKEN = null;
+let STAFF_ROLE = null;
+let STAFF_ALLOWED_VIEWS = [];
 let MESA_TOKEN = null;
 
 let state = {
@@ -134,7 +136,9 @@ function aplicarMensajeRealtime(data, onFirstSnapshot){
     MESAS_TOTAL = msg.mesasTotal || MESAS_TOTAL;
     state.clockMs = msg.state.clockMs;
     state.mesas = msg.state.mesas;
-    if(msg.state.analytics) state.analytics = msg.state.analytics;
+    state.analytics = msg.state.analytics || {pagosConfirmados:0,ventasDemo:0,tiempoPagoTotalSec:0,itemsVendidos:0,productos:{},resenas:[]};
+    if(msg.role) STAFF_ROLE = msg.role;
+    if(Array.isArray(msg.allowedViews)) STAFF_ALLOWED_VIEWS = msg.allowedViews;
     detectarNuevasAlertas();
     if(onFirstSnapshot){ onFirstSnapshot(); onFirstSnapshot=null; }
     render();
@@ -195,6 +199,11 @@ function send(obj){
   return fetch('/api/action', {method:'POST', headers, body:JSON.stringify(obj)}).catch(()=>{});
 }
 function setStaffToken(token){ STAFF_TOKEN = token; }
+function setStaffSession(token,role,allowedViews){
+  STAFF_TOKEN = token;
+  STAFF_ROLE = role;
+  STAFF_ALLOWED_VIEWS = Array.isArray(allowedViews) ? allowedViews : [role];
+}
 function setMesaToken(token){ MESA_TOKEN = token || null; }
 function setConnPill(on){
   let el = document.getElementById('connPill');
@@ -288,12 +297,13 @@ function renderStaffNav(){
     {id:'encargado',label:'Encargado',icon:'briefcase'},
     {id:'dueno',label:'Dueño',icon:'chart'},
     {id:'qrs',label:'QR / Mesas',icon:'lock'},
-  ];
+  ].filter(role=>STAFF_ALLOWED_VIEWS.includes(role.id));
   const n = todasAlertasAbiertas().length;
   nav.innerHTML = roles.map(r=>`<button class="${state.role===r.id?'active':''}" onclick="setRole('${r.id}')">
     <span>${ic(r.icon)}</span><span>${r.label}</span><span class="dot ${n>0?'show':''}"></span></button>`).join('');
 }
 function setRole(id){
+  if(!STAFF_ALLOWED_VIEWS.includes(id)) return;
   state.role=id;
   render();
   if(id==='qrs' && !state.mesaLinks) cargarMesaLinks();

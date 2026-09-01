@@ -30,11 +30,23 @@ const MESAS_TOTAL = MENU_DATA._meta.mesas.placeholder_sugerido; // ver _meta.mes
 const MOZOS = ['Martín', 'Sofía', 'Lucas'];
 const SLA = { urgente: 20, importante: 40, normal: 65 }; // segundos — comprimido para demo, configurable
 
-// PIN de acceso al panel de personal. Esto NO es seguridad real (no hay
-// usuarios, ni contraseñas por persona, ni cifrado de sesión) — es un
-// candado simple para que un cliente que adivina la URL no entre directo.
-// Antes de un uso real hace falta autenticación de verdad (ver README).
+// Cada sesión de staff queda ligada a un rol. Para la demo todos los roles
+// pueden compartir STAFF_PIN; en el piloto se configura un PIN distinto por
+// rol sin cambiar el producto.
 const STAFF_PIN = process.env.STAFF_PIN || '1234';
+const STAFF_ROLES = new Set(['mozo', 'cocina', 'encargado', 'dueno']);
+const STAFF_PINS = {
+  mozo: process.env.STAFF_PIN_MOZO || STAFF_PIN,
+  cocina: process.env.STAFF_PIN_COCINA || STAFF_PIN,
+  encargado: process.env.STAFF_PIN_ENCARGADO || STAFF_PIN,
+  dueno: process.env.STAFF_PIN_DUENO || STAFF_PIN,
+};
+const STAFF_ROLE_VIEWS = {
+  mozo: ['mozo'],
+  cocina: ['cocina'],
+  encargado: ['encargado', 'mozo', 'cocina', 'qrs'],
+  dueno: ['dueno'],
+};
 const configuredTokenTtl = Number(process.env.STAFF_TOKEN_TTL_MS);
 const STAFF_TOKEN_TTL_MS = Number.isFinite(configuredTokenTtl) && configuredTokenTtl > 0
   ? configuredTokenTtl
@@ -98,9 +110,19 @@ function enqueueMutation(task) {
 }
 
 function pruneExpiredStaffTokens(now = Date.now()) {
-  for (const [token, expiresAt] of STAFF_TOKENS) {
-    if (expiresAt <= now) STAFF_TOKENS.delete(token);
+  for (const [token, session] of STAFF_TOKENS) {
+    if (session.expiresAt <= now) STAFF_TOKENS.delete(token);
   }
+}
+
+function staffRoleCan(role, msg) {
+  if (role === 'encargado') return true;
+  if (role === 'mozo') {
+    return ['alerta_atender', 'alerta_resolver', 'pago_demo_confirmar', 'mesa_liberar'].includes(msg.type)
+      || (msg.type === 'pedido_estado' && msg.estado === 'entregado');
+  }
+  if (role === 'cocina') return msg.type === 'pedido_estado' && msg.estado !== 'entregado';
+  return false;
 }
 
 function findMesa(n) { return state.mesas.find(m => m.numero === Number(n)); }
@@ -296,11 +318,14 @@ function normalizeRecoveredState(recoveredState) {
 
 const sseClients = new Set();
 function estadoPayload(client) {
-  const visibleState = client.kind === 'staff'
-    ? state
-    : { clockMs: state.clockMs, mesas: [findMesa(client.mesa)] };
+  let visibleState;
+  if (client.kind === 'staff') {
+    visibleState = ['encargado', 'dueno'].includes(client.role) ? state : { clockMs: state.clockMs, mesas: state.mesas };
+  } else {
+    visibleState = { clockMs: state.clockMs, mesas: [findMesa(client.mesa)] };
+  }
   const message = client.kind === 'staff'
-    ? { type: 'estado', state: visibleState, mesasTotal: MESAS_TOTAL }
+    ? { type: 'estado', state: visibleState, mesasTotal: MESAS_TOTAL, role: client.role, allowedViews: STAFF_ROLE_VIEWS[client.role] }
     : { type: 'estado', state: visibleState };
   return 'data: ' + JSON.stringify(message) + '\n\n';
 }
@@ -546,13 +571,18 @@ function extractBearerToken(req) {
 }
 
 function validStaffToken(token) {
-  const expiresAt = token ? STAFF_TOKENS.get(token) : null;
-  if (!expiresAt) return false;
-  if (expiresAt <= Date.now()) {
+  const session = token ? STAFF_TOKENS.get(token) : null;
+  if (!session) return false;
+  if (session.expiresAt <= Date.now()) {
     STAFF_TOKENS.delete(token);
     return false;
   }
   return true;
+}
+
+function staffSession(req) {
+  const token = extractBearerToken(req);
+  return token ? { token, ...STAFF_TOKENS.get(token) } : null;
 }
 
 function applyRateLimit(req, res, limiter, scope) {
@@ -596,11 +626,16 @@ function handleHttpRequest(req, res) {
         sendJson(res, 400, { ok: false, error: 'PIN inválido' });
         return;
       }
-      if (body.pin !== STAFF_PIN) { sendJson(res, 401, { ok: false }); return; }
+      const role = body.role == null ? 'encargado' : body.role;
+      if (typeof role !== 'string' || !STAFF_ROLES.has(role)) {
+        sendJson(res, 400, { ok: false, error: 'Rol inválido' });
+        return;
+      }
+      if (body.pin !== STAFF_PINS[role]) { sendJson(res, 401, { ok: false }); return; }
       pruneExpiredStaffTokens();
       const token = crypto.randomBytes(32).toString('hex');
-      STAFF_TOKENS.set(token, Date.now() + STAFF_TOKEN_TTL_MS);
-      sendJson(res, 200, { ok: true, token });
+      STAFF_TOKENS.set(token, { expiresAt: Date.now() + STAFF_TOKEN_TTL_MS, role });
+      sendJson(res, 200, { ok: true, token, role, allowedViews: STAFF_ROLE_VIEWS[role] });
     });
     return;
   }
@@ -615,8 +650,13 @@ function handleHttpRequest(req, res) {
     return;
   }
   if (u.pathname === '/api/mesa-links' && req.method === 'GET') {
-    if (!extractBearerToken(req)) {
+    const session = staffSession(req);
+    if (!session) {
       sendJson(res, 401, { ok: false, error: 'Autenticación requerida' });
+      return;
+    }
+    if (session.role !== 'encargado') {
+      sendJson(res, 403, { ok: false, error: 'El rol no tiene acceso a los QR de mesa' });
       return;
     }
     const mesas = state.mesas.map(mesa => {
@@ -639,9 +679,16 @@ function handleHttpRequest(req, res) {
           return;
         }
       }
-      if (body && STAFF_ACTIONS.has(body.type) && !extractBearerToken(req)) {
-        sendJson(res, 401, { ok: false, error: 'Autenticación requerida' });
-        return;
+      if (body && STAFF_ACTIONS.has(body.type)) {
+        const session = staffSession(req);
+        if (!session) {
+          sendJson(res, 401, { ok: false, error: 'Autenticación requerida' });
+          return;
+        }
+        if (!staffRoleCan(session.role, body)) {
+          sendJson(res, 403, { ok: false, error: 'El rol no puede realizar esta acción' });
+          return;
+        }
       }
       enqueueMutation(async () => {
         const previousState = structuredClone(state);
@@ -691,12 +738,12 @@ function handleHttpRequest(req, res) {
     return;
   }
   if (u.pathname === '/api/staff-events' && req.method === 'GET') {
-    const token = extractBearerToken(req);
-    if (!token) {
+    const session = staffSession(req);
+    if (!session) {
       sendJson(res, 401, { ok: false, error: 'Autenticación requerida' });
       return;
     }
-    const client = { kind: 'staff', token, res };
+    const client = { kind: 'staff', token: session.token, role: session.role, res };
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache, no-transform',
