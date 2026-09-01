@@ -438,12 +438,12 @@ function renderModal(){
           </div>
         </div>
         <div class="body3d">
-          <span class="badge-preview">3D real · modelo genérico, todavía no es el escaneo del plato</span>
+          <span class="badge-preview">Prototipo técnico · modelo genérico, no representa este plato</span>
           <h3>${escapeHtml(state.modal.nombre)}</h3>
           <p>Activá la cámara, enfocá tu mesa, y el plato aparece ahí arriba en tamaño real — como si ya te lo hubieran servido. También podés arrastrar acá abajo para girarlo sin cámara.</p>
           <button class="btn callout block" onclick="activarAR()">${ic('cube')} Ver en mi mesa con la cámara</button>
           <div id="arStatus" class="ar-status" aria-live="polite">Cargando la experiencia 3D…</div>
-          <p class="ar-fineprint">Funciona con cámara en Android (Chrome). En iPhone y en la compu se ve girando en pantalla por ahora. Lo único pendiente de verdad es reemplazar este modelo genérico — ${modelo.nombre} — por el escaneo 3D real de <b>${state.modal.nombre}</b> — eso es un paso de producción aparte.</p>
+          <p class="ar-fineprint">Esta prueba valida interacción y cámara, no la apariencia del plato. Para publicar <b>${state.modal.nombre}</b> faltan su modelo GLB real, su USDZ real y una medida de escala verificada. El modelo visible ahora es ${modelo.nombre}.</p>
           <button class="btn dark block" onclick="closeModal()">Cerrar</button>
         </div>
       </div></div>`;
@@ -512,11 +512,11 @@ function banner3dHtml(){
   if(!platos.length) return '';
   return `<div class="banner3d">
     <div class="head"><div class="ico">${ic('cube')}</div>
-      <div class="txt"><strong>Mirá tu plato en 3D antes de pedir</strong><span>Tocá cualquiera de estos ${platos.length} platos — un solo toque</span></div></div>
+      <div class="txt"><strong>Prototipo 3D/AR en desarrollo</strong><span>Probá la interacción técnica; los modelos reales de estos ${platos.length} platos todavía faltan</span></div></div>
     <div class="tiles3d">
       ${platos.map(p=>`<button onclick="openModal3d('${p.id}','${p.nombre.replace(/'/g,"\\'")}')">
         ${p.imagen ? `<img class="tile3d-img" src="${p.imagen}" alt="${p.nombre}">` : `<span class="em">${ic('plate')}</span>`}
-        <span class="nm">${p.nombre}</span><span class="cta">Ver en 3D</span></button>`).join('')}
+        <span class="nm">${p.nombre}</span><span class="cta">Probar demo 3D</span></button>`).join('')}
     </div></div>`;
 }
 
@@ -591,7 +591,7 @@ function splashHtml(mesa){
     <div class="splash-copy">
       <div class="splash-eyebrow">Antes de pedir</div>
       <h1 class="splash-h1">Se come primero<br>con los ojos.</h1>
-      <p class="splash-sub">Mirá el plato real antes de pedir — girálo en 3D, o pasá directo a la carta completa.</p>
+      <p class="splash-sub">Mirá la foto real del plato y probá cómo funcionará la experiencia 3D, o pasá directo a la carta.</p>
     </div>
     <div class="splash-arrow">
       <svg viewBox="0 0 56 64"><path d="M28 4 C 16 18, 40 30, 26 44"/><path d="M16 40 L 26 52 L 36 41"/></svg>
@@ -601,7 +601,7 @@ function splashHtml(mesa){
       <div class="splash-stage-scrim"></div>
       <div class="splash-stage-tag">Plato destacado de hoy</div>
       <div class="splash-stage-name">${destacado.nombre}</div>
-      <button class="btn callout splash-3d-btn" onclick="openModal3d('${destacado.id}','${destacado.nombre.replace(/'/g,"\\'")}')">${ic('cube')} Girá este plato en 3D</button>
+      <button class="btn callout splash-3d-btn" onclick="openModal3d('${destacado.id}','${destacado.nombre.replace(/'/g,"\\'")}')">${ic('cube')} Probar demo técnica 3D</button>
     </div>
     <button class="splash-skip" onclick="dismissSplash()">Ver toda la carta →</button>
   </div>`;
@@ -703,7 +703,7 @@ function dishCardHtml(p, bloqueado){
       ${esCombo?'<span class="tag">Combo plato + bebida</span>':''}
       ${p.para_compartir?'<span class="tag">Para compartir</span>':''}
     </div>
-    ${esDestacado?`<button class="btn-3d" onclick="openModal3d('${p.id}','${p.nombre.replace(/'/g,"\\'")}')">${ic('cube')} Ver en 3D</button>`:''}
+    ${esDestacado?`<button class="btn-3d" onclick="openModal3d('${p.id}','${p.nombre.replace(/'/g,"\\'")}')">${ic('cube')} Probar demo 3D</button>`:''}
     ${bloqueado
       ? '<div style="margin-top:8px;"><span class="pill importante">Cuenta en proceso</span></div>'
       : expanded ? dishDetailHtml(p) : `<div style="margin-top:8px;"><button class="btn dark sm" onclick="toggleDish('${p.id}')">Agregar al pedido</button></div>`}
@@ -1104,10 +1104,27 @@ function viewDueno(){
     <div class="grid cols-3">
       ${crmRecientes.length ? crmRecientes.map(c=>`<div class="insight review-insight"><span>Mesa ${c.mesa} · ${c.canal==='email'?'Email':'WhatsApp'} · hace ${fmtSec(timeAgoSec(c.consentimientoTs))}</span><b>${c.nombre?escapeHtml(c.nombre)+' · ':''}${escapeHtml(c.contacto)}</b></div>`).join('') : '<div class="empty">Los contactos aparecerán solo cuando una persona acepte recibir novedades.</div>'}
     </div>
-    <div class="section-h">Platos con 3D real activado</div>
-    <div class="grid cols-3">
-      ${[...CANDIDATOS_3D].map(id=>{ const p=findProducto(id); return `<div class="insight"><span>★ ${p.nombre}</span></div>`; }).join('')}
-    </div>`;
+    ${view3dReadinessHtml()}`;
+}
+function view3dReadinessHtml(){
+  const platos=platosDestacadosData();
+  const conFoto=platos.filter(p=>Boolean(p.imagen));
+  const sinFoto=platos.filter(p=>!p.imagen);
+  return `<div class="section-h">Preparación 3D/AR por plato</div>
+    <div class="mock-banner">${ic('warning')} Prototipo técnico: hoy se usa un modelo genérico solo para validar cámara e interacción. Ningún plato tiene todavía un modelo 3D real publicable.</div>
+    <div class="grid cols-3 asset-summary">
+      ${statTile('Modelos 3D reales', `0 / ${platos.length}`, `faltan ${platos.length} GLB + ${platos.length} USDZ`, 'downAlert')}
+      ${statTile('Fotos reales', `${conFoto.length} / ${platos.length}`, sinFoto.length?`faltan ${sinFoto.map(p=>p.nombre).join(' y ')}`:'referencias completas', sinFoto.length?'downAlert':null)}
+      ${statTile('Shell AR', 'Listo', 'cámara, fallback y escala por validar', null)}
+    </div>
+    <div class="asset-grid">${platos.map(p=>{
+      const missing=[`GLB real de ${p.nombre}`,`USDZ real de ${p.nombre}`,'medida real de escala'];
+      if(!p.imagen) missing.push(`foto real de ${p.nombre}`);
+      return `<article class="asset-card"><div class="asset-card-head"><strong>${escapeHtml(p.nombre)}</strong><span class="pill importante">No publicable</span></div>
+        <div class="asset-line"><span>Foto real de referencia</span><b class="${p.imagen?'ready':'pending'}">${p.imagen?'Lista':'Falta'}</b></div>
+        <div class="asset-line"><span>Modelo del plato</span><b class="pending">Falta</b></div>
+        <p><b>Assets exactos:</b> ${escapeHtml(missing.join(' · '))}.</p></article>`;
+    }).join('')}</div>`;
 }
 function statTile(label,value,delta,deltaClass){
   return `<div class="stat-tile"><div class="label">${label}</div>

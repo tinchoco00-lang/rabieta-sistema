@@ -1013,6 +1013,12 @@ test('3D y AR mantienen una foto útil y explican dispositivos incompatibles', (
   assert.match(source, /onerror="modelo3dError\(\)"/);
   assert.match(source, /mv\.canActivateAR===false/);
   assert.match(source, /No se pudo abrir la cámara AR/);
+  assert.match(source, /Ningún plato tiene todavía un modelo 3D real publicable/);
+  assert.match(source, /GLB real de \$\{p\.nombre\}/);
+  assert.match(source, /USDZ real de \$\{p\.nombre\}/);
+  assert.match(source, /foto real de \$\{p\.nombre\}/);
+  assert.match(source, /Prototipo 3D\/AR en desarrollo/);
+  assert.doesNotMatch(source, /Platos con 3D real activado/);
 });
 
 test('cliente ve estado y tiempo realtime de cada ítem del pedido', () => {
