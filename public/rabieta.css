@@ -383,6 +383,13 @@
   .review-thanks{color:var(--good);font-size:12px;font-weight:800;}
   .review-insight{align-items:flex-start;flex-direction:column;gap:5px;}
   .review-insight b{font-size:12px;line-height:1.45;text-align:left;}
+  .checkout-callout{margin:12px 0 0;padding:13px;border:1px solid rgba(76,175,109,.45);border-radius:12px;background:rgba(76,175,109,.08);display:flex;justify-content:space-between;align-items:center;gap:12px;}
+  .checkout-callout b,.checkout-callout span{display:block;}.checkout-callout b{color:var(--good);font-size:13px;}.checkout-callout span{font-size:11px;color:var(--ink-2);margin-top:3px;}
+  .checkout-modal{max-width:430px;text-align:left;}.checkout-head{text-align:center;}.checkout-head h3{margin:8px 0 4px;}.checkout-head p{margin:0 0 14px;}
+  .checkout-lock{display:inline-flex;align-items:center;gap:5px;color:var(--good);font-size:10px;font-weight:900;letter-spacing:.08em;}
+  .checkout-summary{border:1px solid var(--line);border-radius:11px;padding:10px 12px;margin-bottom:14px;max-height:190px;overflow:auto;}.checkout-summary>div{display:flex;justify-content:space-between;gap:12px;font-size:12px;padding:5px 0;}.checkout-summary .checkout-total{font-size:15px;border-top:1px solid var(--line-strong);margin-top:6px;padding-top:10px;color:var(--gold);}
+  .checkout-label{font-size:11px;font-weight:800;color:var(--ink-2);margin-bottom:7px;}.payment-methods{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;}.payment-methods button{border:1px solid var(--line-strong);background:var(--bg-elevated);color:var(--ink-1);border-radius:10px;padding:11px;text-align:left;cursor:pointer;}.payment-methods button.active{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold) inset;background:rgba(238,143,63,.09);}.payment-methods b,.payment-methods span{display:block;}.payment-methods span{font-size:10px;color:var(--ink-muted);margin-top:3px;}
+  .payment-receipt{margin:12px 0 0;padding:14px;border:1px solid rgba(76,175,109,.45);border-radius:12px;background:rgba(76,175,109,.08);display:flex;gap:10px;align-items:flex-start;color:var(--good);}.payment-receipt>span{font-size:22px}.payment-receipt b,.payment-receipt small{display:block}.payment-receipt small{color:var(--ink-2);font-size:11px;line-height:1.5;margin-top:3px;}
   .stage3d-real model-viewer{width:100%;height:100%;--poster-color:transparent;}
   .fallback3d{width:100%;height:100%;position:relative;display:flex;align-items:flex-end;justify-content:center;overflow:hidden;}
   .fallback3d[hidden]{display:none;}
