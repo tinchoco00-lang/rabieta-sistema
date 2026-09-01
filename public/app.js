@@ -94,7 +94,8 @@ let state = {
   // ui local, no viene del servidor:
   role:null, clienteMesa:null, clienteCat:null, clienteFiltroSinTacc:false,
   clienteCart:[], clienteExpand:null, clienteHelpOpen:false, clienteSplashDismissed:false,
-  clienteAsistenteOpen:false, clientePreferencia:null, clienteResenaError:'', clienteResenaEnviando:false,
+  clienteAsistenteOpen:false, clientePreferencia:null, clienteAsistenteConsulta:'', clienteAsistenteRespuesta:null,
+  clienteAsistenteAgregado:null, clienteResenaError:'', clienteResenaEnviando:false,
   clienteResenaDraft:{puntuacion:null,comentario:'',crmConsentimiento:false,crmCanal:'whatsapp',crmContacto:'',crmNombre:''},
   mozoActivo:MOZOS[0], modal:null, mesaLinks:null, mesaLinksLoading:false, mesaLinksError:'', presentacionCargada:false,
 };
@@ -152,13 +153,13 @@ function aplicarMensajeRealtime(data, onFirstSnapshot){
     if(Array.isArray(msg.allowedViews)) STAFF_ALLOWED_VIEWS = msg.allowedViews;
     detectarNuevasAlertas();
     if(onFirstSnapshot){ onFirstSnapshot(); onFirstSnapshot=null; }
-    if(!clienteEditandoResena()) render();
+    if(!clienteEditandoFormulario()) render();
   }
   return onFirstSnapshot;
 }
-function clienteEditandoResena(){
+function clienteEditandoFormulario(){
   const active = document.activeElement;
-  return state.role==='cliente' && active && typeof active.closest==='function' && Boolean(active.closest('.review-card'));
+  return state.role==='cliente' && active && typeof active.closest==='function' && Boolean(active.closest('.review-card, .ai-assistant'));
 }
 function conectar(onFirstSnapshot){
   if(state.role==='cliente'){
@@ -520,55 +521,46 @@ function banner3dHtml(){
     </div></div>`;
 }
 
-function puntuarRecomendacion(p, perfil){
-  const categoria = p.categoriaId;
-  const texto = `${p.nombre} ${p.descripcion||''}`.toLowerCase();
-  if(perfil==='sin_tacc') return p.filtro_dietario && p.filtro_dietario.includes('sin_tacc') ? 20 : -1;
-  if(perfil==='dulce') return categoria==='sobremesa' ? 15+(p.candidato_destacado?1:0) : -1;
-  let score = 0;
-  if(perfil==='compartir'){
-    if(p.para_compartir) score += 12;
-    if(['tablas-y-picadas','caliente','pizzas'].includes(categoria)) score += 6;
-  }
-  if(perfil==='contundente'){
-    if(['entrepanes','cocina-resistencia','pizzas'].includes(categoria)) score += 8;
-    if(/burger|milanesa|bife|bondiola|asado/.test(texto)) score += 5;
-  }
-  if(perfil==='liviano'){
-    if(['mezcolanzas','sin-tacc'].includes(categoria)) score += 10;
-    if(/ensalada|rúcula|vegetal|hummus/.test(texto)) score += 4;
-  }
-  if(score>0 && p.candidato_destacado) score++;
-  return score || -1;
-}
-function recomendacionesAsistente(perfil){
-  return todosLosProductos()
-    .filter(p=>Number.isFinite(precioBase(p)))
-    .map(p=>({p,score:puntuarRecomendacion(p,perfil)}))
-    .filter(item=>item.score>0)
-    .sort((a,b)=>b.score-a.score || a.p.nombre.localeCompare(b.p.nombre,'es'))
-    .slice(0,3).map(item=>item.p);
-}
-function asistenteCartaHtml(){
+function asistenteCartaHtml(bloqueado){
   if(!state.clienteAsistenteOpen){
     return `<div class="ai-assistant compact"><div><span class="ai-badge">Recomendación inteligente · demo local</span>
       <strong>¿No sabés qué pedir?</strong><p>Te orientamos con la carta real de Rabieta.</p></div>
       <button class="btn primary sm" onclick="toggleAsistente()">Ayudame a elegir</button></div>`;
   }
-  const recomendaciones = state.clientePreferencia ? recomendacionesAsistente(state.clientePreferencia) : [];
+  const respuesta = state.clienteAsistenteRespuesta;
   return `<div class="ai-assistant">
-    <div class="ai-head"><div><span class="ai-badge">Asistente Rabieta</span><strong>¿Qué te pinta hoy?</strong></div>
+    <div class="ai-head"><div><span class="ai-badge">Asistente Rabieta · local</span><strong>¿Qué te pinta hoy?</strong></div>
       <button class="btn ghost sm" onclick="toggleAsistente()">Cerrar</button></div>
+    <form class="ai-query" onsubmit="consultarAsistente(event)">
+      <label for="ai-query-input">Escribí como hablarías con el mozo</label>
+      <div><input id="ai-query-input" type="text" maxlength="120" autocomplete="off" placeholder="Ej: algo para compartir por menos de $4.000" value="${escapeHtml(state.clienteAsistenteConsulta)}" oninput="actualizarConsultaAsistente(this.value)">
+      <button class="btn primary sm" type="submit">Recomendar</button></div>
+    </form>
     <div class="ai-options">${ASISTENTE_OPCIONES.map(op=>`<button class="${state.clientePreferencia===op.id?'active':''}" onclick="setPreferenciaAsistente('${op.id}')">${op.label}</button>`).join('')}</div>
-    ${state.clientePreferencia ? `<div class="ai-results">
-      ${recomendaciones.map(p=>`<button onclick="abrirRecomendacion('${p.id}')"><span><strong>${escapeHtml(p.nombre)}</strong><small>${escapeHtml(MENU_DATA.categorias.find(c=>c.id===p.categoriaId).nombre)}</small></span><b>${money(precioBase(p))}</b></button>`).join('')}
-    </div>${state.clientePreferencia==='sin_tacc'?`<p class="ai-warning">${ic('warning')} Según la carta marcada Sin TACC. Confirmá con el personal por contaminación cruzada.</p>`:''}` : '<p class="ai-empty">Elegí una opción y te mostramos hasta tres platos con precio confirmado.</p>'}
+    ${respuesta ? `<p class="ai-message">${escapeHtml(respuesta.message)}</p>
+      ${respuesta.items.length ? `<div class="ai-results">${respuesta.items.map(({product:p,reason})=>`<article>
+        <button class="ai-result-main" onclick="abrirRecomendacion('${p.id}')"><span><strong>${escapeHtml(p.nombre)}</strong><small>${escapeHtml(reason)}</small></span><b>${money(precioBase(p))}</b></button>
+        <button class="ai-add" ${bloqueado?'disabled':''} onclick="agregarRecomendacion('${p.id}')">${state.clienteAsistenteAgregado===p.id?'Sumado ✓':(p.variantes||p.opciones?'Elegir':'Sumar')}</button>
+      </article>`).join('')}</div>` : ''}
+      ${respuesta.warning ? `<p class="ai-warning">${ic('warning')} ${escapeHtml(respuesta.warning)}</p>` : ''}` : '<p class="ai-empty">Probá “una pizza barata”, “algo liviano” o “Sin TACC hasta $3.000”.</p>'}
     <p class="ai-fineprint">Funciona localmente con reglas sobre la carta; no envía datos ni usa un servicio externo.</p>
   </div>`;
 }
 function toggleAsistente(){ state.clienteAsistenteOpen=!state.clienteAsistenteOpen; render(); }
+function actualizarConsultaAsistente(value){ state.clienteAsistenteConsulta=value; }
+function consultarAsistente(event){
+  if(event) event.preventDefault();
+  state.clientePreferencia=null; state.clienteAsistenteAgregado=null;
+  state.clienteAsistenteRespuesta=window.RabietaRecommender.recommend(MENU_DATA,state.clienteAsistenteConsulta);
+  render();
+}
 function setPreferenciaAsistente(perfil){
-  if(ASISTENTE_OPCIONES.some(op=>op.id===perfil)){ state.clientePreferencia=perfil; render(); }
+  const option = ASISTENTE_OPCIONES.find(op=>op.id===perfil);
+  if(!option) return;
+  state.clientePreferencia=perfil; state.clienteAsistenteConsulta=option.label;
+  state.clienteAsistenteAgregado=null;
+  state.clienteAsistenteRespuesta=window.RabietaRecommender.recommend(MENU_DATA,option.label);
+  render();
 }
 function abrirRecomendacion(id){
   const producto = todosLosProductos().find(p=>p.id===id);
@@ -659,7 +651,7 @@ function viewCliente(){
       <span class="badge-mesa">MESA ${mesa.numero}</span>
     </div>
     ${banner3dHtml()}
-    ${asistenteCartaHtml()}
+    ${asistenteCartaHtml(mesa.cuentaPedida)}
     ${pedidoStatusHtml}${alertHtml}
 
     <div class="filter-chips">
@@ -806,6 +798,16 @@ function resenaHtml(mesa){
     ${state.clienteResenaError?`<div class="review-error">${escapeHtml(state.clienteResenaError)}</div>`:''}
     <button class="btn primary sm" ${state.clienteResenaEnviando?'disabled':''} onclick="enviarResena()">${state.clienteResenaEnviando?'Enviando…':'Enviar opinión'}</button>
   </div>`;
+}
+function agregarRecomendacion(id){
+  const p = findProducto(id);
+  if(!p) return;
+  if(p.variantes || p.opciones){ abrirRecomendacion(id); return; }
+  const precio = precioBase(p);
+  if(!Number.isFinite(precio)) return;
+  state.clienteCart.push({productoId:id,variante:null,opcion:null,observacion:'',nombre:p.nombre,precio,notas:''});
+  state.clienteAsistenteAgregado=id;
+  render();
 }
 function updateResenaDraft(field,value){ state.clienteResenaDraft[field]=value; }
 function toggleCrmFields(enabled){

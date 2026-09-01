@@ -1084,11 +1084,17 @@ test('el panel de staff genera QR de mesa localmente y conserva un enlace utiliz
   assert.doesNotMatch(source, /api\.qrserver|chart\.googleapis/);
 });
 
-test('el asistente recomienda solo productos reales con precio y declara su alcance local', () => {
+test('el asistente ofrece consulta libre local, resultados accionables y declara su alcance', () => {
   const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
-  assert.match(source, /function recomendacionesAsistente\(perfil\)/);
-  assert.match(source, /filter\(p=>Number\.isFinite\(precioBase\(p\)\)\)/);
+  const engine = fs.readFileSync(path.join(root, 'public', 'recommender.js'), 'utf8');
+  const mesaHtml = fs.readFileSync(path.join(root, 'public', 'mesa.html'), 'utf8');
+  assert.match(source, /function consultarAsistente\(event\)/);
+  assert.match(source, /function agregarRecomendacion\(id\)/);
+  assert.match(source, /Escribí como hablarías con el mozo/);
+  assert.match(engine, /Number\.isFinite\(price\)/);
+  assert.match(engine, /unsafeRestriction/);
   assert.match(source, /no envía datos ni usa un servicio externo/);
-  assert.match(source, /Confirmá con el personal por contaminación cruzada/);
+  assert.match(engine, /Confirmá con el personal por contaminación cruzada/);
+  assert.match(mesaHtml, /recommender\.js/);
   assert.doesNotMatch(source, /fetch\(['"]\/api\/recomend/);
 });
