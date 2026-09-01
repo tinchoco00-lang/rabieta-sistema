@@ -396,7 +396,7 @@ test('una segunda ronda conserva consumos ya entregados y acumula la cuenta', as
   assert.equal((await action({ type: 'pago_demo_confirmar', mesa: 1 }, staffToken)).status, 200);
   const mesa = (await getState()).mesas[0];
   assert.equal(mesa.pago.total, expectedTotal);
-  assert.match(fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8'), /Enviar otra ronda a cocina/);
+  assert.match(fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8'), /Revisar y.*enviar otra ronda/);
   await resetState();
 });
 
@@ -407,9 +407,10 @@ test('cada avance de cocina conserva una marca de tiempo auditable por ítem', a
   assert.deepEqual(item.estadoTs, { enviado: item.enviadoTs });
 
   assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId: item.id, estado: 'preparando' }, staffToken)).status, 200);
-  item = (await getState()).mesas[0].pedido.items[0];
+  const preparingState = await getState();
+  item = preparingState.mesas[0].pedido.items[0];
   assert.equal(item.estadoTs.enviado, item.enviadoTs);
-  assert.equal(item.estadoTs.preparando, (await getState()).clockMs);
+  assert.equal(item.estadoTs.preparando, preparingState.clockMs);
 
   assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId: item.id, estado: 'listo' }, staffToken)).status, 200);
   item = (await getState()).mesas[0].pedido.items[0];
@@ -947,8 +948,17 @@ test('el servidor reconstruye productos y precios desde el menú', async () => {
   const configuredItems = (await getStateFrom(baseUrl, 2)).mesas[0].pedido.items;
   assert.equal(configuredItems[0].nombre, 'Tablita de Quesos y Fiambres — Individual (sin bebida)');
   assert.equal(configuredItems[0].precio, 5640);
+  assert.equal(configuredItems[0].variante, 'Individual (sin bebida)');
+  assert.equal(configuredItems[0].opcion, null);
   assert.equal(configuredItems[1].nombre, '2 Empanadas de carne o verdura (Sin TACC) (carne)');
   assert.equal(configuredItems[1].precio, 2100);
+  assert.equal(configuredItems[1].variante, null);
+  assert.equal(configuredItems[1].opcion, 'carne');
+  const appSource = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  assert.match(appSource, /Agregar última ronda al carrito/);
+  assert.match(appSource, /Revisá tu carrito/);
+  assert.match(appSource, /function quitarDelCarrito\(index\)/);
+  assert.match(appSource, /variante:variante\?variante\.nombre:null, opcion:opcion\|\|null/);
 });
 
 test('productos, variantes y opciones inválidas no modifican estado', async () => {

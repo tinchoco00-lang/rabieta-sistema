@@ -213,11 +213,14 @@ function buildPedidoItem(input) {
 
   let nombre = producto.nombre;
   let precio = producto.precio;
+  let varianteSeleccionada = null;
+  let opcionSeleccionada = null;
 
   if (Array.isArray(producto.variantes) && producto.variantes.length) {
     if (typeof input.variante !== 'string') return actionError(400, 'Variante requerida');
     const variante = producto.variantes.find(candidate => candidate.nombre === input.variante);
     if (!variante) return actionError(400, 'Variante inválida');
+    varianteSeleccionada = variante.nombre;
     nombre += ' — ' + variante.nombre;
     precio = variante.precio;
   } else if (input.variante != null) {
@@ -228,6 +231,7 @@ function buildPedidoItem(input) {
     if (typeof input.opcion !== 'string' || !producto.opciones.includes(input.opcion)) {
       return actionError(400, 'Opción inválida');
     }
+    opcionSeleccionada = input.opcion;
     nombre += ' (' + input.opcion + ')';
   } else if (input.opcion != null) {
     return actionError(400, 'Opción inválida');
@@ -238,7 +242,10 @@ function buildPedidoItem(input) {
 
   return {
     ok: true,
-    item: { productoId: producto.id, nombre, precio, notas: observacion.value, destino: producto.destino },
+    item: {
+      productoId: producto.id, nombre, precio, notas: observacion.value, destino: producto.destino,
+      variante: varianteSeleccionada, opcion: opcionSeleccionada,
+    },
   };
 }
 

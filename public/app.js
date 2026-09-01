@@ -96,6 +96,7 @@ let state = {
   clienteCart:[], clienteExpand:null, clienteHelpOpen:false, clienteSplashDismissed:false,
   clienteAsistenteOpen:false, clientePreferencia:null, clienteAsistenteConsulta:'', clienteAsistenteRespuesta:null,
   clienteAsistenteAgregado:null, clienteResenaError:'', clienteResenaEnviando:false,
+  clienteRepetirAviso:'',
   clienteResenaDraft:{puntuacion:null,comentario:'',crmConsentimiento:false,crmCanal:'whatsapp',crmContacto:'',crmNombre:''},
   mozoActivo:MOZOS[0], modal:null, mesaLinks:null, mesaLinksLoading:false, mesaLinksError:'', presentacionCargada:false,
   demoPasoActual:1, demoPasosVistos:new Set(),
@@ -426,7 +427,7 @@ function renderModal(){
   const root = document.getElementById('modalRoot');
   if(!root) return;
   if(!state.modal){ root.innerHTML=''; delete root.dataset.modalKey; return; }
-  const modalKey=`${state.modal.type}:${state.modal.id||state.modal.numero||''}`;
+  const modalKey=`${state.modal.type}:${state.modal.id||state.modal.numero||''}${state.modal.type==='cart'?':'+state.clienteCart.length:''}`;
   if(root.dataset.modalKey===modalKey && root.firstElementChild) return;
   root.dataset.modalKey=modalKey;
   if(state.modal.type==='mesa-preview'){
@@ -469,6 +470,15 @@ function renderModal(){
           <button class="btn dark block" onclick="closeModal()">Cerrar</button>
         </div>
       </div></div>`;
+  } else if(state.modal.type==='cart'){
+    const total=state.clienteCart.reduce((sum,item)=>sum+(item.precio||0),0);
+    const pendientes=state.clienteCart.filter(item=>item.precio===null).length;
+    root.innerHTML = `<div class="modal-bg" onclick="closeModal(event)"><div class="modal cart-modal" onclick="event.stopPropagation()">
+      <div class="cart-modal-head"><div><span class="presentation-kicker">Antes de enviar</span><h3>Revisá tu carrito</h3></div><button class="btn ghost sm" onclick="closeModal()">Seguir eligiendo</button></div>
+      <ul class="cart-review-list">${state.clienteCart.map((item,index)=>`<li><div><strong>${escapeHtml(item.nombre)}</strong>${item.notas?`<span>“${escapeHtml(item.notas)}”</span>`:''}</div><b>${money(item.precio)}</b><button class="cart-remove" aria-label="Quitar ${escapeHtml(item.nombre)}" onclick="quitarDelCarrito(${index})">×</button></li>`).join('')}</ul>
+      <div class="cart-review-total"><span>${state.clienteCart.length} ítem(s)${pendientes?' · '+pendientes+' a confirmar':''}</span><strong>${money(total)}${pendientes?' + pendientes':''}</strong></div>
+      <div class="cart-modal-actions"><button class="btn ghost" onclick="vaciarCarrito()">Vaciar</button><button class="btn primary" onclick="enviarPedido()">Enviar ${findMesa(state.clienteMesa)&&findMesa(state.clienteMesa).pedido?'otra ronda':'pedido'} a cocina →</button></div>
+    </div></div>`;
   } else if(state.modal.type==='confirm-mozo'){
     root.innerHTML = `<div class="modal-bg" onclick="closeModal(event)">
       <div class="modal" onclick="event.stopPropagation()">
@@ -650,7 +660,7 @@ function viewCliente(){
       <ul class="customer-order-items">
         ${mesa.pedido.items.map(it=>`<li><div>${variasRondas?`<span class="item-round">Ronda ${it.ronda||1}</span>`:''}${escapeHtml(it.nombre)}${it.notas?` — "${escapeHtml(it.notas)}"`:''}</div>
           <div class="customer-order-meta"><span class="pill ${itemEstadoClass(it.estado)}">${PEDIDO_LABELS[it.estado]}</span><span>${itemElapsedLabel(it)}</span></div></li>`).join('')}
-      </ul>${pagoHtml}</div>`;
+      </ul>${!mesa.cuentaPedida?`<div class="repeat-order-row"><button class="btn ghost sm" onclick="repetirUltimaRonda()">${ic('refresh')} Agregar última ronda al carrito</button><span aria-live="polite">${escapeHtml(state.clienteRepetirAviso)}</span></div>`:''}${pagoHtml}</div>`;
   }
   const openAlerts = alertasAbiertas(mesa);
   const resolvedAlerts = mesa.alertas.filter(a=>a.estado==='resuelto').slice(-2).reverse();
@@ -697,7 +707,7 @@ function viewCliente(){
     ${state.clienteCart.length && !mesa.cuentaPedida ? `<div class="cart-bar">
       <div><div class="cart-total">${money(cartTotal)}${cartPendientes?' + '+cartPendientes+' a confirmar':''}</div>
       <div class="cart-info">${state.clienteCart.length} ítem(s) en el carrito</div></div>
-      <button class="btn primary" onclick="enviarPedido()">${mesa.pedido?'Enviar otra ronda a cocina':'Enviar pedido a cocina'} →</button></div>` : ''}
+      <button class="btn primary" onclick="abrirCarrito()">Revisar y ${mesa.pedido?'enviar otra ronda':'enviar pedido'} →</button></div>` : ''}
   `;
 }
 
@@ -770,7 +780,40 @@ function agregarAlCarrito(id){
   }
   const nota = (document.getElementById('nota_'+id)||{}).value || '';
   state.clienteCart.push({productoId:id, variante, opcion, observacion:nota, nombre, precio, notas:nota});
+  state.clienteRepetirAviso='';
   state.clienteExpand = null;
+  render();
+}
+function abrirCarrito(){ if(state.clienteCart.length){ state.modal={type:'cart'}; render(); } }
+function quitarDelCarrito(index){
+  if(index<0 || index>=state.clienteCart.length) return;
+  state.clienteCart.splice(index,1);
+  if(!state.clienteCart.length) state.modal=null;
+  render();
+}
+function vaciarCarrito(){ state.clienteCart=[]; state.modal=null; state.clienteRepetirAviso=''; render(); }
+function repetirUltimaRonda(){
+  const mesa=findMesa(state.clienteMesa);
+  if(!mesa || !mesa.pedido || mesa.cuentaPedida) return;
+  const ultima=Math.max(...mesa.pedido.items.map(item=>item.ronda||1));
+  const items=mesa.pedido.items.filter(item=>(item.ronda||1)===ultima);
+  let agregados=0, omitidos=0;
+  items.forEach(item=>{
+    const p=findProducto(item.productoId);
+    if(!p){ omitidos++; return; }
+    const variante=p.variantes && p.variantes.find(candidate=>candidate.nombre===item.variante);
+    const opcion=p.opciones && p.opciones.find(candidate=>candidate===item.opcion);
+    if((p.variantes && !variante) || (p.opciones && !opcion)){ omitidos++; return; }
+    const precio=variante?variante.precio:precioBase(p);
+    if(!Number.isFinite(precio)){ omitidos++; return; }
+    const nombre=p.nombre+(variante?' — '+variante.nombre:'')+(opcion?' ('+opcion+')':'');
+    state.clienteCart.push({
+      productoId:p.id, variante:variante?variante.nombre:null, opcion:opcion||null,
+      observacion:item.notas||'', nombre, precio, notas:item.notas||'',
+    });
+    agregados++;
+  });
+  state.clienteRepetirAviso=agregados ? `${agregados} ítem(s) agregados${omitidos?' · '+omitidos+' requieren elegir de nuevo':''}` : 'Esta ronda requiere elegir sus opciones de nuevo.';
   render();
 }
 function enviarPedido(){
@@ -783,6 +826,8 @@ function enviarPedido(){
   });
   send({type:'pedido_nuevo', mesa:state.clienteMesa, items});
   state.clienteCart = [];
+  state.clienteRepetirAviso='';
+  state.modal=null;
   render();
 }
 function llamarMozo(){ state.modal = {type:'confirm-mozo'}; render(); }
