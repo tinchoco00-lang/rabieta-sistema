@@ -219,7 +219,7 @@ function normalizeAnalytics(value) {
       if (!review || typeof review !== 'object' || !Number.isInteger(review.puntuacion) || review.puntuacion < 1 || review.puntuacion > 5) return [];
       if (!validMesaNumber(review.mesa) || !Number.isFinite(review.creadoTs)) return [];
       const comentario = typeof review.comentario === 'string' ? review.comentario.trim().slice(0, 500) : '';
-      return [{ id: Number.isInteger(review.id) && review.id > 0 ? review.id : uid(), mesa: review.mesa, puntuacion: review.puntuacion, comentario, creadoTs: review.creadoTs }];
+      return [{ id: Number.isInteger(review.id) && review.id > 0 ? review.id : null, mesa: review.mesa, puntuacion: review.puntuacion, comentario, creadoTs: review.creadoTs }];
     });
   }
   return analytics;
@@ -244,6 +244,9 @@ function normalizeRecoveredState(recoveredState) {
     });
   });
   uidCounter = Math.max(uidCounter, highestId + 1);
+  recoveredState.analytics.resenas.forEach(review => {
+    if (!Number.isInteger(review.id) || review.id <= 0) review.id = uid();
+  });
 
   recoveredState.mesas.forEach(mesa => {
     if (!mesa.pago || mesa.pago.modo !== 'demo' || mesa.pago.estado !== 'confirmado') mesa.pago = null;
