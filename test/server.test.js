@@ -1011,6 +1011,12 @@ test('cliente ve estado y tiempo realtime de cada ítem del pedido', () => {
   assert.match(source, /class="customer-order-meta"[\s\S]*itemElapsedLabel\(it\)/);
 });
 
+test('cliente conserva confirmación visible cuando salón resuelve una solicitud', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  assert.match(source, /mesa\.alertas\.filter\(a=>a\.estado===['"]resuelto['"]\)/);
+  assert.match(source, /class="resolved-request"[\s\S]*Resuelto/);
+});
+
 test('el traspaso de ítems listos se confirma desde salón y no desde Cocina o Barra', () => {
   const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
   assert.match(source, /function itemsListosParaEntregar\(mozo\)/);

@@ -607,11 +607,13 @@ function viewCliente(){
       </ul>${pagoHtml}</div>`;
   }
   const openAlerts = alertasAbiertas(mesa);
-  const alertHtml = openAlerts.length ? `<div class="card" style="border-color:var(--warning);">
-    <div style="font-weight:800;font-size:13px;margin-bottom:6px;">Tus solicitudes activas</div>
+  const resolvedAlerts = mesa.alertas.filter(a=>a.estado==='resuelto').slice(-2).reverse();
+  const alertHtml = openAlerts.length || resolvedAlerts.length ? `<div class="card" style="border-color:${openAlerts.length?'var(--warning)':'var(--line-strong)'};">
+    <div style="font-weight:800;font-size:13px;margin-bottom:6px;">Tus solicitudes</div>
     ${openAlerts.map(a=>`<div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;margin-bottom:6px;">
       <span>${escapeHtml(a.label)}${a.mensaje?': "'+escapeHtml(a.mensaje)+'"':''}</span>
       <span class="pill ${a.estado==='atencion'?'importante':a.prioridad}">${a.estado==='atencion'?'En atención':'Enviado'}</span></div>`).join('')}
+    ${resolvedAlerts.map(a=>`<div class="resolved-request"><span>${escapeHtml(a.label)}</span><span class="pill libre">${ic('checkring')} Resuelto</span></div>`).join('')}
     </div>` : '';
 
   const cartTotal = state.clienteCart.reduce((s,it)=> s + (it.precio||0), 0);

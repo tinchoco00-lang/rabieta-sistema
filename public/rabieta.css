@@ -358,6 +358,7 @@
   .customer-order-items li{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-bottom:9px;border-bottom:1px solid var(--line);}
   .customer-order-items li:last-child{padding-bottom:0;border-bottom:0;}
   .customer-order-meta{display:flex;align-items:center;justify-content:flex-end;gap:7px;flex-wrap:wrap;text-align:right;font-size:10.5px;color:var(--ink-muted);}
+  .resolved-request{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:13px;color:var(--ink-2);padding:7px 0;border-top:1px solid var(--line);}
 
   .gate-screen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;
     background:linear-gradient(180deg, rgba(12,9,6,0.55), rgba(12,9,6,0.97) 70%), url('/img/hero-sign-wide.jpg');
