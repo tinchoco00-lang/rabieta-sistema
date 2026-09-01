@@ -74,10 +74,10 @@ let STAFF_TOKEN = null;
 let MESA_TOKEN = null;
 
 let state = {
-  clockMs:0, mesas:[], analytics:{pagosConfirmados:0,ventasDemo:0,tiempoPagoTotalSec:0,itemsVendidos:0,productos:{}},
+  clockMs:0, mesas:[], analytics:{pagosConfirmados:0,ventasDemo:0,tiempoPagoTotalSec:0,itemsVendidos:0,productos:{},resenas:[]},
   // ui local, no viene del servidor:
   role:null, clienteMesa:null, clienteCat:null, clienteFiltroSinTacc:false,
-  clienteCart:[], clienteExpand:null, clienteHelpOpen:false, clienteSplashDismissed:false,
+  clienteCart:[], clienteExpand:null, clienteHelpOpen:false, clienteSplashDismissed:false, clienteResenaError:'', clienteResenaEnviando:false,
   mozoActivo:MOZOS[0], modal:null,
 };
 
@@ -443,7 +443,7 @@ function viewCliente(){
   if(mesa.pedido){
     const idx = PEDIDO_ESTADOS.indexOf(mesa.pedido.estado);
     const pagoHtml = mesa.pago && mesa.pago.estado==='confirmado'
-      ? `<div class="mock-banner" style="margin:12px 0 0;">${ic('checkring')} Pago de demostración confirmado por ${money(mesa.pago.total)}. No se movió dinero real.</div>`
+      ? `<div class="mock-banner" style="margin:12px 0 0;">${ic('checkring')} Pago de demostración confirmado por ${money(mesa.pago.total)}. No se movió dinero real.</div>${resenaHtml(mesa)}`
       : mesa.cuentaPedida
         ? `<div class="mock-banner" style="margin:12px 0 0;">${ic('receipt')} Cuenta solicitada por ${money(pedidoTotal(mesa))}. El personal está preparando el cobro.</div>`
         : '';
@@ -595,6 +595,32 @@ function confirmarLlamarMozo(){
   setTimeout(()=>{ if(state.modal && state.modal.type==='mozo-enviado'){ state.modal=null; render(); } }, 4500);
 }
 function pedirCuenta(){ state.clienteCart=[]; send({type:'pedir_cuenta', mesa:state.clienteMesa}); render(); }
+function resenaHtml(mesa){
+  if(mesa.resenaEnviada) return `<div class="review-card review-thanks">${ic('checkring')} Gracias. Tu opinión ya llegó al equipo de Rabieta.</div>`;
+  return `<div class="review-card">
+    <div class="review-title">¿Cómo estuvo tu experiencia?</div>
+    <div class="review-sub">Tu respuesta queda en este panel demo y ayuda a detectar qué mejorar.</div>
+    <div class="rating-pick" role="radiogroup" aria-label="Puntuación del 1 al 5">
+      ${[1,2,3,4,5].map(n=>`<label><input type="radio" name="puntuacion-resena" value="${n}"><span>${n}</span></label>`).join('')}
+    </div>
+    <textarea class="nota review-comment" id="comentarioResena" maxlength="500" placeholder="Contanos qué te gustó o qué mejorarías (opcional)"></textarea>
+    ${state.clienteResenaError?`<div class="review-error">${escapeHtml(state.clienteResenaError)}</div>`:''}
+    <button class="btn primary sm" ${state.clienteResenaEnviando?'disabled':''} onclick="enviarResena()">${state.clienteResenaEnviando?'Enviando…':'Enviar opinión'}</button>
+  </div>`;
+}
+async function enviarResena(){
+  const selected = document.querySelector('input[name="puntuacion-resena"]:checked');
+  if(!selected){ state.clienteResenaError='Elegí una puntuación del 1 al 5.'; render(); return; }
+  const comentario = (document.getElementById('comentarioResena')||{}).value || '';
+  state.clienteResenaError=''; state.clienteResenaEnviando=true; render();
+  const response = await send({type:'resena_enviar', mesa:state.clienteMesa, puntuacion:Number(selected.value), comentario});
+  state.clienteResenaEnviando=false;
+  if(!response || !response.ok){
+    let payload={}; try{ payload=await response.json(); }catch(e){}
+    state.clienteResenaError=payload.error || 'No pudimos enviar tu opinión. Probá de nuevo.';
+    render();
+  }
+}
 function enviarAyuda(id){ send({type:'ayuda', mesa:state.clienteMesa, categoria:id}); state.clienteHelpOpen=false; render(); }
 function enviarAyudaLibre(){
   const val = (document.getElementById('freeHelp')||{}).value || '';
@@ -615,30 +641,6 @@ function helpPanelHtml(){
 }
 
 /* ---------------- COCINA ---------------- */
-function viewCocina(){
-  const activos = state.mesas.filter(m=>m.pedido && m.pedido.items.some(it=>it.estado!=='entregado'));
-  return `<h1 class="view-title">COCINA</h1><p class="view-sub">KDS — comandas en vivo, sin papel.</p>
-    <div class="kds-grid">${activos.length ? activos.map(m=>ticketHtml(m)).join('') : '<div class="empty">No hay comandas activas.</div>'}</div>`;
-}
-function ticketHtml(m){
-  const itemsActivos = m.pedido.items.filter(it=>it.estado!=='entregado');
-  const oldestTs = itemsActivos.reduce((oldest,it)=>Math.min(oldest,it.enviadoTs), state.clockMs);
-  const edad = timeAgoSec(oldestTs);
-  const late = itemsActivos.some(it=>it.estado==='preparando') && edad>240;
-  return `<div class="ticket ${late?'late':''}">
-    <div class="head"><span class="mesa">MESA ${m.numero}</span>
-      <span class="pill ${itemEstadoClass(m.pedido.estado)}">${estadoPedidoLabel(m)}</span></div>
-    <div class="timer">hace ${fmtSec(edad)}</div>
-    <ul>${itemsActivos.map(it=>`<li style="margin-bottom:10px;">
-      <div>${escapeHtml(it.nombre)}${it.notas?` <span class="item-mod">— "${escapeHtml(it.notas)}"</span>`:''}</div>
-      <div style="display:flex;align-items:center;gap:6px;margin-top:5px;">
-        <span class="pill ${itemEstadoClass(it.estado)}">${PEDIDO_LABELS[it.estado]}</span>
-        <span class="item-mod">${itemElapsedLabel(it)}</span>
-        ${it.estado==='enviado'?`<button class="btn primary sm" onclick="avanzarItem(${m.numero},${it.id})">Empezar a preparar</button>`:''}
-        ${it.estado==='preparando'?`<button class="btn good sm" onclick="avanzarItem(${m.numero},${it.id})">Marcar listo</button>`:''}
-        ${it.estado==='listo'?`<button class="btn dark sm" onclick="avanzarItem(${m.numero},${it.id})">Entregado en mesa</button>`:''}
-      </div></li>`).join('')}</ul></div>`;
-}
 function itemElapsedLabel(it){
   const stageTs = it.estadoTs && Number.isFinite(it.estadoTs[it.estado]) ? it.estadoTs[it.estado] : it.enviadoTs;
   return `hace ${fmtSec(timeAgoSec(stageTs))} en esta etapa`;
@@ -756,11 +758,15 @@ function viewDueno(){
   const mesasOcupadas = state.mesas.filter(m=>m.ocupada).length;
   const alertasN = todasAlertasAbiertas().length;
   const urgentes = todasAlertasAbiertas().filter(x=>x.alerta.prioridad==='urgente').length;
-  const analytics = state.analytics || {pagosConfirmados:0,ventasDemo:0,tiempoPagoTotalSec:0,itemsVendidos:0,productos:{}};
+  const analytics = state.analytics || {pagosConfirmados:0,ventasDemo:0,tiempoPagoTotalSec:0,itemsVendidos:0,productos:{},resenas:[]};
   const pedidosActivos = state.mesas.filter(m=>m.pedido).length;
   const ticketPromedio = analytics.pagosConfirmados ? Math.round(analytics.ventasDemo/analytics.pagosConfirmados) : 0;
   const tiempoPagoPromedio = analytics.pagosConfirmados ? Math.round(analytics.tiempoPagoTotalSec/analytics.pagosConfirmados) : 0;
   const topProductos = Object.values(analytics.productos||{}).sort((a,b)=>b.cantidad-a.cantidad).slice(0,5);
+  const resenas = Array.isArray(analytics.resenas) ? analytics.resenas : [];
+  const ratingPromedio = resenas.length ? (resenas.reduce((sum,r)=>sum+r.puntuacion,0)/resenas.length).toFixed(1) : '—';
+  const resenasCriticas = resenas.filter(r=>r.puntuacion<=3).length;
+  const resenasRecientes = [...resenas].reverse().slice(0,6);
   const productosPendientes = todosLosProductos().filter(p=>precioBase(p)===null).length;
   return `<h1 class="view-title">DUEÑO</h1>
     <p class="view-sub">Panel de negocio de esta sesión. ${productosPendientes} productos todavía sin precio confirmado.</p>
@@ -775,11 +781,15 @@ function viewDueno(){
       ${statTile('Mesas ocupadas', mesasOcupadas+' / '+MESAS_TOTAL, null, null)}
       ${statTile('Pedidos activos', String(pedidosActivos), 'ahora', null)}
       ${statTile('Alertas activas', String(alertasN), urgentes>0?urgentes+' urgente(s)':'todo tranquilo', urgentes>0?'downAlert':null)}
-      ${statTile('Precios a confirmar', String(productosPendientes), 'productos', null)}
+      ${statTile('Experiencia', ratingPromedio, resenas.length?resenas.length+' opinión(es) · '+resenasCriticas+' a recuperar':'sin opiniones todavía', resenasCriticas?'downAlert':null)}
     </div>
     <div class="section-h">Más vendidos de la sesión</div>
     <div class="grid cols-3">
       ${topProductos.length ? topProductos.map((p,index)=>`<div class="insight"><span>${index+1}. ${escapeHtml(p.nombre)}</span><b>${p.cantidad} · ${money(p.total)}</b></div>`).join('') : '<div class="empty">Los productos aparecerán cuando se confirme el primer pago demo.</div>'}
+    </div>
+    <div class="section-h">Opiniones post-pago</div>
+    <div class="grid cols-3">
+      ${resenasRecientes.length ? resenasRecientes.map(r=>`<div class="insight review-insight"><span>Mesa ${r.mesa} · ${r.puntuacion}/5 · hace ${fmtSec(timeAgoSec(r.creadoTs))}</span><b>${r.comentario?escapeHtml(r.comentario):'Sin comentario'}</b></div>`).join('') : '<div class="empty">Las opiniones aparecerán después de un pago demo confirmado.</div>'}
     </div>
     <div class="section-h">Platos con 3D real activado</div>
     <div class="grid cols-3">

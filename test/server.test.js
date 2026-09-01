@@ -308,6 +308,39 @@ test('pago demo rechaza cuentas con precios pendientes', async () => {
   await resetState();
 });
 
+test('la mesa puede dejar una única reseña post-pago y solo staff ve el historial', async () => {
+  await resetState();
+  assert.equal((await action({ type: 'resena_enviar', mesa: 1, puntuacion: 5 })).status, 409);
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'hummus-rabieta' }] })).status, 200);
+  assert.equal((await action({ type: 'pedir_cuenta', mesa: 1 })).status, 200);
+  assert.equal((await action({ type: 'pago_demo_confirmar', mesa: 1 }, staffToken)).status, 200);
+  assert.equal((await action({ type: 'resena_enviar', mesa: 1, puntuacion: 0 })).status, 400);
+  assert.equal((await action({
+    type: 'resena_enviar', mesa: 1, puntuacion: 4, comentario: 'Muy buena atención <script>alert(1)</script>',
+  })).status, 200);
+  assert.equal((await action({ type: 'resena_enviar', mesa: 1, puntuacion: 5 })).status, 409);
+
+  const publicState = await getState();
+  assert.equal(publicState.analytics, undefined);
+  assert.equal(publicState.mesas[0].resenaEnviada, true);
+  let analytics = (await getStaffState()).analytics;
+  assert.equal(analytics.resenas.length, 1);
+  assert.deepEqual(analytics.resenas[0], {
+    id: analytics.resenas[0].id,
+    mesa: 1,
+    puntuacion: 4,
+    comentario: 'Muy buena atención <script>alert(1)</script>',
+    creadoTs: analytics.resenas[0].creadoTs,
+  });
+  assert.ok(Number.isInteger(analytics.resenas[0].id));
+  assert.ok(Number.isFinite(analytics.resenas[0].creadoTs));
+
+  assert.equal((await action({ type: 'mesa_liberar', mesa: 1 }, staffToken)).status, 200);
+  analytics = (await getStaffState()).analytics;
+  assert.equal(analytics.resenas.length, 1);
+  await resetState();
+});
+
 test('logout revoca inmediatamente el token actual', async () => {
   const logout = await fetch(`${baseUrl}/api/staff-logout`, {
     method: 'POST', headers: { authorization: `Bearer ${staffToken}` },

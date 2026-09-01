@@ -42,9 +42,9 @@ const STAFF_TOKEN_TTL_MS = Number.isFinite(configuredTokenTtl) && configuredToke
 const STAFF_TOKENS = new Map();
 const MESA_TOKEN_SECRET = process.env.MESA_TOKEN_SECRET || null;
 const MAX_BODY_BYTES = 32 * 1024;
-const PUBLIC_ACTIONS = new Set(['pedido_nuevo', 'llamar_mozo', 'pedir_cuenta', 'ayuda']);
+const PUBLIC_ACTIONS = new Set(['pedido_nuevo', 'llamar_mozo', 'pedir_cuenta', 'ayuda', 'resena_enviar']);
 const STAFF_ACTIONS = new Set(['pedido_estado', 'alerta_atender', 'alerta_resolver', 'pago_demo_confirmar', 'mesa_liberar', 'reset_demo']);
-const MESA_ACTIONS = new Set(['pedido_nuevo', 'pedido_estado', 'llamar_mozo', 'pedir_cuenta', 'ayuda', 'pago_demo_confirmar', 'mesa_liberar']);
+const MESA_ACTIONS = new Set(['pedido_nuevo', 'pedido_estado', 'llamar_mozo', 'pedir_cuenta', 'ayuda', 'resena_enviar', 'pago_demo_confirmar', 'mesa_liberar']);
 const PEDIDO_ESTADOS = ['enviado', 'preparando', 'listo', 'entregado'];
 const HELP_CATEGORIES = {
   no_llego: { label: 'No llegó mi pedido', prioridad: 'urgente' },
@@ -78,13 +78,13 @@ let uidCounter = 1;
 function uid() { return uidCounter++; }
 
 function seedAnalytics() {
-  return { pagosConfirmados: 0, ventasDemo: 0, tiempoPagoTotalSec: 0, itemsVendidos: 0, productos: {} };
+  return { pagosConfirmados: 0, ventasDemo: 0, tiempoPagoTotalSec: 0, itemsVendidos: 0, productos: {}, resenas: [] };
 }
 
 function seedState() {
   const mesas = [];
   for (let i = 1; i <= MESAS_TOTAL; i++) {
-    mesas.push({ numero: i, mozo: MOZOS[i % MOZOS.length], ocupada: false, pedido: null, cuentaPedida: false, cuentaPedidaTs: null, pago: null, alertas: [] });
+    mesas.push({ numero: i, mozo: MOZOS[i % MOZOS.length], ocupada: false, pedido: null, cuentaPedida: false, cuentaPedidaTs: null, pago: null, resenaEnviada: false, alertas: [] });
   }
   return { clockMs: 0, mesas, analytics: seedAnalytics() };
 }
@@ -206,13 +206,22 @@ function normalizeAnalytics(value) {
   for (const field of ['pagosConfirmados', 'ventasDemo', 'tiempoPagoTotalSec', 'itemsVendidos']) {
     if (Number.isFinite(value[field]) && value[field] >= 0) analytics[field] = value[field];
   }
-  if (!value.productos || typeof value.productos !== 'object' || Array.isArray(value.productos)) return analytics;
-  Object.entries(value.productos).forEach(([productoId, metrics]) => {
-    const producto = PRODUCTOS.get(productoId);
-    if (!producto || !metrics || typeof metrics !== 'object') return;
-    if (!Number.isFinite(metrics.cantidad) || metrics.cantidad < 0 || !Number.isFinite(metrics.total) || metrics.total < 0) return;
-    analytics.productos[productoId] = { nombre: producto.nombre, cantidad: metrics.cantidad, total: metrics.total };
-  });
+  if (value.productos && typeof value.productos === 'object' && !Array.isArray(value.productos)) {
+    Object.entries(value.productos).forEach(([productoId, metrics]) => {
+      const producto = PRODUCTOS.get(productoId);
+      if (!producto || !metrics || typeof metrics !== 'object') return;
+      if (!Number.isFinite(metrics.cantidad) || metrics.cantidad < 0 || !Number.isFinite(metrics.total) || metrics.total < 0) return;
+      analytics.productos[productoId] = { nombre: producto.nombre, cantidad: metrics.cantidad, total: metrics.total };
+    });
+  }
+  if (Array.isArray(value.resenas)) {
+    analytics.resenas = value.resenas.slice(-100).flatMap(review => {
+      if (!review || typeof review !== 'object' || !Number.isInteger(review.puntuacion) || review.puntuacion < 1 || review.puntuacion > 5) return [];
+      if (!validMesaNumber(review.mesa) || !Number.isFinite(review.creadoTs)) return [];
+      const comentario = typeof review.comentario === 'string' ? review.comentario.trim().slice(0, 500) : '';
+      return [{ id: Number.isInteger(review.id) && review.id > 0 ? review.id : uid(), mesa: review.mesa, puntuacion: review.puntuacion, comentario, creadoTs: review.creadoTs }];
+    });
+  }
   return analytics;
 }
 
@@ -221,7 +230,11 @@ function normalizeRecoveredState(recoveredState) {
   recoveredState.analytics = normalizeAnalytics(recoveredState.analytics);
   let highestId = 0;
   const normalizedItemIds = new Set();
+  recoveredState.analytics.resenas.forEach(review => {
+    if (Number.isInteger(review.id) && review.id > highestId) highestId = review.id;
+  });
   recoveredState.mesas.forEach(mesa => {
+    mesa.resenaEnviada = mesa.resenaEnviada === true;
     mesa.alertas.forEach(alerta => {
       if (Number.isInteger(alerta.id) && alerta.id > highestId) highestId = alerta.id;
     });
@@ -382,6 +395,21 @@ function handleAction(msg) {
       alerta.estado = 'resuelto';
       break;
     }
+    case 'resena_enviar': {
+      if (!m.pago || m.pago.modo !== 'demo' || m.pago.estado !== 'confirmado') {
+        return actionError(409, 'La reseña se habilita después de confirmar el pago');
+      }
+      if (m.resenaEnviada) return actionError(409, 'La mesa ya envió una reseña');
+      if (!Number.isInteger(msg.puntuacion) || msg.puntuacion < 1 || msg.puntuacion > 5) {
+        return actionError(400, 'Puntuación inválida');
+      }
+      const comentario = normalizeOptionalText(msg.comentario, 'Comentario');
+      if (!comentario.ok) return comentario;
+      state.analytics.resenas.push({ id: uid(), mesa: m.numero, puntuacion: msg.puntuacion, comentario: comentario.value, creadoTs: state.clockMs });
+      if (state.analytics.resenas.length > 100) state.analytics.resenas.splice(0, state.analytics.resenas.length - 100);
+      m.resenaEnviada = true;
+      break;
+    }
     case 'pago_demo_confirmar': {
       if (!m.pedido || !m.cuentaPedida) return actionError(409, 'La cuenta no fue solicitada');
       if (m.pago) return actionError(409, 'El pago demo ya fue confirmado');
@@ -400,7 +428,7 @@ function handleAction(msg) {
       if (!m.pago || m.pago.modo !== 'demo' || m.pago.estado !== 'confirmado') {
         return actionError(409, 'La mesa solo puede liberarse después de confirmar el pago');
       }
-      m.ocupada = false; m.pedido = null; m.cuentaPedida = false; m.cuentaPedidaTs = null; m.pago = null; m.alertas = [];
+      m.ocupada = false; m.pedido = null; m.cuentaPedida = false; m.cuentaPedidaTs = null; m.pago = null; m.resenaEnviada = false; m.alertas = [];
       break;
     }
     case 'reset_demo': {
