@@ -368,6 +368,31 @@ test('cocina avanza cada item por separado y el pedido termina al entregar todos
   await resetState();
 });
 
+test('una segunda ronda conserva consumos ya entregados y acumula la cuenta', async () => {
+  await resetState();
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'hummus-rabieta' }] })).status, 200);
+  let pedido = (await getState()).mesas[0].pedido;
+  const firstItem = pedido.items[0];
+  for (const estado of ['preparando', 'listo', 'entregado']) {
+    assert.equal((await action({ type: 'pedido_estado', mesa: 1, itemId: firstItem.id, estado }, staffToken)).status, 200);
+  }
+  assert.equal((await getState()).mesas[0].pedido.estado, 'entregado');
+
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'agua' }] })).status, 200);
+  pedido = (await getState()).mesas[0].pedido;
+  assert.equal(pedido.items.length, 2);
+  assert.deepEqual(pedido.items.map(item => [item.ronda, item.estado]), [[1, 'entregado'], [2, 'enviado']]);
+  assert.equal(pedido.items[0].id, firstItem.id);
+  const expectedTotal = pedido.items.reduce((total, item) => total + item.precio, 0);
+
+  assert.equal((await action({ type: 'pedir_cuenta', mesa: 1 })).status, 200);
+  assert.equal((await action({ type: 'pago_demo_confirmar', mesa: 1 }, staffToken)).status, 200);
+  const mesa = (await getState()).mesas[0];
+  assert.equal(mesa.pago.total, expectedTotal);
+  assert.match(fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8'), /Enviar otra ronda a cocina/);
+  await resetState();
+});
+
 test('cada avance de cocina conserva una marca de tiempo auditable por ítem', async () => {
   await resetState();
   assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'hummus-rabieta' }] })).status, 200);

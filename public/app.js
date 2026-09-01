@@ -622,6 +622,7 @@ function viewCliente(){
   let pedidoStatusHtml = '';
   if(mesa.pedido){
     const idx = PEDIDO_ESTADOS.indexOf(mesa.pedido.estado);
+    const variasRondas = mesa.pedido.items.some(it=>(it.ronda||1)>1);
     const pagoHtml = mesa.pago && mesa.pago.estado==='confirmado'
       ? `<div class="mock-banner" style="margin:12px 0 0;">${ic('checkring')} Pago de demostración confirmado por ${money(mesa.pago.total)}. No se movió dinero real.</div>${resenaHtml(mesa)}`
       : mesa.cuentaPedida
@@ -634,7 +635,7 @@ function viewCliente(){
           <div class="circle">${i<idx?'✓':i+1}</div><div class="lbl">${PEDIDO_LABELS[s]}</div></div>`).join('')}
       </div>
       <ul class="customer-order-items">
-        ${mesa.pedido.items.map(it=>`<li><div>${escapeHtml(it.nombre)}${it.notas?` — "${escapeHtml(it.notas)}"`:''}</div>
+        ${mesa.pedido.items.map(it=>`<li><div>${variasRondas?`<span class="item-round">Ronda ${it.ronda||1}</span>`:''}${escapeHtml(it.nombre)}${it.notas?` — "${escapeHtml(it.notas)}"`:''}</div>
           <div class="customer-order-meta"><span class="pill ${itemEstadoClass(it.estado)}">${PEDIDO_LABELS[it.estado]}</span><span>${itemElapsedLabel(it)}</span></div></li>`).join('')}
       </ul>${pagoHtml}</div>`;
   }
@@ -683,7 +684,7 @@ function viewCliente(){
     ${state.clienteCart.length && !mesa.cuentaPedida ? `<div class="cart-bar">
       <div><div class="cart-total">${money(cartTotal)}${cartPendientes?' + '+cartPendientes+' a confirmar':''}</div>
       <div class="cart-info">${state.clienteCart.length} ítem(s) en el carrito</div></div>
-      <button class="btn primary" onclick="enviarPedido()">Enviar pedido a cocina →</button></div>` : ''}
+      <button class="btn primary" onclick="enviarPedido()">${mesa.pedido?'Enviar otra ronda a cocina':'Enviar pedido a cocina'} →</button></div>` : ''}
   `;
 }
 

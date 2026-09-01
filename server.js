@@ -382,6 +382,7 @@ function normalizeRecoveredState(recoveredState) {
       if (!Number.isInteger(item.id) || item.id <= 0 || normalizedItemIds.has(item.id)) item.id = uid();
       normalizedItemIds.add(item.id);
       if (!PEDIDO_ESTADOS.includes(item.estado)) item.estado = legacyState;
+      if (!Number.isInteger(item.ronda) || item.ronda < 1) item.ronda = 1;
       const producto = PRODUCTOS.get(item.productoId);
       item.destino = producto && DESTINOS_PRODUCCION.has(producto.destino) ? producto.destino : DESTINO_DEFAULT;
       if (!Number.isFinite(item.enviadoTs)) {
@@ -510,14 +511,17 @@ function handleAction(msg) {
     case 'pedido_nuevo': {
       if (!Array.isArray(msg.items) || !msg.items.length) return actionError(400, 'El pedido no contiene ítems');
       if (m.cuentaPedida) return actionError(409, 'La cuenta ya fue solicitada');
+      const ronda = m.pedido
+        ? m.pedido.items.reduce((max, item) => Math.max(max, Number.isInteger(item.ronda) ? item.ronda : 1), 1) + 1
+        : 1;
       const items = [];
       for (const input of msg.items) {
         const built = buildPedidoItem(input);
         if (!built.ok) return built;
-        items.push({ ...built.item, id: uid(), estado: 'enviado', enviadoTs: state.clockMs, estadoTs: { enviado: state.clockMs } });
+        items.push({ ...built.item, id: uid(), ronda, estado: 'enviado', enviadoTs: state.clockMs, estadoTs: { enviado: state.clockMs } });
       }
       m.ocupada = true;
-      if (m.pedido && m.pedido.estado !== 'entregado') {
+      if (m.pedido) {
         m.pedido.items.push(...items);
         syncPedidoEstado(m.pedido);
       } else {
