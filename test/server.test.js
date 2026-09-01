@@ -957,6 +957,7 @@ test('el panel de staff genera QR de mesa localmente y conserva un enlace utiliz
   const qrLicense = fs.readFileSync(path.join(root, 'public', 'vendor', 'qrcode.LICENSE.txt'), 'utf8');
   assert.match(source, /fetch\('\/api\/mesa-links'/);
   assert.match(source, /code=qrcode\(0,'M'\)/);
+  assert.match(source, /id:`mesa-qr-description-\$\{mesa\.numero\}`/);
   assert.match(source, /Copiar enlace/);
   assert.match(source, /target="_blank" rel="noopener"/);
   assert.match(staffHtml, /\/vendor\/qrcode\.js/);

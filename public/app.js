@@ -338,7 +338,11 @@ function montarMesaQrs(){
     const code=qrcode(0,'M');
     code.addData(mesaAccessUrl(mesa.path));
     code.make();
-    target.innerHTML=code.createSvgTag(3,4,`QR de Mesa ${mesa.numero}`);
+    target.innerHTML=code.createSvgTag({
+      cellSize:3,
+      margin:4,
+      alt:{text:`QR de Mesa ${mesa.numero}`,id:`mesa-qr-description-${mesa.numero}`},
+    });
     target.dataset.rendered='true';
   });
 }
