@@ -233,6 +233,18 @@ test('cada avance de cocina conserva una marca de tiempo auditable por ítem', a
   await resetState();
 });
 
+test('los ítems se enrutan a Cocina o Barra desde una configuración demo del servidor', async () => {
+  await resetState();
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [
+    { productoId: 'hummus-rabieta' },
+    { productoId: 'american-ipa-latitudes' },
+  ] })).status, 200);
+  const items = (await getState()).mesas[0].pedido.items;
+  assert.equal(items[0].destino, 'cocina');
+  assert.equal(items[1].destino, 'barra');
+  await resetState();
+});
+
 test('cuenta y pago demo conservan el pedido hasta que staff libera la mesa', async () => {
   await resetState();
   assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [

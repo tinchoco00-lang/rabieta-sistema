@@ -35,6 +35,7 @@ const ICONS = {
 function ic(name, cls){ return `<svg class="i-ic${cls?' '+cls:''}" viewBox="0 0 24 24">${ICONS[name]||''}</svg>`; }
 
 const PEDIDO_ESTADOS = ['enviado','preparando','listo','entregado'];
+const DESTINO_LABELS = {cocina:'Cocina', barra:'Barra'};
 const PEDIDO_LABELS = {enviado:'Recibido', preparando:'En preparación', listo:'Listo', entregado:'Entregado'};
 const MOZOS = ['Martín','Sofía','Lucas'];
 const HELP_CATEGORIAS = [
@@ -646,6 +647,40 @@ function avanzarItem(n,itemId){
   const m=findMesa(n); const item=m.pedido.items.find(it=>it.id===itemId);
   const i=item ? PEDIDO_ESTADOS.indexOf(item.estado) : -1;
   if(i>=0 && i<PEDIDO_ESTADOS.length-1) send({type:'pedido_estado', mesa:n, itemId, estado:PEDIDO_ESTADOS[i+1]});
+}
+
+// Reemplaza el KDS único por dos colas independientes. La clasificación vive
+// en el servidor; este panel solo la muestra y conserva las acciones por ítem.
+function itemDestino(it){ return it.destino==='barra'?'barra':'cocina'; }
+function viewCocina(){
+  const activos = state.mesas.filter(m=>m.pedido && m.pedido.items.some(it=>it.estado!=='entregado'));
+  const destinos = ['cocina','barra'];
+  return `<h1 class="view-title">COCINA + BARRA</h1><p class="view-sub">KDS — colas en vivo separadas por destino. Configuración demo: validar sectores con el local.</p>
+    <div class="kds-destinos">${destinos.map(destino=>{
+      const tickets = activos.filter(m=>m.pedido.items.some(it=>it.estado!=='entregado' && itemDestino(it)===destino));
+      const itemCount = tickets.reduce((count,m)=>count+m.pedido.items.filter(it=>it.estado!=='entregado' && itemDestino(it)===destino).length,0);
+      return `<section class="kds-destino"><div class="section-h">${ic(destino==='barra'?'receipt':'flame')} ${DESTINO_LABELS[destino]} <span class="kds-count">${itemCount}</span></div>
+        <div class="kds-grid">${tickets.length?tickets.map(m=>ticketHtml(m,destino)).join(''):`<div class="empty">Sin ítems para ${DESTINO_LABELS[destino].toLowerCase()}.</div>`}</div></section>`;
+    }).join('')}</div>`;
+}
+function ticketHtml(m,destino){
+  const itemsActivos = m.pedido.items.filter(it=>it.estado!=='entregado' && (!destino || itemDestino(it)===destino));
+  const oldestTs = itemsActivos.reduce((oldest,it)=>Math.min(oldest,it.enviadoTs), state.clockMs);
+  const edad = timeAgoSec(oldestTs);
+  const late = itemsActivos.some(it=>it.estado==='preparando') && edad>240;
+  return `<div class="ticket ${late?'late':''}">
+    <div class="head"><span class="mesa">MESA ${m.numero}</span>
+      <span class="pill ${itemEstadoClass(m.pedido.estado)}">${estadoPedidoLabel(m)}</span></div>
+    <div class="timer">hace ${fmtSec(edad)}</div>
+    <ul>${itemsActivos.map(it=>`<li style="margin-bottom:10px;">
+      <div>${escapeHtml(it.nombre)} <span class="item-mod">${DESTINO_LABELS[itemDestino(it)]}</span>${it.notas?` <span class="item-mod">— "${escapeHtml(it.notas)}"</span>`:''}</div>
+      <div style="display:flex;align-items:center;gap:6px;margin-top:5px;">
+        <span class="pill ${itemEstadoClass(it.estado)}">${PEDIDO_LABELS[it.estado]}</span>
+        <span class="item-mod">${itemElapsedLabel(it)}</span>
+        ${it.estado==='enviado'?`<button class="btn primary sm" onclick="avanzarItem(${m.numero},${it.id})">Empezar a preparar</button>`:''}
+        ${it.estado==='preparando'?`<button class="btn good sm" onclick="avanzarItem(${m.numero},${it.id})">Marcar listo</button>`:''}
+        ${it.estado==='listo'?`<button class="btn dark sm" onclick="avanzarItem(${m.numero},${it.id})">Entregado en mesa</button>`:''}
+      </div></li>`).join('')}</ul></div>`;
 }
 
 /* ---------------- MOZO ---------------- */

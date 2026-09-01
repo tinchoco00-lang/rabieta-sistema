@@ -57,9 +57,18 @@ const HELP_CATEGORIES = {
 };
 const KEYWORDS_URGENTE = ['no llegó', 'no llego', 'frío', 'fria', 'crudo', 'cruda', 'alerg', 'mal estado', 'equivocado', 'equivocada'];
 const KEYWORDS_IMPORTANTE = ['falta', 'cambiar', 'sin ', 'error', 'cuenta'];
+// Configuración inicial para la demo: las bebidas se muestran en Barra y el
+// resto en Cocina. No es una asignación operativa confirmada por Rabieta.
+const DESTINO_POR_CATEGORIA = {
+  'bebidas-sin-alcohol': 'barra', vinos: 'barra', whisky: 'barra', tragos: 'barra',
+  'cervezas-rabieta': 'barra', 'merchandising-y-para-llevar': 'barra',
+};
+const DESTINOS_PRODUCCION = new Set(['cocina', 'barra']);
+const DESTINO_DEFAULT = 'cocina';
 const PRODUCTOS = new Map();
 MENU_DATA.categorias.forEach(categoria => {
-  categoria.productos.forEach(producto => PRODUCTOS.set(producto.id, producto));
+  const destino = DESTINO_POR_CATEGORIA[categoria.id] || DESTINO_DEFAULT;
+  categoria.productos.forEach(producto => PRODUCTOS.set(producto.id, { ...producto, destino }));
 });
 const persistence = createPersistence();
 const resolveClientIp = createClientIpResolver();
@@ -161,7 +170,7 @@ function buildPedidoItem(input) {
 
   return {
     ok: true,
-    item: { productoId: producto.id, nombre, precio, notas: observacion.value },
+    item: { productoId: producto.id, nombre, precio, notas: observacion.value, destino: producto.destino },
   };
 }
 
@@ -236,6 +245,8 @@ function normalizeRecoveredState(recoveredState) {
       if (!Number.isInteger(item.id) || item.id <= 0 || normalizedItemIds.has(item.id)) item.id = uid();
       normalizedItemIds.add(item.id);
       if (!PEDIDO_ESTADOS.includes(item.estado)) item.estado = legacyState;
+      const producto = PRODUCTOS.get(item.productoId);
+      item.destino = producto && DESTINOS_PRODUCCION.has(producto.destino) ? producto.destino : DESTINO_DEFAULT;
       if (!Number.isFinite(item.enviadoTs)) {
         item.enviadoTs = Number.isFinite(pedido.enviadoTs) ? pedido.enviadoTs : recoveredState.clockMs;
       }
