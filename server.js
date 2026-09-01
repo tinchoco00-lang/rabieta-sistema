@@ -118,6 +118,11 @@ function authorizeMesaRequest(req, mesa) {
   return crypto.timingSafeEqual(expected, supplied) ? { ok: true } : { ok: false, status: 403 };
 }
 
+function accessTokenForMesa(mesa) {
+  if (!MESA_TOKEN_SECRET || !validMesaNumber(mesa)) return null;
+  return crypto.createHmac('sha256', MESA_TOKEN_SECRET).update(`mesa:${mesa}`).digest('hex');
+}
+
 function actionError(status, error) { return { ok: false, status, error }; }
 function actionOk() { return { ok: true, status: 200 }; }
 
@@ -607,6 +612,19 @@ function handleHttpRequest(req, res) {
       if (client.kind === 'staff' && client.token === token) closeSseClient(client);
     });
     sendJson(res, 200, { ok: true });
+    return;
+  }
+  if (u.pathname === '/api/mesa-links' && req.method === 'GET') {
+    if (!extractBearerToken(req)) {
+      sendJson(res, 401, { ok: false, error: 'Autenticación requerida' });
+      return;
+    }
+    const mesas = state.mesas.map(mesa => {
+      const accessToken = accessTokenForMesa(mesa.numero);
+      const path = `/mesa.html?mesa=${mesa.numero}${accessToken ? `#token=${accessToken}` : ''}`;
+      return { numero: mesa.numero, mozo: mesa.mozo, ocupada: mesa.ocupada, path };
+    });
+    sendJson(res, 200, { ok: true, secure: Boolean(MESA_TOKEN_SECRET), mesas });
     return;
   }
   if (u.pathname === '/api/action' && req.method === 'POST') {

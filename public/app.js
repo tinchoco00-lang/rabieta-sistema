@@ -84,7 +84,7 @@ let state = {
   role:null, clienteMesa:null, clienteCat:null, clienteFiltroSinTacc:false,
   clienteCart:[], clienteExpand:null, clienteHelpOpen:false, clienteSplashDismissed:false,
   clienteAsistenteOpen:false, clientePreferencia:null, clienteResenaError:'', clienteResenaEnviando:false,
-  mozoActivo:MOZOS[0], modal:null,
+  mozoActivo:MOZOS[0], modal:null, mesaLinks:null, mesaLinksError:'',
 };
 
 function money(n){ return n===null || n===undefined ? 'A confirmar' : '$'+n.toLocaleString('es-AR'); }
@@ -269,6 +269,7 @@ function render(){
   else if(state.role==='mozo') app.innerHTML = viewMozo();
   else if(state.role==='encargado') app.innerHTML = viewEncargado();
   else if(state.role==='dueno') app.innerHTML = viewDueno();
+  else if(state.role==='qrs') app.innerHTML = viewMesaQrs();
   const restoreTargets = app.querySelectorAll('.cat-tabs, .tiles3d');
   restoreTargets.forEach(el=>{
     const match = scrollPos.find(([cls])=>cls===el.className);
@@ -286,12 +287,67 @@ function renderStaffNav(){
     {id:'cocina',label:'Cocina (KDS)',icon:'flame'},
     {id:'encargado',label:'Encargado',icon:'briefcase'},
     {id:'dueno',label:'Dueño',icon:'chart'},
+    {id:'qrs',label:'QR / Mesas',icon:'lock'},
   ];
   const n = todasAlertasAbiertas().length;
   nav.innerHTML = roles.map(r=>`<button class="${state.role===r.id?'active':''}" onclick="setRole('${r.id}')">
     <span>${ic(r.icon)}</span><span>${r.label}</span><span class="dot ${n>0?'show':''}"></span></button>`).join('');
 }
-function setRole(id){ state.role=id; render(); }
+function setRole(id){
+  state.role=id;
+  render();
+  if(id==='qrs' && !state.mesaLinks) cargarMesaLinks();
+}
+
+async function cargarMesaLinks(){
+  state.mesaLinksError='';
+  try{
+    const response = await fetch('/api/mesa-links', {headers:{Authorization:'Bearer ' + STAFF_TOKEN}});
+    const payload = await response.json();
+    if(!response.ok) throw new Error(payload.error || 'No se pudieron generar los accesos.');
+    state.mesaLinks=payload;
+  }catch(error){
+    state.mesaLinksError=error.message || 'No se pudieron generar los accesos.';
+  }
+  if(state.role==='qrs') render();
+}
+function mesaAccessUrl(path){ return location.origin + path; }
+async function copiarMesaLink(numero,path){
+  const value=mesaAccessUrl(path);
+  try{
+    await navigator.clipboard.writeText(value);
+    const button=document.querySelector(`[data-copy-mesa="${numero}"]`);
+    if(button){ button.textContent='Copiado'; setTimeout(()=>{ button.textContent='Copiar enlace'; },1800); }
+  }catch(e){ window.prompt('Copiá este enlace seguro:', value); }
+}
+function montarMesaQrs(){
+  if(state.role!=='qrs' || !state.mesaLinks || typeof qrcode!=='function') return;
+  state.mesaLinks.mesas.forEach(mesa=>{
+    const target=document.getElementById('mesaQr'+mesa.numero);
+    if(!target || target.dataset.rendered==='true') return;
+    const code=qrcode(0,'M');
+    code.addData(mesaAccessUrl(mesa.path));
+    code.make();
+    target.innerHTML=code.createSvgTag(3,4,`QR de Mesa ${mesa.numero}`);
+    target.dataset.rendered='true';
+  });
+}
+function viewMesaQrs(){
+  if(!state.mesaLinks && !state.mesaLinksError) return `<h1 class="view-title">QR / MESAS</h1><div class="empty">Generando accesos de mesa…</div>`;
+  if(state.mesaLinksError) return `<h1 class="view-title">QR / MESAS</h1><div class="card qr-error">${escapeHtml(state.mesaLinksError)}</div><button class="btn primary sm" onclick="cargarMesaLinks()">Reintentar</button>`;
+  const links=state.mesaLinks;
+  setTimeout(montarMesaQrs,0);
+  return `<h1 class="view-title">QR / MESAS</h1>
+    <p class="view-sub">Accesos únicos para imprimir o probar cada mesa. Solo el panel autenticado puede verlos.</p>
+    <div class="${links.secure?'secure-banner':'mock-banner'}">${ic(links.secure?'lock':'warning')} ${links.secure?'Identidad segura activa: cada QR queda vinculado a una sola mesa.':'Modo compatible: activá la identidad segura de mesas antes de imprimir los QR definitivos.'}</div>
+    <div class="qr-grid">${links.mesas.map(mesa=>`<article class="qr-card">
+      <div class="qr-title"><strong>Mesa ${mesa.numero}</strong><span>${escapeHtml(mesa.mozo)}</span></div>
+      <div class="qr-code" id="mesaQr${mesa.numero}"><span>Generando QR…</span></div>
+      <div class="qr-state"><span class="pill ${mesa.ocupada?'ocupada':'libre'}">${mesa.ocupada?'Ocupada':'Libre'}</span></div>
+      <div class="qr-actions"><button class="btn primary sm" data-copy-mesa="${mesa.numero}" onclick="copiarMesaLink(${mesa.numero},'${mesa.path}')">Copiar enlace</button>
+      <a class="btn ghost sm" href="${mesa.path}" target="_blank" rel="noopener">Abrir mesa</a></div>
+    </article>`).join('')}</div>`;
+}
 
 /* ================= MODAL 3D — REAL, no mock ================= */
 function modeloParaPlato(id){

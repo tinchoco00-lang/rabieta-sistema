@@ -492,6 +492,16 @@ test('identidad HMAC vincula token y acciones a una sola mesa sin afectar staff'
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pin: testPin }),
     });
     const { token: staffAccessToken } = await login.json();
+    assert.equal((await fetch(`${isolatedUrl}/api/mesa-links`)).status, 401);
+    const mesaLinksResponse = await fetch(`${isolatedUrl}/api/mesa-links`, {
+      headers: { authorization: `Bearer ${staffAccessToken}` },
+    });
+    assert.equal(mesaLinksResponse.status, 200);
+    const mesaLinks = await mesaLinksResponse.json();
+    assert.equal(mesaLinks.secure, true);
+    assert.equal(mesaLinks.mesas.length, 22);
+    assert.equal(mesaLinks.mesas[0].path, `/mesa.html?mesa=1#token=${mesaOneToken}`);
+    assert.doesNotMatch(JSON.stringify(mesaLinks), new RegExp(mesaSecret));
     const staffStream = await fetch(`${isolatedUrl}/api/staff-events`, {
       headers: { authorization: `Bearer ${staffAccessToken}` },
     });
@@ -843,6 +853,20 @@ test('el traspaso de ítems listos se confirma desde salón y no desde Cocina o 
   assert.match(source, /Esperando retiro de salón/);
   assert.match(source, /statTile\('Esperando salón'/);
   assert.doesNotMatch(source, /it\.estado==='listo'\?`<button[^`]+avanzarItem/);
+});
+
+test('el panel de staff genera QR de mesa localmente y conserva un enlace utilizable como respaldo', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  const staffHtml = fs.readFileSync(path.join(root, 'public', 'staff.html'), 'utf8');
+  const qrLicense = fs.readFileSync(path.join(root, 'public', 'vendor', 'qrcode.LICENSE.txt'), 'utf8');
+  assert.match(source, /fetch\('\/api\/mesa-links'/);
+  assert.match(source, /code=qrcode\(0,'M'\)/);
+  assert.match(source, /Copiar enlace/);
+  assert.match(source, /target="_blank" rel="noopener"/);
+  assert.match(staffHtml, /\/vendor\/qrcode\.js/);
+  assert.doesNotMatch(staffHtml, /cdnjs|unpkg/);
+  assert.match(qrLicense, /MIT License/);
+  assert.doesNotMatch(source, /api\.qrserver|chart\.googleapis/);
 });
 
 test('el asistente recomienda solo productos reales con precio y declara su alcance local', () => {

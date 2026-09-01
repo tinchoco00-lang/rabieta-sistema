@@ -49,10 +49,11 @@ ella configurada, cada acción y stream público debe presentar en
 `X-Mesa-Token` el token correspondiente al mismo número de mesa. El secreto y
 los tokens no se guardan en PostgreSQL ni se escriben en logs. Si la variable
 no existe, el servidor conserva temporalmente el modo compatible sin identidad
-de mesa y registra un warning seguro. La generación y distribución de los QR
-autorizados sigue siendo un paso operativo pendiente: no se debe activar esta
-variable hasta contar con ese procedimiento y un entorno autorizado para el
-secreto.
+de mesa y registra un warning seguro. Con la variable activa, el panel interno
+`QR / Mesas` genera los 22 códigos y enlaces vinculados a una sola mesa; el
+endpoint que los entrega exige un token de staff y nunca expone el secreto. La
+impresión, rotación y colocación física definitiva debe hacerse únicamente en
+el entorno autorizado del local.
 
 ## Cómo ponerlo en internet — paso a paso, sin usar la terminal
 

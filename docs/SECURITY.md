@@ -39,7 +39,7 @@ Estos riesgos describen el codigo actual. Se registran para orientar trabajo fut
 - El PIN es compartido y no identifica usuarios individuales.
 - No existen sesiones ni autorizacion real por roles.
 - La identidad HMAC de mesa solo queda activa cuando un operador configura `MESA_TOKEN_SECRET`; el modo legacy sin esa variable no autentica la mesa y debe considerarse transitorio.
-- Todavía no existe generación ni distribución operativa de QR por mesa. Esta misión solamente implementa la validación compatible con futuros enlaces `mesa.html?mesa=N#token=...`.
+- El panel autenticado ya genera localmente los QR y enlaces vinculados a cada mesa sin enviar el token a servicios externos. Siguen pendientes el procedimiento físico de impresión/colocación y la rotación coordinada del secreto en el local.
 - Sin `DATABASE_URL`, el estado operativo existe solamente en memoria y se pierde al reiniciar el proceso. Con PostgreSQL hay continuidad del estado completo, pero todavía no existen historial, auditoria ni un esquema relacional definitivo.
 - Un futuro ledger de metricas puede contener datos personales u operativos sensibles; antes de usar datos reales necesita minimizacion, permisos, retencion, borrado y auditoria definidos.
 - `pago_demo_confirmar` es solamente una marca operativa de sandbox: calcula el total desde el pedido validado, no acepta datos de tarjeta, no llama a un proveedor y no representa dinero cobrado.
