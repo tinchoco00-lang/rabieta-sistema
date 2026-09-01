@@ -1078,6 +1078,7 @@ test('el traspaso de ítems listos se confirma desde salón y no desde Cocina o 
 
 test('el panel de staff genera QR de mesa localmente y conserva un enlace utilizable como respaldo', () => {
   const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  const styles = fs.readFileSync(path.join(root, 'public', 'rabieta.css'), 'utf8');
   const staffHtml = fs.readFileSync(path.join(root, 'public', 'staff.html'), 'utf8');
   const qrLicense = fs.readFileSync(path.join(root, 'public', 'vendor', 'qrcode.LICENSE.txt'), 'utf8');
   assert.match(source, /fetch\('\/api\/mesa-links'/);
@@ -1085,6 +1086,12 @@ test('el panel de staff genera QR de mesa localmente y conserva un enlace utiliz
   assert.match(source, /id:`mesa-qr-description-\$\{mesa\.numero\}`/);
   assert.match(source, /Copiar enlace/);
   assert.match(source, /target="_blank" rel="noopener"/);
+  assert.match(source, /Imprimir todos los QR/);
+  assert.match(source, /Impresión bloqueada sin identidad segura/);
+  assert.match(source, /document\.body\.classList\.add\('printing-qrs'\)/);
+  assert.match(source, /window\.addEventListener\('afterprint'/);
+  assert.match(styles, /@media print/);
+  assert.match(styles, /grid-template-columns:repeat\(3,1fr\)/);
   assert.match(staffHtml, /\/vendor\/qrcode\.js/);
   assert.doesNotMatch(staffHtml, /cdnjs|unpkg/);
   assert.match(qrLicense, /MIT License/);

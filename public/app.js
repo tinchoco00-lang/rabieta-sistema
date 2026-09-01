@@ -390,21 +390,30 @@ function montarMesaQrs(){
     target.dataset.rendered='true';
   });
 }
+function imprimirMesaQrs(){
+  if(!state.mesaLinks || !state.mesaLinks.secure) return;
+  montarMesaQrs();
+  document.body.classList.add('printing-qrs');
+  window.print();
+}
+window.addEventListener('afterprint',()=>document.body.classList.remove('printing-qrs'));
 function viewMesaQrs(){
   if(!state.mesaLinks && !state.mesaLinksError) return `<h1 class="view-title">QR / MESAS</h1><div class="empty">Generando accesos de mesa…</div>`;
   if(state.mesaLinksError) return `<h1 class="view-title">QR / MESAS</h1><div class="card qr-error">${escapeHtml(state.mesaLinksError)}</div><button class="btn primary sm" onclick="cargarMesaLinks()">Reintentar</button>`;
   const links=state.mesaLinks;
   setTimeout(montarMesaQrs,0);
-  return `<h1 class="view-title">QR / MESAS</h1>
+  return `<section class="qr-screen"><div class="qr-print-only qr-print-header"><strong>RABIETA</strong><span>CARTA Y PEDIDOS · ACCESOS POR MESA</span></div>
+    <h1 class="view-title">QR / MESAS</h1>
     <p class="view-sub">Accesos únicos para imprimir o probar cada mesa. Solo el panel autenticado puede verlos.</p>
     <div class="${links.secure?'secure-banner':'mock-banner'}">${ic(links.secure?'lock':'warning')} ${links.secure?'Identidad segura activa: cada QR queda vinculado a una sola mesa.':'Modo compatible: activá la identidad segura de mesas antes de imprimir los QR definitivos.'}</div>
+    <div class="qr-toolbar"><div><strong>Señalética lista para las ${links.mesas.length} mesas</strong><span>Genera una hoja A4 limpia, sin controles internos, para imprimir o guardar como PDF.</span></div><button class="btn primary" ${links.secure?'onclick="imprimirMesaQrs()"':'disabled'}>${ic('receipt')} ${links.secure?'Imprimir todos los QR':'Impresión bloqueada sin identidad segura'}</button></div>
     <div class="qr-grid">${links.mesas.map(mesa=>`<article class="qr-card">
-      <div class="qr-title"><strong>Mesa ${mesa.numero}</strong><span>${escapeHtml(mesa.mozo)}</span></div>
+      <div class="qr-title"><strong>Mesa ${mesa.numero}</strong><span>${escapeHtml(mesa.mozo)}</span></div><div class="qr-print-only qr-instruction">Escaneá para ver la carta, pedir y llamar al salón.</div>
       <div class="qr-code" id="mesaQr${mesa.numero}"><span>Generando QR…</span></div>
       <div class="qr-state"><span class="pill ${mesa.ocupada?'ocupada':'libre'}">${mesa.ocupada?'Ocupada':'Libre'}</span></div>
       <div class="qr-actions"><button class="btn primary sm" data-copy-mesa="${mesa.numero}" onclick="copiarMesaLink(${mesa.numero},'${mesa.path}')">Copiar enlace</button>
       <a class="btn ghost sm" href="${mesa.path}" target="_blank" rel="noopener">Abrir mesa</a></div>
-    </article>`).join('')}</div>`;
+    </article>`).join('')}</div></section>`;
 }
 
 /* ================= MODAL 3D — REAL, no mock ================= */
