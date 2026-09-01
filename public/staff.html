@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@400;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/rabieta.css?v=20260901-realtime2">
+<link rel="stylesheet" href="/rabieta.css?v=20260901-tour1">
 </head>
 <body>
 
@@ -54,7 +54,7 @@
 <div id="modalRoot"></div>
 
 <script src="/vendor/qrcode.js"></script>
-<script src="/app.js?v=20260901-realtime2"></script>
+<script src="/app.js?v=20260901-tour1"></script>
 <script>
   function intentarPin(){
     const pin = document.getElementById('pinInput').value;
@@ -83,6 +83,7 @@
     document.getElementById('shell').style.display='block';
     document.getElementById('demoBar').style.display='flex';
     state.role = STAFF_ALLOWED_VIEWS[0] || STAFF_ROLE;
+    if(STAFF_ROLE==='encargado') cargarMesaLinks();
     let menuOk=false, estadoOk=false;
     function tryRender(){ if(menuOk && estadoOk) render(); }
     conectar(function(){ estadoOk=true; tryRender(); });

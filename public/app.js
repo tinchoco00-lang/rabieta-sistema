@@ -96,7 +96,7 @@ let state = {
   clienteCart:[], clienteExpand:null, clienteHelpOpen:false, clienteSplashDismissed:false,
   clienteAsistenteOpen:false, clientePreferencia:null, clienteResenaError:'', clienteResenaEnviando:false,
   clienteResenaDraft:{puntuacion:null,comentario:'',crmConsentimiento:false,crmCanal:'whatsapp',crmContacto:'',crmNombre:''},
-  mozoActivo:MOZOS[0], modal:null, mesaLinks:null, mesaLinksError:'', presentacionCargada:false,
+  mozoActivo:MOZOS[0], modal:null, mesaLinks:null, mesaLinksLoading:false, mesaLinksError:'', presentacionCargada:false,
 };
 
 function money(n){ return n===null || n===undefined ? 'A confirmar' : '$'+n.toLocaleString('es-AR'); }
@@ -325,6 +325,8 @@ function setRole(id){
 }
 
 async function cargarMesaLinks(){
+  if(state.mesaLinksLoading) return;
+  state.mesaLinksLoading=true;
   state.mesaLinksError='';
   try{
     const response = await fetch('/api/mesa-links', {headers:{Authorization:'Bearer ' + STAFF_TOKEN}});
@@ -334,9 +336,24 @@ async function cargarMesaLinks(){
   }catch(error){
     state.mesaLinksError=error.message || 'No se pudieron generar los accesos.';
   }
-  if(state.role==='qrs') render();
+  state.mesaLinksLoading=false;
+  if(state.role==='qrs' || state.role==='encargado') render();
 }
 function mesaAccessUrl(path){ return location.origin + path; }
+function mesaLink(numero){
+  return state.mesaLinks && state.mesaLinks.mesas.find(mesa=>mesa.numero===numero);
+}
+function mesaDemoLinkHtml(numero,label,kind,icon){
+  const mesa=mesaLink(numero);
+  if(!mesa) return `<button class="btn ${kind} sm" disabled>${ic(icon)} Preparando acceso…</button>`;
+  return `<button class="btn ${kind} sm" onclick="abrirVistaMesaDemo(${numero})">${ic(icon)} ${escapeHtml(label)}</button>`;
+}
+function abrirVistaMesaDemo(numero){
+  const mesa=mesaLink(numero);
+  if(!mesa) return;
+  state.modal={type:'mesa-preview',numero,path:mesa.path};
+  render();
+}
 async function copiarMesaLink(numero,path){
   const value=mesaAccessUrl(path);
   try{
@@ -387,8 +404,17 @@ function modeloParaPlato(id){
 function renderModal(){
   const root = document.getElementById('modalRoot');
   if(!root) return;
-  if(!state.modal){ root.innerHTML=''; return; }
-  if(state.modal.type==='3d'){
+  if(!state.modal){ root.innerHTML=''; delete root.dataset.modalKey; return; }
+  const modalKey=`${state.modal.type}:${state.modal.id||state.modal.numero||''}`;
+  if(root.dataset.modalKey===modalKey && root.firstElementChild) return;
+  root.dataset.modalKey=modalKey;
+  if(state.modal.type==='mesa-preview'){
+    root.innerHTML = `<div class="modal-bg mesa-preview-bg" onclick="closeModal(event)">
+      <div class="modal mesa-preview-modal" onclick="event.stopPropagation()">
+        <div class="mesa-preview-head"><div><span class="presentation-kicker">Vista cliente en vivo</span><strong>Mesa ${state.modal.numero}</strong></div><button class="btn ghost sm" onclick="closeModal()">Cerrar</button></div>
+        <iframe src="${escapeHtml(mesaAccessUrl(state.modal.path))}" title="Vista cliente de Mesa ${state.modal.numero}"></iframe>
+      </div></div>`;
+  } else if(state.modal.type==='3d'){
     const modelo = modeloParaPlato(state.modal.id);
     const producto = findProducto(state.modal.id);
     const poster = producto && producto.imagen ? producto.imagen : '/img/hero-barra.jpg';
@@ -950,8 +976,12 @@ function resolverAlerta(ai){ send({type:'alerta_resolver', alertaId:ai}); }
 function viewEncargado(){
   const todas = todasAlertasAbiertas();
   const escaladas = todas.filter(x=>x.alerta.escalado);
+  if(!state.mesaLinks && !state.mesaLinksLoading && !state.mesaLinksError) setTimeout(cargarMesaLinks,0);
   return `<h1 class="view-title">ENCARGADO</h1><p class="view-sub">Centro de control del salón — ${MESAS_TOTAL} mesas (placeholder, confirmar número real con el local).</p>
-    ${state.presentacionCargada?`<div class="mock-banner">${ic('checkring')} Escenario de presentación activo: recorré Cocina, Mozo y este panel para mostrar el flujo completo.</div>`:''}
+    ${state.presentacionCargada?presentacionGuideHtml():`<div class="presentation-launch card">
+      <div><span class="presentation-kicker">Demo de punta a punta</span><strong>Prepará la presentación en un toque</strong><p>Carga mesas sintéticas en distintas etapas, una alerta, una cuenta, analytics y CRM demo.</p></div>
+      <button class="btn primary" onclick="cargarEscenarioDemo()">${ic('clipboard')} Cargar y empezar</button>
+    </div>`}
     ${escaladas.length ? `<div class="card" style="border-color:var(--critical);margin-bottom:16px;">
       <div style="font-weight:800;color:#ff9797;font-size:13px;margin-bottom:8px;">${ic('warning')} ${escaladas.length} alerta(s) escalada(s)</div>
       ${escaladas.map(({mesa,alerta})=>alertRowHtml(mesa,alerta,true)).join('')}</div>` : ''}
@@ -967,8 +997,39 @@ function viewEncargado(){
     <div class="section-h">Cola de alertas</div>
     ${todas.length ? todas.map(({mesa,alerta})=>alertRowHtml(mesa,alerta,true)).join('') : `<div class="empty">${ic('checkring')} No hay alertas abiertas.</div>`}
     <div class="section-h">Administración</div>
-    <button class="btn primary sm" onclick="cargarEscenarioDemo()">${ic('clipboard')} Cargar escenario de presentación</button>
+    <button class="btn primary sm" onclick="cargarEscenarioDemo()">${ic('clipboard')} Volver a cargar escenario de presentación</button>
     <button class="btn ghost sm" onclick="resetTodo()">${ic('refresh')} Reiniciar todo (afecta a todos los dispositivos conectados)</button>`;
+}
+function demoStepStatus(numero){
+  const mesa=findMesa(numero);
+  if(!mesa) return '';
+  if(numero===1){
+    const cocina=mesa.pedido && mesa.pedido.items.find(item=>itemDestino(item)==='cocina');
+    const barra=mesa.pedido && mesa.pedido.items.find(item=>itemDestino(item)==='barra');
+    return cocina && barra ? `${PEDIDO_LABELS[cocina.estado]} en Cocina · ${PEDIDO_LABELS[barra.estado]} en Barra` : 'Pedido mixto listo para mostrar';
+  }
+  if(numero===3) return mesa.cuentaPedida ? `Cuenta solicitada · ${money(pedidoTotal(mesa))}` : 'Cuenta lista para solicitar';
+  if(numero===4) return alertasAbiertas(mesa).length ? 'Reclamo urgente esperando atención' : 'Reclamo resuelto';
+  if(numero===5) return mesa.pago ? `Pago demo confirmado · reseña ${state.analytics.resenas[0] ? state.analytics.resenas[0].puntuacion+'/5' : 'lista'}` : 'Cierre demo listo';
+  return estadoPedidoLabel(mesa);
+}
+function irPasoDemo(role,mozo){
+  if(mozo) state.mozoActivo=mozo;
+  setRole(role);
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+function presentacionGuideHtml(){
+  return `<section class="presentation-panel" aria-label="Recorrido de presentación">
+    <div class="presentation-head"><div><span class="presentation-kicker">Escenario sintético activo</span><h2>Recorrido de demo · 5 minutos</h2><p>Abrí cada estación en orden. Los estados cambian en vivo en todos los dispositivos.</p></div><span class="pill libre">${ic('checkring')} Listo para presentar</span></div>
+    ${state.mesaLinksError?`<div class="presentation-error">${escapeHtml(state.mesaLinksError)} <button class="btn ghost sm" onclick="cargarMesaLinks()">Reintentar</button></div>`:''}
+    <div class="presentation-steps">
+      <article class="presentation-step"><span class="step-number">1</span><div><strong>Cliente · Mesa 1</strong><p>${escapeHtml(demoStepStatus(1))}</p></div>${mesaDemoLinkHtml(1,'Abrir cliente','primary','user')}</article>
+      <article class="presentation-step"><span class="step-number">2</span><div><strong>Cocina + Barra</strong><p>Avanzá Hummus y Agua en colas separadas.</p></div><button class="btn dark sm" onclick="irPasoDemo('cocina')">${ic('flame')} Abrir KDS</button></article>
+      <article class="presentation-step"><span class="step-number">3</span><div><strong>Salón · Sofía</strong><p>Retirá Agua de Mesa 1 y atendé ${demoStepStatus(4).toLowerCase()}.</p></div><button class="btn dark sm" onclick="irPasoDemo('mozo','Sofía')">${ic('plate')} Abrir Salón</button></article>
+      <article class="presentation-step"><span class="step-number">4</span><div><strong>Cliente · Cuenta</strong><p>Mesa 3: ${escapeHtml(demoStepStatus(3))}.</p></div>${mesaDemoLinkHtml(3,'Abrir cuenta','dark','receipt')}</article>
+      <article class="presentation-step"><span class="step-number">5</span><div><strong>Dueño · Resultado</strong><p>Mesa 5: ${escapeHtml(demoStepStatus(5))}. Analytics y CRM son sintéticos.</p></div><button class="btn good sm" onclick="irPasoDemo('dueno')">${ic('chart')} Abrir analytics</button></article>
+    </div>
+  </section>`;
 }
 function cargarEscenarioDemo(){
   if(confirm('Esto reemplaza el estado demo actual para TODOS los dispositivos conectados con un escenario de presentación. ¿Confirmás?')) send({type:'demo_escenario_cargar'});

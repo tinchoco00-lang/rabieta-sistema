@@ -44,7 +44,7 @@ const STAFF_PINS = {
 const STAFF_ROLE_VIEWS = {
   mozo: ['mozo'],
   cocina: ['cocina'],
-  encargado: ['encargado', 'mozo', 'cocina', 'qrs'],
+  encargado: ['encargado', 'mozo', 'cocina', 'dueno', 'qrs'],
   dueno: ['dueno'],
 };
 const configuredTokenTtl = Number(process.env.STAFF_TOKEN_TTL_MS);

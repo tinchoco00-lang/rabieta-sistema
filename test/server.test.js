@@ -151,7 +151,7 @@ test('endpoints base y login de staff generan un token aleatorio', async () => {
   assert.equal(result.ok, true);
   assert.match(result.token, /^[a-f0-9]{64}$/);
   assert.equal(result.role, 'encargado');
-  assert.deepEqual(result.allowedViews, ['encargado', 'mozo', 'cocina', 'qrs']);
+  assert.deepEqual(result.allowedViews, ['encargado', 'mozo', 'cocina', 'dueno', 'qrs']);
   staffToken = result.token;
 });
 
@@ -205,7 +205,15 @@ test('Encargado carga un escenario sintético visible de punta a punta', async (
   assert.equal(scenario.analytics.pagosConfirmados, 1);
   assert.equal(scenario.analytics.resenas[0].puntuacion, 5);
   assert.equal(scenario.analytics.crmContactos[0].contacto, 'demo@rabieta.local');
-  assert.match(fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8'), /state\.presentacionCargada = msg\.state\.presentacionCargada === true/);
+  const appSource = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  assert.match(appSource, /state\.presentacionCargada = msg\.state\.presentacionCargada === true/);
+  assert.match(appSource, /Recorrido de demo · 5 minutos/);
+  assert.match(appSource, /mesaDemoLinkHtml\(1,'Abrir cliente'/);
+  assert.match(appSource, /type:'mesa-preview',numero,path:mesa\.path/);
+  assert.match(appSource, /title="Vista cliente de Mesa \$\{state\.modal\.numero\}"/);
+  assert.match(appSource, /root\.dataset\.modalKey===modalKey/);
+  assert.doesNotMatch(appSource, /window\.open\(mesaAccessUrl/);
+  assert.match(appSource, /irPasoDemo\('dueno'\)/);
   assert.equal((await action({ type: 'reset_demo' }, encargado.token)).status, 200);
 });
 
