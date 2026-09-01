@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@400;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/rabieta.css">
+<link rel="stylesheet" href="/rabieta.css?v=20260901-crm3">
 </head>
 <body>
 
@@ -54,7 +54,7 @@
 <div id="modalRoot"></div>
 
 <script src="/vendor/qrcode.js"></script>
-<script src="/app.js"></script>
+<script src="/app.js?v=20260901-crm3"></script>
 <script>
   function intentarPin(){
     const pin = document.getElementById('pinInput').value;
@@ -64,7 +64,8 @@
         if(res.ok){
           setStaffSession(res.token,res.role,res.allowedViews);
           document.getElementById('gate').style.display='none';
-          document.getElementById('sndGate').style.display='flex';
+          if(res.role==='dueno') abrirPanelStaff();
+          else document.getElementById('sndGate').style.display='flex';
         } else {
           document.getElementById('pinErr').textContent = 'PIN incorrecto para esta función.';
         }
@@ -75,6 +76,10 @@
   function activarAvisos(){
     unlockAudio();
     document.getElementById('sndGate').style.display='none';
+    abrirPanelStaff();
+  }
+
+  function abrirPanelStaff(){
     document.getElementById('shell').style.display='block';
     document.getElementById('demoBar').style.display='flex';
     state.role = STAFF_ALLOWED_VIEWS[0] || STAFF_ROLE;

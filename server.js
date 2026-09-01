@@ -105,6 +105,7 @@ function seedAnalytics() {
     },
     productos: {},
     resenas: [],
+    crmContactos: [],
   };
 }
 
@@ -176,6 +177,31 @@ function normalizeOptionalText(value, field, maxLength = 500) {
   const normalized = value.trim();
   if (normalized.length > maxLength) return actionError(400, `${field} demasiado larga`);
   return { ok: true, value: normalized };
+}
+
+function normalizeCrmContact(msg) {
+  const hasContactData = msg.crmCanal != null || msg.crmContacto != null || msg.crmNombre != null;
+  if (msg.crmConsentimiento !== true) {
+    return hasContactData
+      ? actionError(400, 'El consentimiento es obligatorio para guardar un contacto')
+      : { ok: true, value: null };
+  }
+  if (!['whatsapp', 'email'].includes(msg.crmCanal)) return actionError(400, 'Canal de contacto inválido');
+  const contacto = normalizeOptionalText(msg.crmContacto, 'Contacto', 160);
+  if (!contacto.ok) return contacto;
+  if (!contacto.value) return actionError(400, 'El contacto es obligatorio al aceptar novedades');
+  if (msg.crmCanal === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contacto.value)) {
+    return actionError(400, 'Email inválido');
+  }
+  if (msg.crmCanal === 'whatsapp') {
+    const digits = contacto.value.replace(/\D/g, '');
+    if (digits.length < 8 || digits.length > 15 || !/^[+\d\s().-]+$/.test(contacto.value)) {
+      return actionError(400, 'WhatsApp inválido');
+    }
+  }
+  const nombre = normalizeOptionalText(msg.crmNombre, 'Nombre', 80);
+  if (!nombre.ok) return nombre;
+  return { ok: true, value: { canal: msg.crmCanal, contacto: contacto.value, nombre: nombre.value } };
 }
 
 function buildPedidoItem(input) {
@@ -292,6 +318,24 @@ function normalizeAnalytics(value) {
       return [{ id: Number.isInteger(review.id) && review.id > 0 ? review.id : null, mesa: review.mesa, puntuacion: review.puntuacion, comentario, creadoTs: review.creadoTs }];
     });
   }
+  if (Array.isArray(value.crmContactos)) {
+    analytics.crmContactos = value.crmContactos.slice(-100).flatMap(contact => {
+      if (!contact || typeof contact !== 'object' || !validMesaNumber(contact.mesa) || !Number.isFinite(contact.consentimientoTs)) return [];
+      if (!['whatsapp', 'email'].includes(contact.canal)) return [];
+      const contacto = typeof contact.contacto === 'string' ? contact.contacto.trim().slice(0, 160) : '';
+      const nombre = typeof contact.nombre === 'string' ? contact.nombre.trim().slice(0, 80) : '';
+      if (!contacto) return [];
+      return [{
+        id: Number.isInteger(contact.id) && contact.id > 0 ? contact.id : null,
+        mesa: contact.mesa,
+        canal: contact.canal,
+        contacto,
+        nombre,
+        consentimientoTs: contact.consentimientoTs,
+        origen: 'post_pago',
+      }];
+    });
+  }
   return analytics;
 }
 
@@ -302,6 +346,9 @@ function normalizeRecoveredState(recoveredState) {
   const normalizedItemIds = new Set();
   recoveredState.analytics.resenas.forEach(review => {
     if (Number.isInteger(review.id) && review.id > highestId) highestId = review.id;
+  });
+  recoveredState.analytics.crmContactos.forEach(contact => {
+    if (Number.isInteger(contact.id) && contact.id > highestId) highestId = contact.id;
   });
   recoveredState.mesas.forEach(mesa => {
     mesa.resenaEnviada = mesa.resenaEnviada === true;
@@ -316,6 +363,9 @@ function normalizeRecoveredState(recoveredState) {
   uidCounter = Math.max(uidCounter, highestId + 1);
   recoveredState.analytics.resenas.forEach(review => {
     if (!Number.isInteger(review.id) || review.id <= 0) review.id = uid();
+  });
+  recoveredState.analytics.crmContactos.forEach(contact => {
+    if (!Number.isInteger(contact.id) || contact.id <= 0) contact.id = uid();
   });
 
   recoveredState.mesas.forEach(mesa => {
@@ -482,8 +532,20 @@ function handleAction(msg) {
       }
       const comentario = normalizeOptionalText(msg.comentario, 'Comentario');
       if (!comentario.ok) return comentario;
+      const crmContact = normalizeCrmContact(msg);
+      if (!crmContact.ok) return crmContact;
       state.analytics.resenas.push({ id: uid(), mesa: m.numero, puntuacion: msg.puntuacion, comentario: comentario.value, creadoTs: state.clockMs });
       if (state.analytics.resenas.length > 100) state.analytics.resenas.splice(0, state.analytics.resenas.length - 100);
+      if (crmContact.value) {
+        state.analytics.crmContactos.push({
+          id: uid(),
+          mesa: m.numero,
+          ...crmContact.value,
+          consentimientoTs: state.clockMs,
+          origen: 'post_pago',
+        });
+        if (state.analytics.crmContactos.length > 100) state.analytics.crmContactos.splice(0, state.analytics.crmContactos.length - 100);
+      }
       m.resenaEnviada = true;
       break;
     }

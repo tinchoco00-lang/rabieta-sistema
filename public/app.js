@@ -85,7 +85,7 @@ function emptyAnalytics(){
     pagosConfirmados:0,ventasDemo:0,tiempoPagoTotalSec:0,itemsVendidos:0,
     itemsListos:0,itemsEntregados:0,tiempoPreparacionTotalSec:0,tiempoPaseTotalSec:0,
     destinos:{cocina:{itemsListos:0,tiempoPreparacionTotalSec:0},barra:{itemsListos:0,tiempoPreparacionTotalSec:0}},
-    productos:{},resenas:[]
+    productos:{},resenas:[],crmContactos:[]
   };
 }
 
@@ -95,6 +95,7 @@ let state = {
   role:null, clienteMesa:null, clienteCat:null, clienteFiltroSinTacc:false,
   clienteCart:[], clienteExpand:null, clienteHelpOpen:false, clienteSplashDismissed:false,
   clienteAsistenteOpen:false, clientePreferencia:null, clienteResenaError:'', clienteResenaEnviando:false,
+  clienteResenaDraft:{puntuacion:null,comentario:'',crmConsentimiento:false,crmCanal:'whatsapp',crmContacto:'',crmNombre:''},
   mozoActivo:MOZOS[0], modal:null, mesaLinks:null, mesaLinksError:'',
 };
 
@@ -150,9 +151,13 @@ function aplicarMensajeRealtime(data, onFirstSnapshot){
     if(Array.isArray(msg.allowedViews)) STAFF_ALLOWED_VIEWS = msg.allowedViews;
     detectarNuevasAlertas();
     if(onFirstSnapshot){ onFirstSnapshot(); onFirstSnapshot=null; }
-    render();
+    if(!clienteEditandoResena()) render();
   }
   return onFirstSnapshot;
+}
+function clienteEditandoResena(){
+  const active = document.activeElement;
+  return state.role==='cliente' && active && typeof active.closest==='function' && Boolean(active.closest('.review-card'));
 }
 function conectar(onFirstSnapshot){
   if(state.role==='cliente'){
@@ -228,7 +233,7 @@ function detectarNuevasAlertas(){
   let hayNueva = false;
   idsAhora.forEach(id=>{ if(!knownAlertIds.has(id)) hayNueva = true; });
   knownAlertIds = idsAhora;
-  if(hayNueva && state.role && state.role!=='cliente') alertaFisica();
+  if(hayNueva && STAFF_ROLE!=='dueno' && state.role && state.role!=='cliente') alertaFisica();
 }
 
 /* ================= AVISO FÍSICO (sonido + vibración + flash) ================= */
@@ -739,28 +744,69 @@ function confirmarLlamarMozo(){
 }
 function pedirCuenta(){ state.clienteCart=[]; send({type:'pedir_cuenta', mesa:state.clienteMesa}); render(); }
 function resenaHtml(mesa){
+  const draft = state.clienteResenaDraft;
   if(mesa.resenaEnviada) return `<div class="review-card review-thanks">${ic('checkring')} Gracias. Tu opinión ya llegó al equipo de Rabieta.</div>`;
   return `<div class="review-card">
     <div class="review-title">¿Cómo estuvo tu experiencia?</div>
     <div class="review-sub">Tu respuesta queda en este panel demo y ayuda a detectar qué mejorar.</div>
     <div class="rating-pick" role="radiogroup" aria-label="Puntuación del 1 al 5">
-      ${[1,2,3,4,5].map(n=>`<label><input type="radio" name="puntuacion-resena" value="${n}"><span>${n}</span></label>`).join('')}
+      ${[1,2,3,4,5].map(n=>`<label><input type="radio" name="puntuacion-resena" value="${n}" ${draft.puntuacion===n?'checked':''} onchange="updateResenaDraft('puntuacion',${n})"><span>${n}</span></label>`).join('')}
     </div>
-    <textarea class="nota review-comment" id="comentarioResena" maxlength="500" placeholder="Contanos qué te gustó o qué mejorarías (opcional)"></textarea>
+    <textarea class="nota review-comment" id="comentarioResena" maxlength="500" placeholder="Contanos qué te gustó o qué mejorarías (opcional)" oninput="updateResenaDraft('comentario',this.value)">${escapeHtml(draft.comentario)}</textarea>
+    <label class="crm-consent">
+      <input type="checkbox" id="crmConsentimiento" ${draft.crmConsentimiento?'checked':''} onchange="toggleCrmFields(this.checked)">
+      <span>Quiero recibir novedades y beneficios de Rabieta. Autorizo usar mi contacto solo para ese fin.</span>
+    </label>
+    <div class="crm-fields" id="crmFields" aria-hidden="${draft.crmConsentimiento?'false':'true'}">
+      <input class="nota" id="crmNombre" maxlength="80" placeholder="Tu nombre (opcional)" value="${escapeHtml(draft.crmNombre)}" ${draft.crmConsentimiento?'':'disabled'} oninput="updateResenaDraft('crmNombre',this.value)">
+      <select class="nota" id="crmCanal" ${draft.crmConsentimiento?'':'disabled'} onchange="updateCrmCanal(this.value)">
+        <option value="whatsapp" ${draft.crmCanal==='whatsapp'?'selected':''}>WhatsApp</option>
+        <option value="email" ${draft.crmCanal==='email'?'selected':''}>Email</option>
+      </select>
+      <input class="nota" id="crmContacto" maxlength="160" inputmode="${draft.crmCanal==='email'?'email':'tel'}" autocomplete="${draft.crmCanal==='email'?'email':'tel'}" placeholder="${draft.crmCanal==='email'?'vos@ejemplo.com':'Ej. +54 11 5555 5555'}" value="${escapeHtml(draft.crmContacto)}" ${draft.crmConsentimiento?'':'disabled'} oninput="updateResenaDraft('crmContacto',this.value)">
+      <div class="crm-note">Demo local: no se envían mensajes ni se conecta un proveedor externo.</div>
+    </div>
     ${state.clienteResenaError?`<div class="review-error">${escapeHtml(state.clienteResenaError)}</div>`:''}
     <button class="btn primary sm" ${state.clienteResenaEnviando?'disabled':''} onclick="enviarResena()">${state.clienteResenaEnviando?'Enviando…':'Enviar opinión'}</button>
   </div>`;
 }
+function updateResenaDraft(field,value){ state.clienteResenaDraft[field]=value; }
+function toggleCrmFields(enabled){
+  updateResenaDraft('crmConsentimiento',enabled);
+  const fields = document.getElementById('crmFields');
+  if(!fields) return;
+  fields.setAttribute('aria-hidden',enabled?'false':'true');
+  fields.querySelectorAll('input,select').forEach(control=>{ control.disabled=!enabled; });
+  if(enabled) updateCrmCanal(state.clienteResenaDraft.crmCanal);
+}
+function updateCrmCanal(value){
+  updateResenaDraft('crmCanal',value);
+  const contacto = document.getElementById('crmContacto');
+  if(!contacto) return;
+  const email = value==='email';
+  contacto.placeholder = email?'vos@ejemplo.com':'Ej. +54 11 5555 5555';
+  contacto.inputMode = email?'email':'tel';
+  contacto.autocomplete = email?'email':'tel';
+}
 async function enviarResena(){
-  const selected = document.querySelector('input[name="puntuacion-resena"]:checked');
-  if(!selected){ state.clienteResenaError='Elegí una puntuación del 1 al 5.'; render(); return; }
-  const comentario = (document.getElementById('comentarioResena')||{}).value || '';
+  const draft = state.clienteResenaDraft;
+  if(!draft.puntuacion){ state.clienteResenaError='Elegí una puntuación del 1 al 5.'; render(); return; }
+  const {comentario,crmConsentimiento,crmCanal,crmContacto,crmNombre} = draft;
   state.clienteResenaError=''; state.clienteResenaEnviando=true; render();
-  const response = await send({type:'resena_enviar', mesa:state.clienteMesa, puntuacion:Number(selected.value), comentario});
+  const response = await send({
+    type:'resena_enviar', mesa:state.clienteMesa, puntuacion:draft.puntuacion, comentario,
+    crmConsentimiento, crmCanal, crmContacto, crmNombre,
+  });
   state.clienteResenaEnviando=false;
   if(!response || !response.ok){
     let payload={}; try{ payload=await response.json(); }catch(e){}
     state.clienteResenaError=payload.error || 'No pudimos enviar tu opinión. Probá de nuevo.';
+    render();
+  }else{
+    const mesa = state.mesas.find(m=>m.numero===state.clienteMesa);
+    if(mesa && mesa.resenaEnviada){
+      state.clienteResenaDraft={puntuacion:null,comentario:'',crmConsentimiento:false,crmCanal:'whatsapp',crmContacto:'',crmNombre:''};
+    }
     render();
   }
 }
@@ -941,6 +987,8 @@ function viewDueno(){
   const ratingPromedio = resenas.length ? (resenas.reduce((sum,r)=>sum+r.puntuacion,0)/resenas.length).toFixed(1) : '—';
   const resenasCriticas = resenas.filter(r=>r.puntuacion<=3).length;
   const resenasRecientes = [...resenas].reverse().slice(0,6);
+  const crmContactos = Array.isArray(analytics.crmContactos) ? analytics.crmContactos : [];
+  const crmRecientes = [...crmContactos].reverse().slice(0,6);
   const productosPendientes = todosLosProductos().filter(p=>precioBase(p)===null).length;
   return `<h1 class="view-title">DUEÑO</h1>
     <p class="view-sub">Panel de negocio de esta sesión. ${productosPendientes} productos todavía sin precio confirmado.</p>
@@ -957,6 +1005,7 @@ function viewDueno(){
       ${statTile('Esperando salón', String(itemsEsperandoSalon.length), itemsEsperandoSalon.length?'máximo '+fmtSec(esperaSalonMax):'sin retiros pendientes', esperaSalonMax>120?'downAlert':null)}
       ${statTile('Alertas activas', String(alertasN), urgentes>0?urgentes+' urgente(s)':'todo tranquilo', urgentes>0?'downAlert':null)}
       ${statTile('Experiencia', ratingPromedio, resenas.length?resenas.length+' opinión(es) · '+resenasCriticas+' a recuperar':'sin opiniones todavía', resenasCriticas?'downAlert':null)}
+      ${statTile('CRM consentido', String(crmContactos.length), crmContactos.length?'contactos captados':'sin contactos todavía', null)}
     </div>
     <div class="section-h">Rendimiento operativo acumulado</div>
     <div class="grid cols-4">
@@ -972,6 +1021,11 @@ function viewDueno(){
     <div class="section-h">Opiniones post-pago</div>
     <div class="grid cols-3">
       ${resenasRecientes.length ? resenasRecientes.map(r=>`<div class="insight review-insight"><span>Mesa ${r.mesa} · ${r.puntuacion}/5 · hace ${fmtSec(timeAgoSec(r.creadoTs))}</span><b>${r.comentario?escapeHtml(r.comentario):'Sin comentario'}</b></div>`).join('') : '<div class="empty">Las opiniones aparecerán después de un pago demo confirmado.</div>'}
+    </div>
+    <div class="section-h">CRM con consentimiento</div>
+    <div class="mock-banner">${ic('clipboard')} Captación post-pago en sandbox. Los contactos quedan solo en este sistema demo y no se envían campañas.</div>
+    <div class="grid cols-3">
+      ${crmRecientes.length ? crmRecientes.map(c=>`<div class="insight review-insight"><span>Mesa ${c.mesa} · ${c.canal==='email'?'Email':'WhatsApp'} · hace ${fmtSec(timeAgoSec(c.consentimientoTs))}</span><b>${c.nombre?escapeHtml(c.nombre)+' · ':''}${escapeHtml(c.contacto)}</b></div>`).join('') : '<div class="empty">Los contactos aparecerán solo cuando una persona acepte recibir novedades.</div>'}
     </div>
     <div class="section-h">Platos con 3D real activado</div>
     <div class="grid cols-3">

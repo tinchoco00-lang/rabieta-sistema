@@ -388,6 +388,13 @@
   .rating-pick span{display:flex;align-items:center;justify-content:center;width:36px;height:36px;border:1px solid var(--line-strong);border-radius:10px;background:var(--bg-elevated);font-weight:800;cursor:pointer;}
   .rating-pick input:checked+span{background:var(--gold);border-color:var(--gold);color:var(--bg);}
   .review-comment{min-height:68px;resize:vertical;margin-bottom:8px;}
+  .crm-consent{display:flex;align-items:flex-start;gap:9px;margin:4px 0 10px;font-size:11.5px;line-height:1.45;color:var(--ink-2);cursor:pointer;}
+  .crm-consent input{margin-top:3px;accent-color:var(--gold);}
+  .crm-fields{display:grid;grid-template-columns:minmax(0,1fr) 110px;gap:8px;margin:0 0 10px;}
+  .crm-fields[aria-hidden="true"]{display:none;}
+  .crm-fields .nota{margin:0;min-width:0;}
+  .crm-fields #crmContacto,.crm-fields .crm-note{grid-column:1/-1;}
+  .crm-note{font-size:10.5px;line-height:1.4;color:var(--ink-muted);}
   .review-error{font-size:11px;color:var(--critical);font-weight:700;margin:0 0 8px;}
   .review-thanks{color:var(--good);font-size:12px;font-weight:800;}
   .review-insight{align-items:flex-start;flex-direction:column;gap:5px;}

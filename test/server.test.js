@@ -181,6 +181,13 @@ test('cada rol recibe sólo sus vistas, datos y acciones operativas', async () =
   await resetState();
 });
 
+test('Dueño entra directo a analytics sin pedir activar avisos operativos', () => {
+  const staffHtml = fs.readFileSync(path.join(root, 'public', 'staff.html'), 'utf8');
+  const appSource = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  assert.match(staffHtml, /if\(res\.role===['"]dueno['"]\) abrirPanelStaff\(\)/);
+  assert.match(appSource, /STAFF_ROLE!==['"]dueno['"]/);
+});
+
 test('recorrido completo QR a analytics funciona con roles separados', async () => {
   staffToken = (await loginAs('encargado')).token;
   await resetState();
@@ -221,6 +228,7 @@ test('recorrido completo QR a analytics funciona con roles separados', async () 
   assert.equal((await action({ type: 'pago_demo_confirmar', mesa: 1 }, mozo.token)).status, 200);
   assert.equal((await action({
     type: 'resena_enviar', mesa: 1, puntuacion: 5, comentario: 'Demo punta a punta lista',
+    crmConsentimiento: true, crmCanal: 'whatsapp', crmContacto: '+54 11 5555 5555', crmNombre: 'Cliente demo',
   })).status, 200);
 
   const ownerState = (await getStaffStateWithToken(dueno.token)).state;
@@ -234,6 +242,15 @@ test('recorrido completo QR a analytics funciona con roles separados', async () 
   assert.ok(Number.isFinite(ownerState.analytics.tiempoPaseTotalSec));
   assert.equal(ownerState.analytics.resenas.length, 1);
   assert.equal(ownerState.analytics.resenas[0].comentario, 'Demo punta a punta lista');
+  assert.deepEqual(ownerState.analytics.crmContactos[0], {
+    id: ownerState.analytics.crmContactos[0].id,
+    mesa: 1,
+    canal: 'whatsapp',
+    contacto: '+54 11 5555 5555',
+    nombre: 'Cliente demo',
+    consentimientoTs: ownerState.analytics.crmContactos[0].consentimientoTs,
+    origen: 'post_pago',
+  });
   assert.equal((await action({ type: 'mesa_liberar', mesa: 1 }, mozo.token)).status, 200);
 
   mesa = (await getState()).mesas[0];
@@ -412,7 +429,7 @@ test('pago demo rechaza cuentas con precios pendientes', async () => {
   await resetState();
 });
 
-test('la mesa puede dejar una única reseña post-pago y solo staff ve el historial', async () => {
+test('la mesa puede dejar una única reseña post-pago y captar CRM solo con consentimiento', async () => {
   await resetState();
   assert.equal((await action({ type: 'resena_enviar', mesa: 1, puntuacion: 5 })).status, 409);
   assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'hummus-rabieta' }] })).status, 200);
@@ -420,7 +437,14 @@ test('la mesa puede dejar una única reseña post-pago y solo staff ve el histor
   assert.equal((await action({ type: 'pago_demo_confirmar', mesa: 1 }, staffToken)).status, 200);
   assert.equal((await action({ type: 'resena_enviar', mesa: 1, puntuacion: 0 })).status, 400);
   assert.equal((await action({
+    type: 'resena_enviar', mesa: 1, puntuacion: 4, crmCanal: 'email', crmContacto: 'cliente@demo.com',
+  })).status, 400);
+  assert.equal((await action({
+    type: 'resena_enviar', mesa: 1, puntuacion: 4, crmConsentimiento: true, crmCanal: 'email', crmContacto: 'email-invalido',
+  })).status, 400);
+  assert.equal((await action({
     type: 'resena_enviar', mesa: 1, puntuacion: 4, comentario: 'Muy buena atención <script>alert(1)</script>',
+    crmConsentimiento: true, crmCanal: 'email', crmContacto: 'cliente@demo.com', crmNombre: 'Ana Demo',
   })).status, 200);
   assert.equal((await action({ type: 'resena_enviar', mesa: 1, puntuacion: 5 })).status, 409);
 
@@ -438,10 +462,22 @@ test('la mesa puede dejar una única reseña post-pago y solo staff ve el histor
   });
   assert.ok(Number.isInteger(analytics.resenas[0].id));
   assert.ok(Number.isFinite(analytics.resenas[0].creadoTs));
+  assert.deepEqual(analytics.crmContactos[0], {
+    id: analytics.crmContactos[0].id,
+    mesa: 1,
+    canal: 'email',
+    contacto: 'cliente@demo.com',
+    nombre: 'Ana Demo',
+    consentimientoTs: analytics.crmContactos[0].consentimientoTs,
+    origen: 'post_pago',
+  });
+  assert.ok(Number.isInteger(analytics.crmContactos[0].id));
+  assert.ok(Number.isFinite(analytics.crmContactos[0].consentimientoTs));
 
   assert.equal((await action({ type: 'mesa_liberar', mesa: 1 }, staffToken)).status, 200);
   analytics = (await getStaffState()).analytics;
   assert.equal(analytics.resenas.length, 1);
+  assert.equal(analytics.crmContactos.length, 1);
   await resetState();
 });
 
