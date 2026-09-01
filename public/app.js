@@ -97,6 +97,7 @@ let state = {
   clienteAsistenteOpen:false, clientePreferencia:null, clienteAsistenteConsulta:'', clienteAsistenteRespuesta:null,
   clienteAsistenteAgregado:null, clienteResenaError:'', clienteResenaEnviando:false,
   clienteRepetirAviso:'', clientePedidoEnviando:false, clientePedidoError:'',
+  clienteServicioEnviando:false, clienteServicioError:'',
   clientePagoMedio:'tarjeta', clientePagoEnviando:false, clientePagoError:'',
   clienteResenaDraft:{puntuacion:null,comentario:'',crmConsentimiento:false,crmCanal:'whatsapp',crmContacto:'',crmNombre:''},
   mozoActivo:MOZOS[0], modal:null, mesaLinks:null, mesaLinksLoading:false, mesaLinksError:'', presentacionCargada:false,
@@ -428,10 +429,12 @@ function renderModal(){
   const root = document.getElementById('modalRoot');
   if(!root) return;
   if(!state.modal){ root.innerHTML=''; delete root.dataset.modalKey; return; }
-  const cartModalKey = state.modal.type==='cart'
+  const transientModalKey = state.modal.type==='cart'
     ? ':'+state.clienteCart.map(item=>cantidadLinea(item)).join(',')+':'+state.clientePedidoEnviando+':'+state.clientePedidoError
-    : '';
-  const modalKey=`${state.modal.type}:${state.modal.id||state.modal.numero||''}${cartModalKey}`;
+    : (state.modal.type==='confirm-mozo'||state.modal.type==='confirm-cuenta')
+      ? ':'+state.clienteServicioEnviando+':'+state.clienteServicioError+':'+cantidadCarrito()
+      : '';
+  const modalKey=`${state.modal.type}:${state.modal.id||state.modal.numero||''}${transientModalKey}`;
   if(root.dataset.modalKey===modalKey && root.firstElementChild) return;
   root.dataset.modalKey=modalKey;
   if(state.modal.type==='mesa-preview'){
@@ -499,9 +502,10 @@ function renderModal(){
         <div class="icon">${ic('bell')}</div>
         <h3>¿Llamar al mozo?</h3>
         <p>Se le va a avisar al mozo que la <b>Mesa ${state.clienteMesa}</b> necesita atención. Confirmá solo si de verdad lo necesitás, así no camina de mesa en mesa por un toque sin querer.</p>
+        ${state.clienteServicioError?`<div class="review-error" role="alert">${escapeHtml(state.clienteServicioError)} Tu solicitud todavía no fue enviada.</div>`:''}
         <div style="display:flex;gap:10px;">
-          <button class="btn ghost" style="flex:1;" onclick="closeModal()">Cancelar</button>
-          <button class="btn callout" style="flex:1;" onclick="confirmarLlamarMozo()">Sí, llamar</button>
+          <button class="btn ghost" style="flex:1;" ${state.clienteServicioEnviando?'disabled':''} onclick="closeModal()">Cancelar</button>
+          <button class="btn callout" style="flex:1;" ${state.clienteServicioEnviando?'disabled':''} aria-busy="${state.clienteServicioEnviando?'true':'false'}" onclick="confirmarLlamarMozo()">${state.clienteServicioEnviando?'Enviando…':state.clienteServicioError?'Reintentar llamado':'Sí, llamar'}</button>
         </div>
       </div></div>`;
   } else if(state.modal.type==='mozo-enviado'){
@@ -512,6 +516,26 @@ function renderModal(){
         <p>Tu llamado fue recibido. Un mozo se va a acercar a la <b>Mesa ${state.clienteMesa}</b> en breve.</p>
         <button class="btn primary block" onclick="closeModal()">Entendido</button>
       </div></div>`;
+  } else if(state.modal.type==='confirm-cuenta'){
+    const unidades=cantidadCarrito();
+    root.innerHTML = `<div class="modal-bg" onclick="closeModal(event)">
+      <div class="modal" onclick="event.stopPropagation()">
+        <div class="icon">${ic('receipt')}</div>
+        <h3>¿Pedir la cuenta?</h3>
+        <p>Salón recibirá la solicitud de la <b>Mesa ${state.clienteMesa}</b> y habilitará el checkout sandbox.</p>
+        ${unidades?`<div class="mock-banner">${ic('warning')} Tenés ${unidades} unidad(es) sin enviar. Solo se quitarán del carrito cuando la cuenta sea solicitada con éxito.</div>`:''}
+        ${state.clienteServicioError?`<div class="review-error" role="alert">${escapeHtml(state.clienteServicioError)} Tu carrito sigue intacto.</div>`:''}
+        <div style="display:flex;gap:10px;">
+          <button class="btn ghost" style="flex:1;" ${state.clienteServicioEnviando?'disabled':''} onclick="closeModal()">Seguir pidiendo</button>
+          <button class="btn primary" style="flex:1;" ${state.clienteServicioEnviando?'disabled':''} aria-busy="${state.clienteServicioEnviando?'true':'false'}" onclick="confirmarPedirCuenta()">${state.clienteServicioEnviando?'Enviando…':state.clienteServicioError?'Reintentar cuenta':'Sí, pedir cuenta'}</button>
+        </div>
+      </div></div>`;
+  } else if(state.modal.type==='cuenta-enviada'){
+    root.innerHTML = `<div class="modal-bg"><div class="modal">
+      <div class="icon">${ic('checkring')}</div><h3>Cuenta solicitada</h3>
+      <p>Salón recibió el aviso de la <b>Mesa ${state.clienteMesa}</b>. El total y el checkout sandbox aparecerán en vivo.</p>
+      <button class="btn primary block" onclick="closeModal()">Ver mi cuenta</button>
+    </div></div>`;
   } else if(state.modal.type==='checkout'){
     const mesa = findMesa(state.clienteMesa);
     const total = mesa ? pedidoTotal(mesa) : 0;
@@ -534,7 +558,13 @@ function renderModal(){
   }
 }
 function openModal3d(id, nombre){ state.modal = {type:'3d', id, nombre}; render(); }
-function closeModal(e){ state.modal=null; render(); }
+function closeModal(e){
+  const envioActivo = state.modal && ((state.modal.type==='cart' && state.clientePedidoEnviando)
+    || ((state.modal.type==='confirm-mozo'||state.modal.type==='confirm-cuenta') && state.clienteServicioEnviando)
+    || (state.modal.type==='checkout' && state.clientePagoEnviando));
+  if(envioActivo) return;
+  state.modal=null; render();
+}
 function setArStatus(message, isError){
   const status = document.getElementById('arStatus');
   if(!status) return;
@@ -897,14 +927,32 @@ async function enviarPedido(){
     render();
   }
 }
-function llamarMozo(){ state.modal = {type:'confirm-mozo'}; render(); }
-function confirmarLlamarMozo(){
-  send({type:'llamar_mozo', mesa:state.clienteMesa});
-  state.modal = {type:'mozo-enviado'};
-  render();
+function llamarMozo(){ state.clienteServicioError=''; state.modal = {type:'confirm-mozo'}; render(); }
+async function confirmarLlamarMozo(){
+  if(state.clienteServicioEnviando) return;
+  state.clienteServicioEnviando=true; state.clienteServicioError=''; render();
+  const response=await send({type:'llamar_mozo', mesa:state.clienteMesa});
+  state.clienteServicioEnviando=false;
+  if(!response || !response.ok){
+    let payload={}; if(response){ try{ payload=await response.json(); }catch(e){} }
+    state.clienteServicioError=payload.error || 'No pudimos avisar a salón. Revisá tu conexión y probá de nuevo.'; render(); return;
+  }
+  state.modal = {type:'mozo-enviado'}; render();
   setTimeout(()=>{ if(state.modal && state.modal.type==='mozo-enviado'){ state.modal=null; render(); } }, 4500);
 }
-function pedirCuenta(){ state.clienteCart=[]; send({type:'pedir_cuenta', mesa:state.clienteMesa}); render(); }
+function pedirCuenta(){ state.clienteServicioError=''; state.modal={type:'confirm-cuenta'}; render(); }
+async function confirmarPedirCuenta(){
+  if(state.clienteServicioEnviando) return;
+  state.clienteServicioEnviando=true; state.clienteServicioError=''; render();
+  const response=await send({type:'pedir_cuenta', mesa:state.clienteMesa});
+  state.clienteServicioEnviando=false;
+  if(!response || !response.ok){
+    let payload={}; if(response){ try{ payload=await response.json(); }catch(e){} }
+    state.clienteServicioError=payload.error || 'No pudimos pedir la cuenta. Revisá tu conexión y probá de nuevo.'; render(); return;
+  }
+  state.clienteCart=[]; state.clienteRepetirAviso=''; state.clientePedidoError='';
+  state.modal={type:'cuenta-enviada'}; render();
+}
 function abrirCheckout(){ state.clientePagoError=''; state.modal={type:'checkout'}; render(); }
 function elegirMedioPago(medio){ state.clientePagoMedio=medio; render(); }
 async function confirmarPagoSandbox(){
