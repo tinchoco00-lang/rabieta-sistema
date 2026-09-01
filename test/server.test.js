@@ -274,8 +274,10 @@ test('cuenta y pago demo conservan el pedido hasta que staff libera la mesa', as
   assert.equal((await action({ type: 'pago_demo_confirmar', mesa: 1 }, staffToken)).status, 200);
   mesa = (await getState()).mesas[0];
   assert.deepEqual(mesa.pago, {
-    modo: 'demo', estado: 'confirmado', total: 7700, confirmadoTs: mesa.pago.confirmadoTs,
+    modo: 'demo', estado: 'confirmado', medio: 'staff', total: 7700,
+    referencia: mesa.pago.referencia, confirmadoTs: mesa.pago.confirmadoTs,
   });
+  assert.match(mesa.pago.referencia, /^RAB-01-\d{6}$/);
   assert.ok(Number.isFinite(mesa.pago.confirmadoTs));
   assert.equal(mesa.pedido.items.length, 2);
   assert.equal((await action({ type: 'pago_demo_confirmar', mesa: 1 }, staffToken)).status, 409);
@@ -305,6 +307,26 @@ test('pago demo rechaza cuentas con precios pendientes', async () => {
   assert.equal((await action({ type: 'pedir_cuenta', mesa: 1 })).status, 200);
   assert.equal((await action({ type: 'pago_demo_confirmar', mesa: 1 }, staffToken)).status, 409);
   assert.equal((await getState()).mesas[0].pago, null);
+  await resetState();
+});
+
+test('cliente completa checkout sandbox y recibe comprobante sin credenciales staff', async () => {
+  await resetState();
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [
+    { productoId: 'hummus-rabieta' }, { productoId: 'burrata' },
+  ] })).status, 200);
+  assert.equal((await action({ type: 'pago_sandbox_confirmar', mesa: 1, medio: 'tarjeta' })).status, 409);
+  assert.equal((await action({ type: 'pedir_cuenta', mesa: 1 })).status, 200);
+  assert.equal((await action({ type: 'pago_sandbox_confirmar', mesa: 1, medio: 'efectivo' })).status, 400);
+  assert.equal((await action({ type: 'pago_sandbox_confirmar', mesa: 1, medio: 'mercado_pago' })).status, 200);
+
+  const mesa = (await getState()).mesas[0];
+  assert.equal(mesa.pago.modo, 'demo');
+  assert.equal(mesa.pago.estado, 'confirmado');
+  assert.equal(mesa.pago.medio, 'mercado_pago');
+  assert.equal(mesa.pago.total, 7700);
+  assert.match(mesa.pago.referencia, /^RAB-01-\d{6}$/);
+  assert.ok(mesa.alertas.filter(alerta => alerta.tipo === 'cuenta').every(alerta => alerta.estado === 'resuelto'));
   await resetState();
 });
 
