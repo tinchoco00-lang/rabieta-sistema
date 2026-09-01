@@ -298,18 +298,27 @@ function renderModal(){
   if(!state.modal){ root.innerHTML=''; return; }
   if(state.modal.type==='3d'){
     const modelo = modeloParaPlato(state.modal.id);
+    const producto = findProducto(state.modal.id);
+    const poster = producto && producto.imagen ? producto.imagen : '/img/hero-barra.jpg';
     root.innerHTML = `<div class="modal-bg" onclick="closeModal(event)">
       <div class="modal modal-3d" onclick="event.stopPropagation()">
         <div class="stage3d-real">
           <model-viewer id="mv3d" src="${modelo.url}" camera-controls auto-rotate auto-rotate-delay="300"
             ar ar-modes="scene-viewer webxr quick-look" shadow-intensity="1" exposure="1"
+            poster="${poster}" alt="Vista 3D genérica para ${escapeHtml(state.modal.nombre)}" loading="eager" reveal="auto"
+            onload="modelo3dListo()" onerror="modelo3dError()"
             style="width:100%;height:100%;background:transparent;"></model-viewer>
+          <div id="fallback3d" class="fallback3d" hidden>
+            <img src="${poster}" alt="Foto de ${escapeHtml(state.modal.nombre)}">
+            <span>La foto real queda disponible aunque el modelo 3D no cargue.</span>
+          </div>
         </div>
         <div class="body3d">
           <span class="badge-preview">3D real · modelo genérico, todavía no es el escaneo del plato</span>
-          <h3>${state.modal.nombre}</h3>
+          <h3>${escapeHtml(state.modal.nombre)}</h3>
           <p>Activá la cámara, enfocá tu mesa, y el plato aparece ahí arriba en tamaño real — como si ya te lo hubieran servido. También podés arrastrar acá abajo para girarlo sin cámara.</p>
           <button class="btn callout block" onclick="activarAR()">${ic('cube')} Ver en mi mesa con la cámara</button>
+          <div id="arStatus" class="ar-status" aria-live="polite">Cargando la experiencia 3D…</div>
           <p class="ar-fineprint">Funciona con cámara en Android (Chrome). En iPhone y en la compu se ve girando en pantalla por ahora. Lo único pendiente de verdad es reemplazar este modelo genérico — ${modelo.nombre} — por el escaneo 3D real de <b>${state.modal.nombre}</b> — eso es un paso de producción aparte.</p>
           <button class="btn dark block" onclick="closeModal()">Cerrar</button>
         </div>
@@ -337,9 +346,39 @@ function renderModal(){
 }
 function openModal3d(id, nombre){ state.modal = {type:'3d', id, nombre}; render(); }
 function closeModal(e){ state.modal=null; render(); }
-function activarAR(){
+function setArStatus(message, isError){
+  const status = document.getElementById('arStatus');
+  if(!status) return;
+  status.textContent = message;
+  status.classList.toggle('error', !!isError);
+}
+function modelo3dListo(){
   const mv = document.getElementById('mv3d');
-  if(mv && mv.activateAR) mv.activateAR();
+  setArStatus(mv && mv.canActivateAR ? 'Modelo listo. Tu dispositivo puede abrir la cámara.' : 'Modelo listo para girar. La cámara AR depende del dispositivo.');
+}
+function modelo3dError(){
+  const mv = document.getElementById('mv3d');
+  const fallback = document.getElementById('fallback3d');
+  if(mv) mv.hidden = true;
+  if(fallback) fallback.hidden = false;
+  setArStatus('No se pudo cargar el modelo 3D. Podés seguir viendo la foto y pedir normalmente.', true);
+}
+async function activarAR(){
+  const mv = document.getElementById('mv3d');
+  if(!mv || typeof mv.activateAR!=='function'){
+    setArStatus('La experiencia 3D todavía está cargando. Probá de nuevo en unos segundos.', true);
+    return;
+  }
+  if(mv.canActivateAR===false){
+    setArStatus('Este dispositivo no ofrece cámara AR. Igual podés arrastrar el modelo para verlo en 3D.', true);
+    return;
+  }
+  try{
+    await mv.activateAR();
+    setArStatus('Cámara AR iniciada. Mové el teléfono para detectar la mesa.');
+  }catch(e){
+    setArStatus('No se pudo abrir la cámara AR. Revisá el permiso de cámara o usá la vista 3D.', true);
+  }
 }
 
 /* ---------------- CLIENTE ---------------- */

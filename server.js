@@ -386,7 +386,9 @@ function handleAction(msg) {
       break;
     }
     case 'mesa_liberar': {
-      if (!m) return;
+      if (!m.pago || m.pago.modo !== 'demo' || m.pago.estado !== 'confirmado') {
+        return actionError(409, 'La mesa solo puede liberarse después de confirmar el pago');
+      }
       m.ocupada = false; m.pedido = null; m.cuentaPedida = false; m.cuentaPedidaTs = null; m.pago = null; m.alertas = [];
       break;
     }

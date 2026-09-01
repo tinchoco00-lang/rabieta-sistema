@@ -250,6 +250,8 @@ test('cuenta y pago demo conservan el pedido hasta que staff libera la mesa', as
   assert.equal(mesa.cuentaPedida, true);
   assert.equal(mesa.pago, null);
   assert.ok(cuentaAlert);
+  assert.equal((await action({ type: 'mesa_liberar', mesa: 1 }, staffToken)).status, 409);
+  assert.equal((await getState()).mesas[0].ocupada, true);
 
   assert.equal((await action({ type: 'alerta_resolver', alertaId: cuentaAlert.id }, staffToken)).status, 200);
   mesa = (await getState()).mesas[0];
@@ -777,4 +779,12 @@ test('los textos libres se escapan en renders con innerHTML', () => {
   assert.ok(timeImplementation, 'debe existir el calculo de antiguedad operativa');
   const elapsedSeconds = vm.runInNewContext(`${timeImplementation[0]}; timeAgoSec(20)`, { state: { clockMs: 65 } });
   assert.equal(elapsedSeconds, 45);
+});
+
+test('3D y AR mantienen una foto útil y explican dispositivos incompatibles', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  assert.match(source, /id="fallback3d"/);
+  assert.match(source, /onerror="modelo3dError\(\)"/);
+  assert.match(source, /mv\.canActivateAR===false/);
+  assert.match(source, /No se pudo abrir la cámara AR/);
 });
