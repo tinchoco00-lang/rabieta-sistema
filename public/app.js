@@ -462,9 +462,30 @@ async function cargarMesaLinks(){
     state.mesaLinksError=error.message || 'No se pudieron generar los accesos.';
   }
   state.mesaLinksLoading=false;
+  await cargarInfoRed();
   if(state.role==='qrs' || state.role==='encargado') render();
 }
-function mesaAccessUrl(path){ return location.origin + path; }
+// Si Encargado abrió el panel como "localhost", los QR generados con esa
+// palabra literal no sirven desde ningún celular (ahí "localhost" es el
+// celular mismo). Se detecta la IP de red real del servidor una sola vez y
+// se usa para armar los enlaces, sin que Encargado tenga que saber de redes.
+let LAN_INFO = null;
+async function cargarInfoRed(){
+  const esLocalhost = location.hostname==='localhost' || location.hostname==='127.0.0.1';
+  if(!esLocalhost || LAN_INFO) return;
+  try{
+    const response = await fetch('/api/network-info', {headers:{Authorization:'Bearer ' + STAFF_TOKEN}});
+    if(!response.ok) return;
+    const payload = await response.json();
+    if(payload.lanIps && payload.lanIps.length) LAN_INFO = payload;
+  }catch(e){}
+}
+function mesaOrigin(){
+  const esLocalhost = location.hostname==='localhost' || location.hostname==='127.0.0.1';
+  if(esLocalhost && LAN_INFO && LAN_INFO.lanIps.length) return `${location.protocol}//${LAN_INFO.lanIps[0]}:${LAN_INFO.port}`;
+  return location.origin;
+}
+function mesaAccessUrl(path){ return mesaOrigin() + path; }
 function mesaPreviewUrl(path){
   const hashAt=path.indexOf('#');
   const base=hashAt===-1?path:path.slice(0,hashAt);
@@ -517,6 +538,15 @@ function imprimirMesaQrs(){
   window.print();
 }
 window.addEventListener('afterprint',()=>document.body.classList.remove('printing-qrs'));
+function lanBannerHtml(){
+  const esLocalhost = location.hostname==='localhost' || location.hostname==='127.0.0.1';
+  if(!esLocalhost) return '';
+  if(!LAN_INFO || !LAN_INFO.lanIps.length){
+    return `<div class="mock-banner">${ic('warning')} Estás en "localhost": los códigos QR no van a abrir desde ningún celular (ahí "localhost" es el propio celular). No se pudo detectar automáticamente la dirección de red de esta PC; para armar la demo, abrí este panel escribiendo la IP de tu PC en la red en vez de localhost.</div>`;
+  }
+  const origen = mesaOrigin();
+  return `<div class="mock-banner">${ic('checkring')} Detectamos que abriste esto como "localhost": los enlaces y QR de abajo ya se armaron con <b>${escapeHtml(origen)}</b> para que funcionen en cualquier celular de esta misma red. La próxima vez, para evitar este aviso, abrí el panel directo desde esa dirección.</div>`;
+}
 function viewMesaQrs(){
   if(!state.mesaLinks && !state.mesaLinksError) return `<h1 class="view-title">QR / MESAS</h1><div class="empty">Generando accesos de mesa…</div>`;
   if(state.mesaLinksError) return `<h1 class="view-title">QR / MESAS</h1><div class="card qr-error">${escapeHtml(state.mesaLinksError)}</div><button class="btn primary sm" onclick="cargarMesaLinks()">Reintentar</button>`;
@@ -526,6 +556,7 @@ function viewMesaQrs(){
     <h1 class="view-title">QR / MESAS</h1>
     <p class="view-sub">Accesos únicos para imprimir o probar cada mesa. Solo el panel autenticado puede verlos.</p>
     <div class="${links.secure?'secure-banner':'mock-banner'}">${ic(links.secure?'lock':'warning')} ${links.secure?'Identidad segura activa: cada QR queda vinculado a una sola mesa.':'Modo compatible: activá la identidad segura de mesas antes de imprimir los QR definitivos.'}</div>
+    ${lanBannerHtml()}
     <div class="qr-toolbar"><div><strong>Señalética lista para las ${links.mesas.length} mesas</strong><span>Genera una hoja A4 limpia, sin controles internos, para imprimir o guardar como PDF.</span></div><button class="btn primary" ${links.secure?'onclick="imprimirMesaQrs()"':'disabled'}>${ic('receipt')} ${links.secure?'Imprimir todos los QR':'Impresión bloqueada sin identidad segura'}</button></div>
     <div class="qr-grid">${links.mesas.map(mesa=>`<article class="qr-card">
       <div class="qr-title"><strong>Mesa ${mesa.numero}</strong><span>${escapeHtml(mesa.mozo)}</span></div><div class="qr-print-only qr-instruction">Escaneá para ver la carta, pedir y llamar al salón.</div>
