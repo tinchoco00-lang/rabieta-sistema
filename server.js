@@ -569,12 +569,16 @@ function handleAction(msg) {
     }
     case 'ayuda': {
       if (typeof msg.categoria !== 'string' || !HELP_CATEGORIES[msg.categoria]) return actionError(400, 'Categoría de ayuda inválida');
+      const solicitudId = normalizeOptionalText(msg.solicitudId, 'Identificador de solicitud', 80);
+      if (!solicitudId.ok) return solicitudId;
+      if (solicitudId.value && !/^[a-zA-Z0-9_-]+$/.test(solicitudId.value)) return actionError(400, 'Identificador de solicitud inválido');
       const message = normalizeOptionalText(msg.mensaje, 'Mensaje');
       if (!message.ok) return message;
       if (msg.categoria === 'otro' && !message.value) return actionError(400, 'El mensaje es obligatorio');
+      if (solicitudId.value && m.alertas.some(alerta => alerta.solicitudId === solicitudId.value)) break;
       const category = HELP_CATEGORIES[msg.categoria];
       const prioridad = category.prioridad || clasificarTextoLibre(message.value);
-      m.alertas.push({ id: uid(), tipo: msg.categoria, label: category.label, prioridad, mensaje: message.value, estado: 'recibido', creadoTs: state.clockMs, escalado: false });
+      m.alertas.push({ id: uid(), solicitudId: solicitudId.value || null, tipo: msg.categoria, label: category.label, prioridad, mensaje: message.value, estado: 'recibido', creadoTs: state.clockMs, escalado: false });
       break;
     }
     case 'alerta_atender': {

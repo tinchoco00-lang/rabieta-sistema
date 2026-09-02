@@ -1004,6 +1004,17 @@ test('productos, variantes y opciones inválidas no modifican estado', async () 
   assert.equal((await getState()).mesas[0].pedido, null);
 });
 
+test('reintentar una solicitud de ayuda no duplica la alerta de salón', async () => {
+  await resetState();
+  const solicitud = { type: 'ayuda', mesa: 1, categoria: 'otro', mensaje: 'Falta una bebida', solicitudId: 'ayuda-retry-1' };
+  assert.equal((await action(solicitud)).status, 200);
+  assert.equal((await action(solicitud)).status, 200);
+  const mesa = (await getState()).mesas[0];
+  assert.equal(mesa.alertas.length, 1);
+  assert.equal(mesa.alertas[0].solicitudId, solicitud.solicitudId);
+  assert.equal((await action({ ...solicitud, solicitudId: 'espacio no valido' })).status, 400);
+});
+
 test('allowlist, mesa y estados inválidos dan 4xx sin mutar estado', async () => {
   await resetState();
   assert.equal((await action({ type: 'accion_inventada', mesa: 1 })).status, 400);
@@ -1105,6 +1116,17 @@ test('cliente conserva confirmación visible cuando salón resuelve una solicitu
   const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
   assert.match(source, /mesa\.alertas\.filter\(a=>a\.estado===['"]resuelto['"]\)/);
   assert.match(source, /class="resolved-request"[\s\S]*Resuelto/);
+});
+
+test('cliente confirma, conserva y reintenta solicitudes de ayuda', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  assert.match(source, /clienteAyudaDraft/);
+  assert.match(source, /async function enviarAyuda\(id,mensaje='',reintento=false\)/);
+  assert.match(source, /solicitudId:pendiente\.solicitudId/);
+  assert.match(source, /Tu elección y mensaje siguen acá/);
+  assert.match(source, /Reintentar solicitud/);
+  assert.match(source, /type:'ayuda-enviada'/);
+  assert.match(source, /Salón ya recibió tu aviso/);
 });
 
 test('el traspaso de ítems listos se confirma desde salón y no desde Cocina o Barra', () => {
