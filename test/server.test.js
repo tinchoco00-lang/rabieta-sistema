@@ -1287,7 +1287,7 @@ test('el asistente ofrece consulta libre local, resultados accionables y declara
   assert.match(source, /Escribí como hablarías con el mozo/);
   assert.match(engine, /Number\.isFinite\(price\)/);
   assert.match(engine, /unsafeRestriction/);
-  assert.match(source, /no envía datos ni usa un servicio externo/);
+  assert.match(source, /no envía datos a ningún servicio externo/);
   assert.match(engine, /Confirmá con el personal por contaminación cruzada/);
   assert.match(mesaHtml, /recommender\.js/);
   assert.doesNotMatch(source, /fetch\(['"]\/api\/recomend/);
@@ -1404,4 +1404,15 @@ test('el cliente distingue un QR/token de mesa inválido de un corte de conexió
   } finally {
     if (!stopped) await stopServer(processHandle);
   }
+});
+
+test('la IA de Rabieta es visible desde el splash y ofrece ejemplos accionables, sin dejar de declarar su alcance real', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  assert.match(source, /IA de Rabieta/);
+  assert.match(source, /function abrirAsistenteDesdeSplash\(\)\{/);
+  assert.match(source, /Preguntale a la IA de Rabieta qué pedir/);
+  assert.match(source, /function probarEjemploAsistente\(query\)\{/);
+  assert.match(source, /class="ai-examples"/);
+  assert.match(source, /no inventa platos, precios ni disponibilidad/);
+  assert.match(source, /no envía datos a ningún servicio externo/);
 });
