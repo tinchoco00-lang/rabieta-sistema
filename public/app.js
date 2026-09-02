@@ -75,6 +75,8 @@ let CANDIDATOS_3D = new Set();
 let MESAS_TOTAL = 0;
 let liveReady = false; // true mientras el stream en vivo (SSE) está conectado
 let knownAlertIds = null; // null = todavía no llegó el primer snapshot
+let conexionVistaIniciada = false;
+let conexionRecoveryTimer = null;
 let STAFF_TOKEN = null;
 let STAFF_ROLE = null;
 let STAFF_ALLOWED_VIEWS = [];
@@ -231,6 +233,25 @@ function setConnPill(on){
   if(!el){ el=document.createElement('div'); el.id='connPill'; el.className='conn-pill'; document.body.appendChild(el); }
   el.className = 'conn-pill ' + (on?'on':'off');
   el.textContent = on ? '● en vivo' : '● sin conexión…';
+  let banner = document.getElementById('connBanner');
+  if(!banner){
+    banner=document.createElement('div'); banner.id='connBanner'; banner.setAttribute('role','status');
+    banner.setAttribute('aria-live','polite'); document.body.appendChild(banner);
+  }
+  if(conexionRecoveryTimer){ clearTimeout(conexionRecoveryTimer); conexionRecoveryTimer=null; }
+  if(on){
+    if(conexionVistaIniciada){
+      banner.className='conn-banner recovered';
+      banner.innerHTML='<strong>Conexión recuperada</strong><span>La pantalla volvió a estar al día.</span>';
+      conexionRecoveryTimer=setTimeout(()=>{ banner.className='conn-banner'; banner.innerHTML=''; },15000);
+    }else{
+      banner.className='conn-banner'; banner.innerHTML='';
+    }
+    conexionVistaIniciada=true;
+  }else{
+    banner.className='conn-banner offline';
+    banner.innerHTML='<strong>Sin conexión con Rabieta</strong><span>Estamos intentando volver. Tu carrito y lo que estabas completando quedan guardados.</span>';
+  }
 }
 
 function detectarNuevasAlertas(){

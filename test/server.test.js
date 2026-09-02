@@ -1142,6 +1142,19 @@ test('cliente conserva variantes, opciones y observaciones durante actualizacion
   assert.doesNotMatch(source, /document\.querySelector\(`input\[name="var_/);
 });
 
+test('cliente entiende los cortes realtime y recibe confirmación al reconectar', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  const styles = fs.readFileSync(path.join(root, 'public', 'rabieta.css'), 'utf8');
+  assert.match(source, /banner\.id='connBanner'/);
+  assert.match(source, /aria-live','polite'/);
+  assert.match(source, /Sin conexión con Rabieta/);
+  assert.match(source, /Tu carrito y lo que estabas completando quedan guardados/);
+  assert.match(source, /Conexión recuperada/);
+  assert.match(source, /La pantalla volvió a estar al día/);
+  assert.match(styles, /\.conn-banner\.offline/);
+  assert.match(styles, /\.conn-banner\.recovered/);
+});
+
 test('el traspaso de ítems listos se confirma desde salón y no desde Cocina o Barra', () => {
   const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
   assert.match(source, /function itemsListosParaEntregar\(mozo\)/);
