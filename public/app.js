@@ -95,7 +95,7 @@ let state = {
   clockMs:0, mesas:[], analytics:emptyAnalytics(),
   // ui local, no viene del servidor:
   role:null, clienteMesa:null, clienteCat:null, clienteFiltroSinTacc:false,
-  clienteCart:[], clienteExpand:null, clienteProductoDrafts:{}, clienteHelpOpen:false, clienteSplashDismissed:false,
+  clienteCart:[], clienteCartRecuperado:'', clienteExpand:null, clienteProductoDrafts:{}, clienteHelpOpen:false, clienteSplashDismissed:false,
   clienteAsistenteOpen:false, clientePreferencia:null, clienteAsistenteConsulta:'', clienteAsistenteRespuesta:null,
   clienteAsistenteAgregado:null, clienteResenaError:'', clienteResenaEnviando:false,
   clienteRepetirAviso:'', clientePedidoEnviando:false, clientePedidoError:'',
@@ -119,6 +119,39 @@ function findMesa(n){ return state.mesas.find(m=>m.numero===n); }
 function findProducto(id){ for(const c of MENU_DATA.categorias) for(const p of c.productos) if(p.id===id) return p; }
 function todosLosProductos(){ const out=[]; MENU_DATA.categorias.forEach(c=>c.productos.forEach(p=>out.push({...p,categoriaId:c.id}))); return out; }
 function precioBase(p){ if(p.variantes && p.variantes.length) return p.variantes[0].precio; return p.precio; }
+function carritoStorageKey(){ return Number.isInteger(state.clienteMesa)?'rabietaCart:'+state.clienteMesa:null; }
+function guardarCarritoLocal(){
+  const key=carritoStorageKey(); if(!key) return;
+  try{
+    if(state.clienteCart.length) sessionStorage.setItem(key,JSON.stringify(state.clienteCart));
+    else sessionStorage.removeItem(key);
+  }catch(e){}
+}
+function recuperarCarritoLocal(){
+  const key=carritoStorageKey(); if(!key || !MENU_DATA) return;
+  try{
+    const saved=JSON.parse(sessionStorage.getItem(key)||'[]');
+    if(!Array.isArray(saved)) return;
+    state.clienteCart=saved.slice(0,50).map(raw=>{
+      if(!raw || typeof raw!=='object' || typeof raw.productoId!=='string') return null;
+      const producto=findProducto(raw.productoId); if(!producto) return null;
+      let nombre=producto.nombre, precio=precioBase(producto), variante=null, opcion=null;
+      if(producto.variantes){
+        const encontrada=producto.variantes.find(item=>item.nombre===raw.variante); if(!encontrada) return null;
+        variante=encontrada.nombre; precio=encontrada.precio; nombre+=' — '+variante;
+      }
+      if(producto.opciones){
+        if(!producto.opciones.includes(raw.opcion)) return null;
+        opcion=raw.opcion; nombre+=' ('+opcion+')';
+      }
+      const observacion=typeof raw.observacion==='string'?raw.observacion.trim().slice(0,500):'';
+      const cantidad=Number.isInteger(raw.cantidad)?Math.min(20,Math.max(1,raw.cantidad)):1;
+      return {productoId:producto.id,variante,opcion,observacion,nombre,precio,notas:observacion,cantidad};
+    }).filter(Boolean);
+    if(state.clienteCart.length) state.clienteCartRecuperado=`Recuperamos ${cantidadCarrito()} unidad(es) de esta pestaña.`;
+    guardarCarritoLocal();
+  }catch(e){ try{ sessionStorage.removeItem(key); }catch(ignore){} }
+}
 function mesaBusy(m){ return !!m.pedido; }
 function estadoPedidoLabel(m){
   if(!m.pedido) return 'Libre';
@@ -799,6 +832,7 @@ function viewCliente(){
       <button class="btn critical" onclick="toggleHelp()">${ic('help')} Necesito ayuda</button>
     </div>
     ${state.clienteHelpOpen ? helpPanelHtml() : ''}
+    ${state.clienteCartRecuperado?`<div class="cart-recovered" role="status">${ic('refresh')} <span><strong>Tu carrito sigue acá</strong>${escapeHtml(state.clienteCartRecuperado)}</span></div>`:''}
     ${state.clienteCart.length && !mesa.cuentaPedida ? `<div class="cart-bar">
       <div><div class="cart-total">${money(cartTotal)}${cartPendientes?' + '+cartPendientes+' a confirmar':''}</div>
       <div class="cart-info">${cartUnidades} unidad(es) en el carrito</div></div>
@@ -899,7 +933,7 @@ function agregarAlCarrito(id){
   state.clienteExpand = null;
   render();
 }
-function abrirCarrito(){ if(state.clienteCart.length){ state.modal={type:'cart'}; render(); } }
+function abrirCarrito(){ if(state.clienteCart.length){ state.clienteCartRecuperado=''; state.modal={type:'cart'}; render(); } }
 function cantidadLinea(item){ return Number.isInteger(item.cantidad) && item.cantidad>0 ? item.cantidad : 1; }
 function cantidadCarrito(){ return state.clienteCart.reduce((sum,item)=>sum+cantidadLinea(item),0); }
 function totalCarrito(){ return state.clienteCart.reduce((sum,item)=>sum+(item.precio||0)*cantidadLinea(item),0); }
@@ -907,6 +941,7 @@ function agregarLineaCarrito(item){
   const existente=state.clienteCart.find(linea=>linea.productoId===item.productoId && linea.variante===item.variante && linea.opcion===item.opcion && linea.observacion===item.observacion);
   if(existente) existente.cantidad=Math.min(20,cantidadLinea(existente)+1);
   else state.clienteCart.push({...item,cantidad:1});
+  guardarCarritoLocal();
   state.clientePedidoError='';
 }
 function cambiarCantidadCarrito(index,delta){
@@ -914,17 +949,19 @@ function cambiarCantidadCarrito(index,delta){
   const cantidad=Math.min(20,cantidadLinea(state.clienteCart[index])+delta);
   if(cantidad<=0){ quitarDelCarrito(index); return; }
   state.clienteCart[index].cantidad=cantidad;
+  guardarCarritoLocal();
   state.clientePedidoError='';
   render();
 }
 function quitarDelCarrito(index){
   if(state.clientePedidoEnviando || index<0 || index>=state.clienteCart.length) return;
   state.clienteCart.splice(index,1);
+  guardarCarritoLocal();
   state.clientePedidoError='';
   if(!state.clienteCart.length) state.modal=null;
   render();
 }
-function vaciarCarrito(){ if(state.clientePedidoEnviando) return; state.clienteCart=[]; state.modal=null; state.clienteRepetirAviso=''; state.clientePedidoError=''; render(); }
+function vaciarCarrito(){ if(state.clientePedidoEnviando) return; state.clienteCart=[]; state.clienteCartRecuperado=''; guardarCarritoLocal(); state.modal=null; state.clienteRepetirAviso=''; state.clientePedidoError=''; render(); }
 function repetirUltimaRonda(){
   const mesa=findMesa(state.clienteMesa);
   if(!mesa || !mesa.pedido || mesa.cuentaPedida) return;
@@ -967,7 +1004,7 @@ async function enviarPedido(){
     let payload={};
     if(response){ try{ payload=await response.json(); }catch(e){} }
     if(!response || !response.ok) throw new Error(payload.error || 'No pudimos conectar con Rabieta. Revisá tu conexión y probá de nuevo.');
-    state.clienteCart=[];
+    state.clienteCart=[]; guardarCarritoLocal();
     state.clienteRepetirAviso='';
     state.modal={type:'pedido-enviado',unidades,esRonda};
   }catch(error){
@@ -1001,7 +1038,7 @@ async function confirmarPedirCuenta(){
     let payload={}; if(response){ try{ payload=await response.json(); }catch(e){} }
     state.clienteServicioError=payload.error || 'No pudimos pedir la cuenta. Revisá tu conexión y probá de nuevo.'; render(); return;
   }
-  state.clienteCart=[]; state.clienteRepetirAviso=''; state.clientePedidoError='';
+  state.clienteCart=[]; guardarCarritoLocal(); state.clienteRepetirAviso=''; state.clientePedidoError='';
   state.modal={type:'cuenta-enviada'}; render();
 }
 function abrirCheckout(){ state.clientePagoError=''; state.modal={type:'checkout'}; render(); }

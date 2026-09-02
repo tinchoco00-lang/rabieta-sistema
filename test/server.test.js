@@ -1155,6 +1155,19 @@ test('cliente entiende los cortes realtime y recibe confirmación al reconectar'
   assert.match(styles, /\.conn-banner\.recovered/);
 });
 
+test('cliente recupera el carrito de una recarga sin confiar en precios locales', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  const mesaHtml = fs.readFileSync(path.join(root, 'public', 'mesa.html'), 'utf8');
+  assert.match(source, /'rabietaCart:'\+state\.clienteMesa/);
+  assert.match(source, /function recuperarCarritoLocal\(\)/);
+  assert.match(source, /const producto=findProducto\(raw\.productoId\)/);
+  assert.match(source, /precio=encontrada\.precio/);
+  assert.match(source, /producto\.opciones\.includes\(raw\.opcion\)/);
+  assert.match(source, /sessionStorage\.removeItem\(key\)/);
+  assert.match(source, /Tu carrito sigue acá/);
+  assert.match(mesaHtml, /recuperarCarritoLocal\(\)/);
+});
+
 test('el traspaso de ítems listos se confirma desde salón y no desde Cocina o Barra', () => {
   const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
   assert.match(source, /function itemsListosParaEntregar\(mozo\)/);
