@@ -28,6 +28,26 @@ const { createClientIpResolver, createRateLimiters, errorFields, logEvent } = re
 
 const MENU_DATA = JSON.parse(fs.readFileSync(path.join(__dirname, 'menu-rabieta.json'), 'utf8'));
 const MESAS_TOTAL = MENU_DATA._meta.mesas.placeholder_sugerido; // ver _meta.mesas — número real pendiente de confirmar con el local
+
+// Infraestructura real de 3D/AR: apenas exista un archivo real acá con el
+// nombre exacto de un producto, se usa automáticamente en vez del modelo
+// genérico — sin tocar código. Ver public/models/LEEME.md por la convención
+// exacta. Se relee en cada pedido de carta (no en el arranque) para que
+// sumar un archivo mientras el servidor sigue corriendo alcance solo.
+const MODELS_DIR = path.join(__dirname, 'public', 'models');
+function escanearModelos3dReales() {
+  let archivos = [];
+  try { archivos = fs.readdirSync(MODELS_DIR); } catch (_) { return {}; }
+  const mapa = {};
+  archivos.forEach(nombre => {
+    const match = /^([a-z0-9-]+)\.(glb|usdz)$/i.exec(nombre);
+    if (!match) return;
+    const [, productoId, extension] = match;
+    if (!mapa[productoId]) mapa[productoId] = {};
+    mapa[productoId][extension.toLowerCase()] = true;
+  });
+  return mapa;
+}
 const MOZOS = ['Martín', 'Sofía', 'Lucas'];
 const SLA = { urgente: 20, importante: 40, normal: 65 }; // segundos — comprimido para demo, configurable
 
@@ -898,6 +918,9 @@ const MIME = {
   '.jpeg': 'image/jpeg',
   '.png': 'image/png',
   '.webp': 'image/webp',
+  '.glb': 'model/gltf-binary',
+  '.usdz': 'model/vnd.usdz+zip',
+  '.md': 'text/markdown; charset=utf-8',
 };
 
 function readJsonBody(req, cb) {
@@ -997,7 +1020,7 @@ function handleHttpRequest(req, res) {
   }
   if (u.pathname === '/api/menu' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(MENU_DATA));
+    res.end(JSON.stringify({ ...MENU_DATA, _modelos3d: escanearModelos3dReales() }));
     return;
   }
   if (u.pathname === '/api/network-info' && req.method === 'GET') {

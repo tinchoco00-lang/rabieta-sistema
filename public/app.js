@@ -568,10 +568,19 @@ function viewMesaQrs(){
 }
 
 /* ================= MODAL 3D — REAL, no mock ================= */
+// En cuanto exista un .glb real con el nombre del producto en public/models/
+// (ver public/models/LEEME.md), se usa automáticamente acá en vez del
+// genérico — sin tocar código. El servidor lo informa en cada /api/menu.
+function modelosRealesDisponibles(){ return (MENU_DATA && MENU_DATA._modelos3d) || {}; }
 function modeloParaPlato(id){
+  const real = modelosRealesDisponibles()[id];
+  if(real && real.glb){
+    return {url:'/models/'+id+'.glb', usdz: real.usdz ? '/models/'+id+'.usdz' : null, esReal:true, nombre:'el modelo real de este plato'};
+  }
   const lista = [...CANDIDATOS_3D];
   const idx = lista.indexOf(id);
-  return MODELOS_3D_GENERICOS[(idx<0?0:idx) % MODELOS_3D_GENERICOS.length];
+  const generico = MODELOS_3D_GENERICOS[(idx<0?0:idx) % MODELOS_3D_GENERICOS.length];
+  return {url:generico.url, usdz:null, esReal:false, nombre:generico.nombre};
 }
 function renderModal(){
   const root = document.getElementById('modalRoot');
@@ -609,7 +618,8 @@ function renderModal(){
         <div class="stage3d-real">
           <model-viewer id="mv3d" src="${modelo.url}" camera-controls auto-rotate auto-rotate-delay="300"
             ar ar-modes="scene-viewer webxr quick-look" shadow-intensity="1" exposure="1"
-            poster="${poster}" alt="Vista 3D genérica para ${escapeHtml(state.modal.nombre)}" loading="eager" reveal="auto"
+            ${modelo.usdz?`ios-src="${modelo.usdz}"`:''}
+            poster="${poster}" alt="Vista 3D ${modelo.esReal?'real':'genérica'} para ${escapeHtml(state.modal.nombre)}" loading="eager" reveal="auto"
             onload="modelo3dListo()" onerror="modelo3dError()"
             style="width:100%;height:100%;background:transparent;"></model-viewer>
           <div id="fallback3d" class="fallback3d" hidden>
@@ -618,12 +628,14 @@ function renderModal(){
           </div>
         </div>
         <div class="body3d">
-          <span class="badge-preview">Prototipo técnico · modelo genérico, no representa este plato</span>
+          <span class="badge-preview ${modelo.esReal?'real':''}">${modelo.esReal?'Modelo 3D real de Rabieta':'Prototipo técnico · modelo genérico, no representa este plato'}</span>
           <h3>${escapeHtml(state.modal.nombre)}</h3>
           <p>Activá la cámara, enfocá tu mesa, y el plato aparece ahí arriba en tamaño real — como si ya te lo hubieran servido. También podés arrastrar acá abajo para girarlo sin cámara.</p>
           <button class="btn callout block" onclick="activarAR()">${ic('cube')} Ver en mi mesa con la cámara</button>
           <div id="arStatus" class="ar-status" aria-live="polite">Cargando la experiencia 3D…</div>
-          <p class="ar-fineprint">Esta prueba valida interacción y cámara, no la apariencia del plato. Para publicar <b>${state.modal.nombre}</b> faltan su modelo GLB real, su USDZ real y una medida de escala verificada. El modelo visible ahora es ${modelo.nombre}.</p>
+          <p class="ar-fineprint">${modelo.esReal
+            ? `Modelo real escaneado para Rabieta.${modelo.usdz?'':' Todavía falta el archivo USDZ para que abra la cámara AR directamente en iPhone.'}`
+            : `Esta prueba valida interacción y cámara, no la apariencia del plato. Para publicar <b>${state.modal.nombre}</b> faltan su modelo GLB real, su USDZ real y una medida de escala verificada. El modelo visible ahora es ${modelo.nombre}.`}</p>
           <button class="btn dark block" onclick="closeModal()">Cerrar</button>
         </div>
       </div></div>`;
@@ -1653,20 +1665,31 @@ function view3dReadinessHtml(){
   const platos=platosDestacadosData();
   const conFoto=platos.filter(p=>Boolean(p.imagen));
   const sinFoto=platos.filter(p=>!p.imagen);
+  const reales=modelosRealesDisponibles();
+  const conGlb=platos.filter(p=>reales[p.id] && reales[p.id].glb);
+  const conUsdz=platos.filter(p=>reales[p.id] && reales[p.id].usdz);
+  const publicables=platos.filter(p=>reales[p.id] && reales[p.id].glb && reales[p.id].usdz);
   return `<div class="section-h">Preparación 3D/AR por plato</div>
-    <div class="mock-banner">${ic('warning')} Prototipo técnico: hoy se usa un modelo genérico solo para validar cámara e interacción. Ningún plato tiene todavía un modelo 3D real publicable.</div>
+    <div class="${conGlb.length?'secure-banner':'mock-banner'}">${ic(conGlb.length?'checkring':'warning')} ${conGlb.length
+      ? `${conGlb.length} de ${platos.length} platos ya tienen un modelo real cargado en public/models/. El resto sigue con el modelo genérico, rotulado como prototipo técnico.`
+      : 'Prototipo técnico: hoy se usa un modelo genérico solo para validar cámara e interacción. Ningún plato tiene todavía un modelo 3D real publicable. La infraestructura ya está lista: alcanza con dejar el .glb/.usdz en public/models/ con el nombre exacto del plato (ver public/models/LEEME.md), sin tocar código.'}</div>
     <div class="grid cols-3 asset-summary">
-      ${statTile('Modelos 3D reales', `0 / ${platos.length}`, `faltan ${platos.length} GLB + ${platos.length} USDZ`, 'downAlert')}
+      ${statTile('Modelos 3D reales', `${conGlb.length} / ${platos.length}`, publicables.length===platos.length?'todos publicables':`faltan ${platos.length-conGlb.length} GLB + ${platos.length-conUsdz.length} USDZ`, conGlb.length<platos.length?'downAlert':null)}
       ${statTile('Fotos reales', `${conFoto.length} / ${platos.length}`, sinFoto.length?`faltan ${sinFoto.map(p=>p.nombre).join(' y ')}`:'referencias completas', sinFoto.length?'downAlert':null)}
-      ${statTile('Shell AR', 'Listo', 'cámara, fallback y escala por validar', null)}
+      ${statTile('Shell AR', 'Listo', 'detecta y usa modelos reales solo', null)}
     </div>
     <div class="asset-grid">${platos.map(p=>{
-      const missing=[`GLB real de ${p.nombre}`,`USDZ real de ${p.nombre}`,'medida real de escala'];
+      const modelo=reales[p.id]||{};
+      const publicable=Boolean(modelo.glb && modelo.usdz);
+      const missing=[];
+      if(!modelo.glb) missing.push(`GLB real de ${p.nombre}`);
+      if(!modelo.usdz) missing.push(`USDZ real de ${p.nombre}`);
       if(!p.imagen) missing.push(`foto real de ${p.nombre}`);
-      return `<article class="asset-card"><div class="asset-card-head"><strong>${escapeHtml(p.nombre)}</strong><span class="pill importante">No publicable</span></div>
+      return `<article class="asset-card"><div class="asset-card-head"><strong>${escapeHtml(p.nombre)}</strong><span class="pill ${publicable?'normal':'importante'}">${publicable?'Publicable':'No publicable'}</span></div>
         <div class="asset-line"><span>Foto real de referencia</span><b class="${p.imagen?'ready':'pending'}">${p.imagen?'Lista':'Falta'}</b></div>
-        <div class="asset-line"><span>Modelo del plato</span><b class="pending">Falta</b></div>
-        <p><b>Assets exactos:</b> ${escapeHtml(missing.join(' · '))}.</p></article>`;
+        <div class="asset-line"><span>Modelo GLB real</span><b class="${modelo.glb?'ready':'pending'}">${modelo.glb?'Cargado':'Falta'}</b></div>
+        <div class="asset-line"><span>Modelo USDZ real (iPhone)</span><b class="${modelo.usdz?'ready':'pending'}">${modelo.usdz?'Cargado':'Falta'}</b></div>
+        ${missing.length?`<p><b>Falta exactamente:</b> ${escapeHtml(missing.join(' · '))}.</p>`:'<p><b>Listo para publicar.</b></p>'}</article>`;
     }).join('')}</div>`;
 }
 function statTile(label,value,delta,deltaClass){

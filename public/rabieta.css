@@ -382,6 +382,7 @@
   .badge-preview{display:inline-block;font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
     color:var(--gold);background:rgba(238,143,63,0.12);border:1px solid rgba(238,143,63,0.35);
     padding:4px 9px;border-radius:999px;margin-bottom:10px;}
+  .badge-preview.real{color:var(--good);background:rgba(76,175,109,0.12);border-color:rgba(76,175,109,0.4);}
   .modal-3d h3{margin-top:2px;}
   .modal-3d .btn.callout{margin-bottom:10px;}
   .ar-fineprint{font-size:11px;color:var(--ink-muted);line-height:1.5;margin:2px 0 14px;}
