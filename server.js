@@ -54,9 +54,9 @@ const STAFF_TOKEN_TTL_MS = Number.isFinite(configuredTokenTtl) && configuredToke
 const STAFF_TOKENS = new Map();
 const MESA_TOKEN_SECRET = process.env.MESA_TOKEN_SECRET || null;
 const MAX_BODY_BYTES = 32 * 1024;
-const PUBLIC_ACTIONS = new Set(['pedido_nuevo', 'llamar_mozo', 'pedir_cuenta', 'ayuda', 'resena_enviar', 'pago_sandbox_confirmar']);
+const PUBLIC_ACTIONS = new Set(['pedido_nuevo', 'llamar_mozo', 'pedir_cuenta', 'ayuda', 'resena_enviar', 'pago_sandbox_confirmar', 'pago_mercadopago_iniciar']);
 const STAFF_ACTIONS = new Set(['pedido_estado', 'alerta_atender', 'alerta_resolver', 'pago_demo_confirmar', 'mesa_liberar', 'demo_escenario_cargar', 'reset_demo']);
-const MESA_ACTIONS = new Set(['pedido_nuevo', 'pedido_estado', 'llamar_mozo', 'pedir_cuenta', 'ayuda', 'resena_enviar', 'pago_sandbox_confirmar', 'pago_demo_confirmar', 'mesa_liberar']);
+const MESA_ACTIONS = new Set(['pedido_nuevo', 'pedido_estado', 'llamar_mozo', 'pedir_cuenta', 'ayuda', 'resena_enviar', 'pago_sandbox_confirmar', 'pago_demo_confirmar', 'mesa_liberar', 'pago_mercadopago_iniciar']);
 const PAGO_SANDBOX_MEDIOS = new Set(['tarjeta', 'mercado_pago']);
 // Preparación honesta de la integración real de Mercado Pago (Fase 3 del roadmap):
 // solo exponemos al Dueño si cada credencial existe como variable de entorno,
@@ -69,6 +69,17 @@ const INTEGRACIONES = {
     webhookSecret: Boolean(process.env.MERCADOPAGO_WEBHOOK_SECRET),
   },
 };
+// Checkout real de Mercado Pago (Checkout Pro), activo solo cuando el servidor
+// tiene su propio access token. Sin él, el pago sigue siendo el sandbox interno
+// de siempre: no hay ninguna llamada a la API de Mercado Pago ni dinero real.
+const MERCADOPAGO_ACCESS_TOKEN = process.env.MERCADOPAGO_ACCESS_TOKEN || null;
+const MERCADOPAGO_WEBHOOK_SECRET = process.env.MERCADOPAGO_WEBHOOK_SECRET || null;
+const MERCADOPAGO_API_BASE = (process.env.MERCADOPAGO_API_BASE || 'https://api.mercadopago.com').replace(/\/+$/, '');
+// Necesaria para que Mercado Pago pueda avisarnos por webhook cuando se
+// completa un pago (`notification_url`); sin ella igual se puede pagar, pero
+// la confirmación automática no llega y hay que conciliar manualmente.
+const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, '') || null;
+const MERCADOPAGO_CHECKOUT_DISPONIBLE = Boolean(MERCADOPAGO_ACCESS_TOKEN && INTEGRACIONES.mercadoPago.publicKey);
 const PEDIDO_ESTADOS = ['enviado', 'preparando', 'listo', 'entregado'];
 const HELP_CATEGORIES = {
   no_llego: { label: 'No llegó mi pedido', prioridad: 'urgente' },
@@ -157,6 +168,19 @@ function findMesa(n) { return state.mesas.find(m => m.numero === Number(n)); }
 function validMesaNumber(value) {
   return Number.isInteger(value) && value >= 1 && value <= MESAS_TOTAL;
 }
+// Un pago "demo" (sandbox interno o confirmado por staff) sólo puede estar
+// confirmado. Un pago "mercadopago" real puede quedar "pendiente" mientras el
+// cliente completa el checkout o llega el webhook, y recién habilita reseña,
+// cierre de cuenta y liberar mesa cuando Mercado Pago confirma que fue aprobado.
+function pagoConfirmado(pago) {
+  return Boolean(pago) && pago.estado === 'confirmado' && (pago.modo === 'demo' || pago.modo === 'mercadopago');
+}
+function pagoRecuperable(pago) {
+  if (!pago) return false;
+  if (pago.modo === 'demo') return pago.estado === 'confirmado';
+  if (pago.modo === 'mercadopago') return pago.estado === 'confirmado' || pago.estado === 'pendiente';
+  return false;
+}
 
 function authorizeMesaRequest(req, mesa) {
   if (!MESA_TOKEN_SECRET) return { ok: true };
@@ -166,6 +190,53 @@ function authorizeMesaRequest(req, mesa) {
   const expected = crypto.createHmac('sha256', MESA_TOKEN_SECRET).update(`mesa:${mesa}`).digest();
   const supplied = Buffer.from(token, 'hex');
   return crypto.timingSafeEqual(expected, supplied) ? { ok: true } : { ok: false, status: 403 };
+}
+
+// Verifica una notificación webhook de Mercado Pago siguiendo el esquema
+// documentado (header X-Signature "ts=...,v1=...", manifiesto
+// "id:{data.id};request-id:{x-request-id};ts:{ts};" firmado con HMAC-SHA256).
+// IMPORTANTE: nunca se ejerció contra tráfico real de Mercado Pago porque este
+// entorno no tiene credenciales propias; antes de depender de esto en
+// producción hay que validarlo con un webhook real desde el panel de
+// Mercado Pago del dueño.
+function verifyMercadoPagoSignature(req, url) {
+  if (!MERCADOPAGO_WEBHOOK_SECRET) return { ok: false, status: 404 };
+  const signatureHeader = req.headers['x-signature'];
+  const mpRequestId = req.headers['x-request-id'];
+  if (typeof signatureHeader !== 'string' || typeof mpRequestId !== 'string' || !mpRequestId) return { ok: false, status: 401 };
+  const parts = {};
+  signatureHeader.split(',').forEach(pair => {
+    const [key, value] = pair.split('=');
+    if (key && value) parts[key.trim()] = value.trim();
+  });
+  if (!parts.ts || !parts.v1 || !/^[a-f0-9]+$/i.test(parts.v1) || parts.v1.length % 2 !== 0) return { ok: false, status: 401 };
+  const dataId = url.searchParams.get('data.id') || url.searchParams.get('id') || '';
+  if (!dataId) return { ok: false, status: 400 };
+  const manifest = `id:${dataId.toLowerCase()};request-id:${mpRequestId};ts:${parts.ts};`;
+  const expected = crypto.createHmac('sha256', MERCADOPAGO_WEBHOOK_SECRET).update(manifest).digest();
+  const supplied = Buffer.from(parts.v1, 'hex');
+  if (expected.length !== supplied.length || !crypto.timingSafeEqual(expected, supplied)) return { ok: false, status: 401 };
+  return { ok: true, dataId };
+}
+
+// Fuente de verdad del estado de un pago: la notificación webhook sólo avisa
+// que "algo cambió"; nunca se confía en su body, siempre se vuelve a
+// preguntar a la API de pagos de Mercado Pago con el access token propio.
+async function consultarPagoMercadoPago(paymentId) {
+  let response;
+  try {
+    response = await fetch(`${MERCADOPAGO_API_BASE}/v1/payments/${encodeURIComponent(paymentId)}`, {
+      headers: { Authorization: `Bearer ${MERCADOPAGO_ACCESS_TOKEN}` },
+    });
+  } catch (error) {
+    return { ok: false, errorFields: errorFields(error) };
+  }
+  let payload = null;
+  try { payload = await response.json(); } catch (_) { /* respuesta no-JSON: payload queda null */ }
+  if (!response.ok || !payload || typeof payload.status !== 'string') {
+    return { ok: false, errorFields: { errorName: 'MercadoPagoApiError', errorCode: String(response.status) } };
+  }
+  return { ok: true, status: payload.status, externalReference: payload.external_reference || null };
 }
 
 function accessTokenForMesa(mesa) {
@@ -287,6 +358,17 @@ function recordPaymentAnalytics(mesa, analytics = state.analytics, clock = state
   });
 }
 
+// Punto único de confirmación de un pago, sea sandbox interno, staff o
+// Mercado Pago real (por webhook). Mantiene analytics y alertas de cuenta
+// consistentes sin importar el origen de la confirmación.
+function confirmarPagoMesa(m, { modo, medio, total, referencia }) {
+  m.pago = { modo, estado: 'confirmado', medio, total, referencia, confirmadoTs: state.clockMs };
+  recordPaymentAnalytics(m);
+  m.alertas.forEach(alertaCuenta => {
+    if (alertaCuenta.tipo === 'cuenta' && alertaCuenta.estado !== 'resuelto') alertaCuenta.estado = 'resuelto';
+  });
+}
+
 function recordItemAnalytics(item, estado, analytics = state.analytics, clock = state.clockMs) {
   if (estado === 'listo') {
     const preparationTime = Math.max(0, clock - item.enviadoTs);
@@ -389,7 +471,7 @@ function normalizeRecoveredState(recoveredState) {
   });
 
   recoveredState.mesas.forEach(mesa => {
-    if (!mesa.pago || mesa.pago.modo !== 'demo' || mesa.pago.estado !== 'confirmado') mesa.pago = null;
+    if (!pagoRecuperable(mesa.pago)) mesa.pago = null;
     const cuentaAlert = mesa.alertas.find(alerta => alerta.tipo === 'cuenta');
     mesa.cuentaPedidaTs = mesa.cuentaPedida
       ? (Number.isFinite(mesa.cuentaPedidaTs) ? mesa.cuentaPedidaTs : (cuentaAlert && Number.isFinite(cuentaAlert.creadoTs) ? cuentaAlert.creadoTs : recoveredState.clockMs))
@@ -422,7 +504,7 @@ function normalizeRecoveredState(recoveredState) {
   });
   if (!hadAnalytics) {
     recoveredState.mesas.forEach(mesa => {
-      if (mesa.pago && mesa.pedido && mesa.pedido.items.every(item => Number.isFinite(item.precio))) {
+      if (pagoConfirmado(mesa.pago) && mesa.pedido && mesa.pedido.items.every(item => Number.isFinite(item.precio))) {
         recordPaymentAnalytics(mesa, recoveredState.analytics, recoveredState.clockMs);
       }
     });
@@ -430,58 +512,58 @@ function normalizeRecoveredState(recoveredState) {
   return recoveredState;
 }
 
-function seedPresentationScenario() {
+async function seedPresentationScenario() {
   const previousState = state;
   state = seedState();
-  const run = message => {
-    const result = handleAction(message);
+  const run = async message => {
+    const result = await handleAction(message);
     if (!result.ok) state = previousState;
     return result;
   };
   const advance = (mesa, itemId, estado) => run({ type: 'pedido_estado', mesa, itemId, estado });
 
   state.clockMs = 15;
-  let result = run({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'hummus-rabieta' }, { productoId: 'agua' }] });
+  let result = await run({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'hummus-rabieta' }, { productoId: 'agua' }] });
   if (!result.ok) return result;
   const mesaUno = findMesa(1);
   state.clockMs = 55;
-  result = advance(1, mesaUno.pedido.items[0].id, 'preparando'); if (!result.ok) return result;
-  result = advance(1, mesaUno.pedido.items[1].id, 'preparando'); if (!result.ok) return result;
+  result = await advance(1, mesaUno.pedido.items[0].id, 'preparando'); if (!result.ok) return result;
+  result = await advance(1, mesaUno.pedido.items[1].id, 'preparando'); if (!result.ok) return result;
   state.clockMs = 105;
-  result = advance(1, mesaUno.pedido.items[1].id, 'listo'); if (!result.ok) return result;
+  result = await advance(1, mesaUno.pedido.items[1].id, 'listo'); if (!result.ok) return result;
 
   state.clockMs = 125;
-  result = run({ type: 'pedido_nuevo', mesa: 2, items: [{ productoId: 'burger-rabieta' }, { productoId: 'papas-rabieta' }] });
+  result = await run({ type: 'pedido_nuevo', mesa: 2, items: [{ productoId: 'burger-rabieta' }, { productoId: 'papas-rabieta' }] });
   if (!result.ok) return result;
 
   state.clockMs = 145;
-  result = run({ type: 'pedido_nuevo', mesa: 3, items: [{ productoId: 'hummus-rabieta' }] });
+  result = await run({ type: 'pedido_nuevo', mesa: 3, items: [{ productoId: 'hummus-rabieta' }] });
   if (!result.ok) return result;
   const mesaTresItem = findMesa(3).pedido.items[0].id;
-  result = advance(3, mesaTresItem, 'preparando'); if (!result.ok) return result;
+  result = await advance(3, mesaTresItem, 'preparando'); if (!result.ok) return result;
   state.clockMs = 180;
-  result = advance(3, mesaTresItem, 'listo'); if (!result.ok) return result;
+  result = await advance(3, mesaTresItem, 'listo'); if (!result.ok) return result;
   state.clockMs = 195;
-  result = advance(3, mesaTresItem, 'entregado'); if (!result.ok) return result;
-  result = run({ type: 'pedir_cuenta', mesa: 3 }); if (!result.ok) return result;
+  result = await advance(3, mesaTresItem, 'entregado'); if (!result.ok) return result;
+  result = await run({ type: 'pedir_cuenta', mesa: 3 }); if (!result.ok) return result;
 
   state.clockMs = 220;
-  result = run({ type: 'ayuda', mesa: 4, categoria: 'incorrecto', mensaje: 'Escenario demo: revisar el pedido' });
+  result = await run({ type: 'ayuda', mesa: 4, categoria: 'incorrecto', mensaje: 'Escenario demo: revisar el pedido' });
   if (!result.ok) return result;
 
   state.clockMs = 235;
-  result = run({ type: 'pedido_nuevo', mesa: 5, items: [{ productoId: 'brownie' }] });
+  result = await run({ type: 'pedido_nuevo', mesa: 5, items: [{ productoId: 'brownie' }] });
   if (!result.ok) return result;
   const mesaCincoItem = findMesa(5).pedido.items[0].id;
-  result = advance(5, mesaCincoItem, 'preparando'); if (!result.ok) return result;
+  result = await advance(5, mesaCincoItem, 'preparando'); if (!result.ok) return result;
   state.clockMs = 260;
-  result = advance(5, mesaCincoItem, 'listo'); if (!result.ok) return result;
+  result = await advance(5, mesaCincoItem, 'listo'); if (!result.ok) return result;
   state.clockMs = 275;
-  result = advance(5, mesaCincoItem, 'entregado'); if (!result.ok) return result;
-  result = run({ type: 'pedir_cuenta', mesa: 5 }); if (!result.ok) return result;
+  result = await advance(5, mesaCincoItem, 'entregado'); if (!result.ok) return result;
+  result = await run({ type: 'pedir_cuenta', mesa: 5 }); if (!result.ok) return result;
   state.clockMs = 285;
-  result = run({ type: 'pago_demo_confirmar', mesa: 5 }); if (!result.ok) return result;
-  result = run({
+  result = await run({ type: 'pago_demo_confirmar', mesa: 5 }); if (!result.ok) return result;
+  result = await run({
     type: 'resena_enviar', mesa: 5, puntuacion: 5, comentario: 'Escenario de presentación listo',
     crmConsentimiento: true, crmCanal: 'email', crmContacto: 'demo@rabieta.local', crmNombre: 'Cliente demo',
   });
@@ -505,7 +587,7 @@ function estadoPayload(client) {
         type: 'estado', state: visibleState, mesasTotal: MESAS_TOTAL, role: client.role, allowedViews: STAFF_ROLE_VIEWS[client.role],
         ...(client.role === 'dueno' ? { integraciones: INTEGRACIONES } : {}),
       }
-    : { type: 'estado', state: visibleState };
+    : { type: 'estado', state: visibleState, mercadoPagoDisponible: MERCADOPAGO_CHECKOUT_DISPONIBLE };
   return 'data: ' + JSON.stringify(message) + '\n\n';
 }
 function closeSseClient(client) {
@@ -522,7 +604,46 @@ function broadcast() {
   });
 }
 
-function handleAction(msg) {
+// Crea una preferencia de Checkout Pro real contra la API de Mercado Pago.
+// Nunca inventa un resultado: si la llamada falla o responde algo inesperado,
+// devuelve ok:false y quien llama decide el mensaje seguro para el cliente.
+async function crearPreferenciaMercadoPago(m, total, externalReference) {
+  const body = {
+    items: m.pedido.items.map(item => ({
+      title: item.nombre, quantity: 1, unit_price: item.precio, currency_id: 'ARS',
+    })),
+    external_reference: externalReference,
+    statement_descriptor: 'RABIETA',
+  };
+  if (PUBLIC_BASE_URL) {
+    body.notification_url = `${PUBLIC_BASE_URL}/api/pagos/mercadopago-webhook`;
+    body.back_urls = {
+      success: `${PUBLIC_BASE_URL}/mesa.html?mesa=${m.numero}&mp=success`,
+      pending: `${PUBLIC_BASE_URL}/mesa.html?mesa=${m.numero}&mp=pending`,
+      failure: `${PUBLIC_BASE_URL}/mesa.html?mesa=${m.numero}&mp=failure`,
+    };
+    body.auto_return = 'approved';
+  }
+  let response;
+  try {
+    response = await fetch(`${MERCADOPAGO_API_BASE}/checkout/preferences`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${MERCADOPAGO_ACCESS_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (error) {
+    return { ok: false, errorFields: errorFields(error) };
+  }
+  let payload = null;
+  try { payload = await response.json(); } catch (_) { /* respuesta no-JSON: payload queda null */ }
+  const checkoutUrl = payload && (payload.sandbox_init_point || payload.init_point);
+  if (!response.ok || !payload || (typeof payload.id !== 'string' && typeof payload.id !== 'number') || typeof checkoutUrl !== 'string' || !checkoutUrl) {
+    return { ok: false, errorFields: { errorName: 'MercadoPagoApiError', errorCode: String(response.status) } };
+  }
+  return { ok: true, preferenceId: String(payload.id), checkoutUrl };
+}
+
+async function handleAction(msg) {
   if (!msg || typeof msg !== 'object' || Array.isArray(msg)) return actionError(400, 'Acción inválida');
   if (!PUBLIC_ACTIONS.has(msg.type) && !STAFF_ACTIONS.has(msg.type)) return actionError(400, 'Tipo de acción inválido');
 
@@ -616,7 +737,7 @@ function handleAction(msg) {
       break;
     }
     case 'resena_enviar': {
-      if (!m.pago || m.pago.modo !== 'demo' || m.pago.estado !== 'confirmado') {
+      if (!pagoConfirmado(m.pago)) {
         return actionError(409, 'La reseña se habilita después de confirmar el pago');
       }
       if (m.resenaEnviada) return actionError(409, 'La mesa ya envió una reseña');
@@ -654,26 +775,44 @@ function handleAction(msg) {
         return actionError(400, 'Medio de pago sandbox inválido');
       }
       const total = m.pedido.items.reduce((sum, item) => sum + item.precio, 0);
-      m.pago = {
-        modo: 'demo', estado: 'confirmado', medio, total,
+      confirmarPagoMesa(m, {
+        modo: 'demo', medio, total,
         referencia: `RAB-${String(m.numero).padStart(2, '0')}-${String(uid()).padStart(6, '0')}`,
-        confirmadoTs: state.clockMs,
-      };
-      recordPaymentAnalytics(m);
-      m.alertas.forEach(alertaCuenta => {
-        if (alertaCuenta.tipo === 'cuenta' && alertaCuenta.estado !== 'resuelto') alertaCuenta.estado = 'resuelto';
       });
       break;
     }
+    case 'pago_mercadopago_iniciar': {
+      if (!m.pedido || !m.cuentaPedida) return actionError(409, 'La cuenta no fue solicitada');
+      if (m.pago) return actionError(409, 'El pago demo ya fue confirmado');
+      if (m.pedido.items.some(item => !Number.isFinite(item.precio))) {
+        return actionError(409, 'Hay precios pendientes de confirmar');
+      }
+      if (!MERCADOPAGO_CHECKOUT_DISPONIBLE) {
+        return actionError(409, 'Mercado Pago no está configurado en este entorno; usá el pago sandbox interno');
+      }
+      const total = m.pedido.items.reduce((sum, item) => sum + item.precio, 0);
+      const externalReference = `rabieta-mesa${m.numero}-${uid()}`;
+      const preferencia = await crearPreferenciaMercadoPago(m, total, externalReference);
+      if (!preferencia.ok) {
+        logEvent('error', 'mercadopago_preferencia_error', { mesa: m.numero, ...preferencia.errorFields });
+        return actionError(502, 'No se pudo iniciar el pago con Mercado Pago. Probá de nuevo o usá el pago sandbox interno.');
+      }
+      m.pago = {
+        modo: 'mercadopago', estado: 'pendiente', medio: 'mercado_pago', total,
+        externalReference, preferenceId: preferencia.preferenceId, checkoutUrl: preferencia.checkoutUrl,
+        iniciadoTs: state.clockMs,
+      };
+      break;
+    }
     case 'mesa_liberar': {
-      if (!m.pago || m.pago.modo !== 'demo' || m.pago.estado !== 'confirmado') {
+      if (!pagoConfirmado(m.pago)) {
         return actionError(409, 'La mesa solo puede liberarse después de confirmar el pago');
       }
       m.ocupada = false; m.pedido = null; m.cuentaPedida = false; m.cuentaPedidaTs = null; m.pago = null; m.resenaEnviada = false; m.alertas = [];
       break;
     }
     case 'demo_escenario_cargar': {
-      const result = seedPresentationScenario();
+      const result = await seedPresentationScenario();
       if (!result.ok) return result;
       break;
     }
@@ -905,7 +1044,7 @@ function handleHttpRequest(req, res) {
       }
       enqueueMutation(async () => {
         const previousState = structuredClone(state);
-        const result = handleAction(body);
+        const result = await handleAction(body);
         if (!result.ok) {
           sendJson(res, result.status, { ok: false, error: result.error });
           return;
@@ -966,6 +1105,48 @@ function handleHttpRequest(req, res) {
     res.write(estadoPayload(client));
     sseClients.add(client);
     req.on('close', () => sseClients.delete(client));
+    return;
+  }
+  if (u.pathname === '/api/pagos/mercadopago-webhook' && req.method === 'POST') {
+    if (!applyRateLimit(req, res, rateLimiters.action, 'mercadopago-webhook')) return;
+    req.resume(); // no necesitamos el body: la firma y el id de pago viajan en headers y query string
+    const verification = verifyMercadoPagoSignature(req, u);
+    if (!verification.ok) { sendJson(res, verification.status, { ok: false }); return; }
+    enqueueMutation(async () => {
+      const previousState = structuredClone(state);
+      try {
+        const pago = await consultarPagoMercadoPago(verification.dataId);
+        if (pago.ok && pago.status === 'approved' && pago.externalReference) {
+          const mesa = state.mesas.find(candidate => candidate.pago
+            && candidate.pago.modo === 'mercadopago'
+            && candidate.pago.estado === 'pendiente'
+            && candidate.pago.externalReference === pago.externalReference);
+          if (mesa) {
+            confirmarPagoMesa(mesa, { modo: 'mercadopago', medio: 'mercado_pago', total: mesa.pago.total, referencia: String(verification.dataId) });
+            try {
+              await persistence.save(state);
+            } catch (persistError) {
+              state = previousState;
+              logEvent('error', 'mercadopago_webhook_persistencia_error', { requestId: req.requestId, ...errorFields(persistError) });
+              sendJson(res, 503, { ok: false });
+              return;
+            }
+            broadcast();
+          }
+        } else if (!pago.ok) {
+          logEvent('error', 'mercadopago_webhook_consulta_error', { requestId: req.requestId, ...pago.errorFields });
+        }
+      } catch (error) {
+        logEvent('error', 'mercadopago_webhook_error', { requestId: req.requestId, ...errorFields(error) });
+      }
+      // Siempre 200: si respondemos un error, Mercado Pago reintenta la misma
+      // notificación indefinidamente. Los problemas quedan en el log seguro
+      // (mercadopago_webhook_*) para reconciliar manualmente si hace falta.
+      sendJson(res, 200, { ok: true });
+    }).catch(error => {
+      logEvent('error', 'mercadopago_webhook_processing_error', { requestId: req.requestId, ...errorFields(error) });
+      if (!res.headersSent) sendJson(res, 200, { ok: true });
+    });
     return;
   }
 

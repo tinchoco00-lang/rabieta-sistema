@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
+const http = require('node:http');
 const net = require('node:net');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -114,6 +115,57 @@ async function loginAs(role) {
 
 function tokenForMesa(secret, mesa) {
   return crypto.createHmac('sha256', secret).update(`mesa:${mesa}`).digest('hex');
+}
+
+// Reemplaza a la API real de Mercado Pago en los tests: nunca tuvimos
+// credenciales propias para ejercitar la integración contra el servicio real,
+// así que este mock imita el contrato documentado (POST /checkout/preferences,
+// GET /v1/payments/:id) para poder probar nuestro código de punta a punta.
+function startMockMercadoPago({ onPreference, onPayment } = {}) {
+  const calls = { preferences: [], payments: [] };
+  const server = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', () => {
+      const rawBody = Buffer.concat(chunks).toString('utf8');
+      if (req.method === 'POST' && req.url.startsWith('/checkout/preferences')) {
+        const parsedBody = rawBody ? JSON.parse(rawBody) : {};
+        calls.preferences.push(parsedBody);
+        const result = (onPreference && onPreference(parsedBody)) || {
+          status: 201,
+          body: { id: 'mock-pref-id', init_point: 'https://mp.mock/init', sandbox_init_point: 'https://mp.mock/sandbox-init' },
+        };
+        res.writeHead(result.status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result.body));
+        return;
+      }
+      const paymentMatch = req.url.match(/^\/v1\/payments\/([^/?]+)/);
+      if (req.method === 'GET' && paymentMatch) {
+        const paymentId = decodeURIComponent(paymentMatch[1]);
+        calls.payments.push(paymentId);
+        const result = (onPayment && onPayment(paymentId)) || { status: 200, body: { status: 'approved', external_reference: null } };
+        res.writeHead(result.status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result.body));
+        return;
+      }
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'not_found' }));
+    });
+  });
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => resolve({ server, calls, url: `http://127.0.0.1:${server.address().port}` }));
+  });
+}
+function stopMockServer(server) {
+  return new Promise(resolve => server.close(() => resolve()));
+}
+function mercadoPagoWebhookHeaders(secret, dataId, tsSeconds = Math.floor(Date.now() / 1000)) {
+  const ts = String(tsSeconds);
+  const requestId = 'test-request-id';
+  const manifest = `id:${String(dataId).toLowerCase()};request-id:${requestId};ts:${ts};`;
+  const v1 = crypto.createHmac('sha256', secret).update(manifest).digest('hex');
+  return { 'x-signature': `ts=${ts},v1=${v1}`, 'x-request-id': requestId };
 }
 
 async function resetState() {
@@ -1429,4 +1481,200 @@ test('una sesión de personal vencida no muestra el banner contradictorio de "si
   const conectarStaffBody = source.match(/async function conectarStaff\(onFirstSnapshot\)\{[\s\S]*?\r?\n  \}\r?\n\}/)[0];
   assert.match(conectarStaffBody, /hideConnStatus\(\);/);
   assert.match(conectarStaffBody, /if\(expirado\)\{[\s\S]*?hideConnStatus\(\);[\s\S]*?staffSessionExpired\(\);[\s\S]*?break;/);
+});
+
+test('sin credenciales de Mercado Pago, iniciar un pago real da un error claro y el sandbox interno sigue intacto', async () => {
+  await resetState();
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 6, items: [{ productoId: 'hummus-rabieta' }] })).status, 200);
+  assert.equal((await action({ type: 'pedir_cuenta', mesa: 6 })).status, 200);
+  const sinConfigurar = await action({ type: 'pago_mercadopago_iniciar', mesa: 6 });
+  assert.equal(sinConfigurar.status, 409);
+  assert.match((await sinConfigurar.json()).error, /no está configurado/);
+  assert.equal((await getStaffState()).mesas.find(m => m.numero === 6).pago, null);
+  // El sandbox interno de siempre no se ve afectado por la ausencia de configuración real.
+  assert.equal((await action({ type: 'pago_sandbox_confirmar', mesa: 6, medio: 'mercado_pago' })).status, 200);
+  await resetState();
+});
+
+test('checkout real de Mercado Pago: preferencia, webhook con firma válida, idempotencia y habilita reseña/liberar mesa', async () => {
+  const port = await reservePort();
+  const isolatedUrl = `http://127.0.0.1:${port}`;
+  const webhookSecret = 'test-webhook-secret';
+  let capturedExternalReference = null;
+  const mock = await startMockMercadoPago({
+    onPreference(body) {
+      capturedExternalReference = body.external_reference;
+      assert.deepEqual(body.items, [{ title: 'Hummus Rabieta', quantity: 1, unit_price: 4600, currency_id: 'ARS' }]);
+      return { status: 201, body: { id: 'pref-123', init_point: 'https://mp.mock/init', sandbox_init_point: 'https://mp.mock/sandbox-init' } };
+    },
+    onPayment(paymentId) {
+      assert.equal(paymentId, 'pay-999');
+      return { status: 200, body: { status: 'approved', external_reference: capturedExternalReference } };
+    },
+  });
+  let output = '';
+  const processHandle = spawn(process.execPath, ['server.js'], {
+    cwd: root,
+    env: {
+      ...process.env, DATABASE_URL: '', PORT: String(port), STAFF_PIN: testPin,
+      MERCADOPAGO_ACCESS_TOKEN: 'TEST-mp-access-token', MERCADOPAGO_PUBLIC_KEY: 'TEST-mp-public-key',
+      MERCADOPAGO_WEBHOOK_SECRET: webhookSecret, MERCADOPAGO_API_BASE: mock.url,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  processHandle.stdout.on('data', chunk => { output += chunk; });
+  processHandle.stderr.on('data', chunk => { output += chunk; });
+  let stopped = false;
+  try {
+    await waitUntilReady(isolatedUrl, processHandle, () => output);
+    async function isolatedAction(body, token) {
+      const headers = { 'content-type': 'application/json' };
+      if (token) headers.authorization = `Bearer ${token}`;
+      return fetch(`${isolatedUrl}/api/action`, { method: 'POST', headers, body: JSON.stringify(body) });
+    }
+    async function isolatedStaffState(staffToken) {
+      const response = await fetch(`${isolatedUrl}/api/staff-events`, { headers: { authorization: `Bearer ${staffToken}` } });
+      const reader = response.body.getReader();
+      const event = await readSseEvent(reader);
+      await reader.cancel();
+      return event.message;
+    }
+    const login = await fetch(`${isolatedUrl}/api/staff-login`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pin: testPin, role: 'encargado' }),
+    });
+    const { token } = await login.json();
+
+    assert.equal((await isolatedAction({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'hummus-rabieta' }] })).status, 200);
+    assert.equal((await isolatedAction({ type: 'pedir_cuenta', mesa: 1 })).status, 200);
+
+    const iniciar = await isolatedAction({ type: 'pago_mercadopago_iniciar', mesa: 1 });
+    assert.equal(iniciar.status, 200);
+    assert.equal(mock.calls.preferences.length, 1);
+    assert.ok(capturedExternalReference && capturedExternalReference.startsWith('rabieta-mesa1-'));
+
+    let mesaUno = (await getStateFrom(isolatedUrl, 1)).mesas[0];
+    assert.equal(mesaUno.pago.modo, 'mercadopago');
+    assert.equal(mesaUno.pago.estado, 'pendiente');
+    assert.equal(mesaUno.pago.checkoutUrl, 'https://mp.mock/sandbox-init');
+    assert.equal(mesaUno.pago.total, 4600);
+
+    // Con el pago pendiente, la mesa todavía no puede liberarse ni dejar reseña.
+    assert.equal((await isolatedAction({ type: 'mesa_liberar', mesa: 1 }, token)).status, 409);
+    assert.equal((await isolatedAction({ type: 'resena_enviar', mesa: 1, puntuacion: 5 })).status, 409);
+
+    // Firma inválida: rechazada, sin tocar el estado.
+    const badSignature = await fetch(`${isolatedUrl}/api/pagos/mercadopago-webhook?data.id=pay-999&type=payment`, {
+      method: 'POST', headers: { 'x-signature': 'ts=1,v1=00', 'x-request-id': 'req-1' },
+    });
+    assert.equal(badSignature.status, 401);
+    assert.equal((await getStateFrom(isolatedUrl, 1)).mesas[0].pago.estado, 'pendiente');
+
+    // Webhook real con firma válida: confirma el pago.
+    const headers = mercadoPagoWebhookHeaders(webhookSecret, 'pay-999');
+    const webhook = await fetch(`${isolatedUrl}/api/pagos/mercadopago-webhook?data.id=pay-999&type=payment`, { method: 'POST', headers });
+    assert.equal(webhook.status, 200);
+    assert.equal(mock.calls.payments[0], 'pay-999');
+
+    mesaUno = (await getStateFrom(isolatedUrl, 1)).mesas[0];
+    assert.equal(mesaUno.pago.estado, 'confirmado');
+    assert.equal(mesaUno.pago.modo, 'mercadopago');
+    assert.equal(mesaUno.pago.referencia, 'pay-999');
+
+    const duenoToken = (await (await fetch(`${isolatedUrl}/api/staff-login`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pin: testPin, role: 'dueno' }),
+    })).json()).token;
+    const duenoState = await isolatedStaffState(duenoToken);
+    assert.equal(duenoState.state.analytics.pagosConfirmados, 1);
+    assert.equal(duenoState.state.analytics.ventasDemo, 4600);
+
+    // Reintento del mismo webhook (Mercado Pago reintenta ante cualquier duda): no debe duplicar analytics.
+    const webhookOtraVez = await fetch(`${isolatedUrl}/api/pagos/mercadopago-webhook?data.id=pay-999&type=payment`, { method: 'POST', headers });
+    assert.equal(webhookOtraVez.status, 200);
+    const duenoStateOtraVez = await isolatedStaffState(duenoToken);
+    assert.equal(duenoStateOtraVez.state.analytics.pagosConfirmados, 1);
+
+    // Ahora sí se puede dejar reseña y liberar la mesa.
+    assert.equal((await isolatedAction({ type: 'resena_enviar', mesa: 1, puntuacion: 5 })).status, 200);
+    assert.equal((await isolatedAction({ type: 'mesa_liberar', mesa: 1 }, token)).status, 200);
+
+    await stopServer(processHandle);
+    stopped = true;
+    assert.doesNotMatch(output, /TEST-mp-access-token/);
+    assert.doesNotMatch(output, new RegExp(webhookSecret));
+  } finally {
+    if (!stopped) await stopServer(processHandle);
+    await stopMockServer(mock.server);
+  }
+});
+
+test('webhook de Mercado Pago sin MERCADOPAGO_WEBHOOK_SECRET configurado no existe funcionalmente', async () => {
+  const port = await reservePort();
+  const isolatedUrl = `http://127.0.0.1:${port}`;
+  let output = '';
+  const processHandle = spawn(process.execPath, ['server.js'], {
+    cwd: root,
+    env: { ...process.env, DATABASE_URL: '', PORT: String(port), STAFF_PIN: testPin },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  processHandle.stdout.on('data', chunk => { output += chunk; });
+  processHandle.stderr.on('data', chunk => { output += chunk; });
+  let stopped = false;
+  try {
+    await waitUntilReady(isolatedUrl, processHandle, () => output);
+    const response = await fetch(`${isolatedUrl}/api/pagos/mercadopago-webhook?data.id=1&type=payment`, {
+      method: 'POST', headers: { 'x-signature': 'ts=1,v1=00', 'x-request-id': 'req-1' },
+    });
+    assert.equal(response.status, 404);
+    await stopServer(processHandle);
+    stopped = true;
+  } finally {
+    if (!stopped) await stopServer(processHandle);
+  }
+});
+
+test('si la API de Mercado Pago falla al crear la preferencia, el error es honesto y no deja un pago fantasma', async () => {
+  const port = await reservePort();
+  const isolatedUrl = `http://127.0.0.1:${port}`;
+  const mock = await startMockMercadoPago({ onPreference: () => ({ status: 500, body: { message: 'internal error' } }) });
+  let output = '';
+  const processHandle = spawn(process.execPath, ['server.js'], {
+    cwd: root,
+    env: {
+      ...process.env, DATABASE_URL: '', PORT: String(port), STAFF_PIN: testPin,
+      MERCADOPAGO_ACCESS_TOKEN: 'TEST-mp-access-token', MERCADOPAGO_PUBLIC_KEY: 'TEST-mp-public-key',
+      MERCADOPAGO_API_BASE: mock.url,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  processHandle.stdout.on('data', chunk => { output += chunk; });
+  processHandle.stderr.on('data', chunk => { output += chunk; });
+  let stopped = false;
+  try {
+    await waitUntilReady(isolatedUrl, processHandle, () => output);
+    async function isolatedAction(body) {
+      return fetch(`${isolatedUrl}/api/action`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    }
+    assert.equal((await isolatedAction({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'hummus-rabieta' }] })).status, 200);
+    assert.equal((await isolatedAction({ type: 'pedir_cuenta', mesa: 1 })).status, 200);
+    const iniciar = await isolatedAction({ type: 'pago_mercadopago_iniciar', mesa: 1 });
+    assert.equal(iniciar.status, 502);
+    assert.equal((await getStateFrom(isolatedUrl, 1)).mesas[0].pago, null);
+    // El sandbox interno sigue disponible aunque Mercado Pago haya fallado.
+    assert.equal((await isolatedAction({ type: 'pago_sandbox_confirmar', mesa: 1, medio: 'tarjeta' })).status, 200);
+    await stopServer(processHandle);
+    stopped = true;
+  } finally {
+    if (!stopped) await stopServer(processHandle);
+    await stopMockServer(mock.server);
+  }
+});
+
+test('el modal de checkout se vuelve a pintar al cambiar de medio de pago (no queda cacheado con Tarjeta demo)', () => {
+  // Bug real encontrado al verificar el checkout de Mercado Pago en el navegador:
+  // renderModal() memoiza el modal por una "modalKey" para no perder el foco del
+  // input en cada tick de reloj; el tipo 'checkout' no estaba incluido, así que
+  // elegir "Mercado Pago" cambiaba el estado pero el DOM seguía mostrando
+  // "Tarjeta demo" como activa. Sin esto, nadie podía usar el checkout real.
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  assert.match(source, /state\.modal\.type==='checkout'\s*\n\s*\?\s*':'\+state\.clientePagoMedio\+':'\+state\.clientePagoEnviando\+':'\+state\.clientePagoError/);
 });

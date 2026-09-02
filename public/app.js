@@ -92,7 +92,7 @@ function emptyAnalytics(){
 }
 
 let state = {
-  clockMs:0, mesas:[], analytics:emptyAnalytics(), integraciones:null,
+  clockMs:0, mesas:[], analytics:emptyAnalytics(), integraciones:null, mercadoPagoDisponible:false,
   // ui local, no viene del servidor:
   role:null, clienteMesa:null, clienteCat:null, clienteFiltroSinTacc:false, clienteAccesoInvalido:false,
   clienteCart:[], clienteCartRecuperado:'', clienteExpand:null, clienteProductoDrafts:{}, clienteHelpOpen:false, clienteSplashDismissed:false,
@@ -189,6 +189,7 @@ function aplicarMensajeRealtime(data, onFirstSnapshot){
     state.mesas = msg.state.mesas;
     state.analytics = msg.state.analytics || emptyAnalytics();
     state.presentacionCargada = msg.state.presentacionCargada === true;
+    if(typeof msg.mercadoPagoDisponible==='boolean') state.mercadoPagoDisponible = msg.mercadoPagoDisponible;
     if(msg.integraciones) state.integraciones = msg.integraciones;
     if(msg.role) STAFF_ROLE = msg.role;
     if(Array.isArray(msg.allowedViews)) STAFF_ALLOWED_VIEWS = msg.allowedViews;
@@ -548,7 +549,9 @@ function renderModal(){
     ? ':'+state.clienteCart.map(item=>cantidadLinea(item)).join(',')+':'+state.clientePedidoEnviando+':'+state.clientePedidoError
     : (state.modal.type==='confirm-mozo'||state.modal.type==='confirm-cuenta')
       ? ':'+state.clienteServicioEnviando+':'+state.clienteServicioError+':'+cantidadCarrito()
-      : '';
+      : state.modal.type==='checkout'
+        ? ':'+state.clientePagoMedio+':'+state.clientePagoEnviando+':'+state.clientePagoError
+        : '';
   const modalKey=`${state.modal.type}:${state.modal.id||state.modal.numero||''}${transientModalKey}`;
   if(root.dataset.modalKey===modalKey && root.firstElementChild) return;
   root.dataset.modalKey=modalKey;
@@ -663,20 +666,21 @@ function renderModal(){
   } else if(state.modal.type==='checkout'){
     const mesa = findMesa(state.clienteMesa);
     const total = mesa ? pedidoTotal(mesa) : 0;
+    const usaMercadoPagoReal = state.clientePagoMedio==='mercado_pago' && state.mercadoPagoDisponible;
     root.innerHTML = `<div class="modal-bg" onclick="closeModal(event)">
       <div class="modal checkout-modal" onclick="event.stopPropagation()">
-        <div class="checkout-head"><span class="checkout-lock">${ic('lock')} SANDBOX SEGURO</span><h3>Pagá desde la mesa</h3><p>Simulación completa para la demo. No se cobra dinero ni se solicitan datos reales.</p></div>
+        <div class="checkout-head"><span class="checkout-lock">${ic('lock')} ${usaMercadoPagoReal?'MERCADO PAGO · MODO DE PRUEBA':'SANDBOX SEGURO'}</span><h3>Pagá desde la mesa</h3><p>${usaMercadoPagoReal?'Vas a completar el pago en Mercado Pago con credenciales de prueba del local. No es dinero real.':'Simulación completa para la demo. No se cobra dinero ni se solicitan datos reales.'}</p></div>
         <div class="checkout-summary">
           ${(mesa&&mesa.pedido?mesa.pedido.items:[]).map(item=>`<div><span>${escapeHtml(item.nombre)}</span><b>${money(item.precio)}</b></div>`).join('')}
           <div class="checkout-total"><span>Total</span><b>${money(total)}</b></div>
         </div>
-        <div class="checkout-label">Elegí cómo simular el pago</div>
+        <div class="checkout-label">Elegí cómo ${state.mercadoPagoDisponible?'pagar':'simular el pago'}</div>
         <div class="payment-methods">
           <button class="${state.clientePagoMedio==='tarjeta'?'active':''}" onclick="elegirMedioPago('tarjeta')"><b>Tarjeta demo</b><span>•••• 4242</span></button>
-          <button class="${state.clientePagoMedio==='mercado_pago'?'active':''}" onclick="elegirMedioPago('mercado_pago')"><b>Mercado Pago</b><span>Cuenta sandbox</span></button>
+          <button class="${state.clientePagoMedio==='mercado_pago'?'active':''}" onclick="elegirMedioPago('mercado_pago')"><b>Mercado Pago</b><span>${state.mercadoPagoDisponible?'Modo de prueba, sin dinero real':'Cuenta sandbox'}</span></button>
         </div>
         ${state.clientePagoError?`<div class="review-error">${escapeHtml(state.clientePagoError)}</div>`:''}
-        <button class="btn primary block" ${state.clientePagoEnviando?'disabled':''} onclick="confirmarPagoSandbox()">${state.clientePagoEnviando?'Procesando…':'Confirmar pago demo por '+money(total)}</button>
+        <button class="btn primary block" ${state.clientePagoEnviando?'disabled':''} onclick="confirmarPagoSandbox()">${state.clientePagoEnviando?'Procesando…':usaMercadoPagoReal?'Ir a pagar con Mercado Pago':'Confirmar pago demo por '+money(total)}</button>
         <button class="btn ghost block" style="margin-top:8px;" onclick="closeModal()">Volver</button>
       </div></div>`;
   }
@@ -859,10 +863,12 @@ function viewCliente(){
     const idx = PEDIDO_ESTADOS.indexOf(mesa.pedido.estado);
     const variasRondas = mesa.pedido.items.some(it=>(it.ronda||1)>1);
     const pagoHtml = mesa.pago && mesa.pago.estado==='confirmado'
-      ? `<div class="payment-receipt"><span>${ic('checkring')}</span><div><b>Pago demo aprobado</b><small>${money(mesa.pago.total)} · ${mesa.pago.medio==='mercado_pago'?'Mercado Pago sandbox':mesa.pago.medio==='tarjeta'?'Tarjeta demo •••• 4242':'Confirmado por staff'}<br>Comprobante ${escapeHtml(mesa.pago.referencia||'demo')}</small></div></div>${resenaHtml(mesa)}`
-      : mesa.cuentaPedida
-        ? `<div class="checkout-callout"><div><b>${ic('receipt')} Tu cuenta está lista</b><span>Total ${money(pedidoTotal(mesa))} · podés completar el flujo sin dinero real.</span></div><button class="btn primary sm" onclick="abrirCheckout()">Pagar en sandbox</button></div>`
-        : '';
+      ? `<div class="payment-receipt"><span>${ic('checkring')}</span><div><b>${mesa.pago.modo==='mercadopago'?'Pago con Mercado Pago aprobado':'Pago demo aprobado'}</b><small>${money(mesa.pago.total)} · ${mesa.pago.modo==='mercadopago'?'Mercado Pago':mesa.pago.medio==='mercado_pago'?'Mercado Pago sandbox':mesa.pago.medio==='tarjeta'?'Tarjeta demo •••• 4242':'Confirmado por staff'}<br>Comprobante ${escapeHtml(mesa.pago.referencia||'demo')}</small></div></div>${resenaHtml(mesa)}`
+      : mesa.pago && mesa.pago.estado==='pendiente' && mesa.pago.modo==='mercadopago'
+        ? `<div class="checkout-callout mp-pending"><div><b>${ic('lock')} Esperando confirmación de Mercado Pago</b><span>Total ${money(mesa.pago.total)} · si ya pagaste, esto se actualiza solo apenas Mercado Pago nos confirme.</span></div><button class="btn primary sm" data-mp-checkout-url="${escapeHtml(mesa.pago.checkoutUrl)}" onclick="abrirCheckoutMercadoPago(this)">Abrir Mercado Pago</button></div>`
+        : mesa.cuentaPedida
+          ? `<div class="checkout-callout"><div><b>${ic('receipt')} Tu cuenta está lista</b><span>Total ${money(pedidoTotal(mesa))} · podés completar el flujo sin dinero real.</span></div><button class="btn primary sm" onclick="abrirCheckout()">Pagar en sandbox</button></div>`
+          : '';
     pedidoStatusHtml = `<div class="card">
       <div style="font-weight:800;font-size:13.5px;margin-bottom:4px;">Tu pedido</div>
       <div class="status-stepper">${PEDIDO_ESTADOS.map((s,i)=>`
@@ -910,10 +916,12 @@ function viewCliente(){
     <div class="action-row">
       <button class="btn callout" onclick="llamarMozo()">${ic('bell')} Llamar al mozo</button>
       ${mesa.pago && mesa.pago.estado==='confirmado'
-        ? `<button class="btn good" disabled>${ic('checkring')} Pago demo confirmado</button>`
-        : mesa.cuentaPedida
-          ? `<button class="btn primary" onclick="abrirCheckout()">${ic('lock')} Abrir pago sandbox</button>`
-          : `<button class="btn dark" onclick="pedirCuenta()">${ic('receipt')} Pedir la cuenta</button>`}
+        ? `<button class="btn good" disabled>${ic('checkring')} ${mesa.pago.modo==='mercadopago'?'Pago con Mercado Pago confirmado':'Pago demo confirmado'}</button>`
+        : mesa.pago && mesa.pago.estado==='pendiente'
+          ? `<button class="btn dark" data-mp-checkout-url="${escapeHtml(mesa.pago.checkoutUrl)}" onclick="abrirCheckoutMercadoPago(this)">${ic('lock')} Esperando Mercado Pago</button>`
+          : mesa.cuentaPedida
+            ? `<button class="btn primary" onclick="abrirCheckout()">${ic('lock')} Abrir pago sandbox</button>`
+            : `<button class="btn dark" onclick="pedirCuenta()">${ic('receipt')} Pedir la cuenta</button>`}
       <button class="btn critical" onclick="toggleHelp()">${ic('help')} Necesito ayuda</button>
     </div>
     ${state.clienteHelpOpen ? helpPanelHtml() : ''}
@@ -1128,14 +1136,22 @@ async function confirmarPedirCuenta(){
 }
 function abrirCheckout(){ state.clientePagoError=''; state.modal={type:'checkout'}; render(); }
 function elegirMedioPago(medio){ state.clientePagoMedio=medio; render(); }
+function abrirCheckoutMercadoPago(el){
+  const url = el && el.dataset && el.dataset.mpCheckoutUrl;
+  if(url) window.open(url, '_blank', 'noopener');
+}
 async function confirmarPagoSandbox(){
   if(state.clientePagoEnviando) return;
   state.clientePagoEnviando=true; state.clientePagoError=''; render();
-  const response = await send({type:'pago_sandbox_confirmar', mesa:state.clienteMesa, medio:state.clientePagoMedio});
+  const usaMercadoPagoReal = state.clientePagoMedio==='mercado_pago' && state.mercadoPagoDisponible;
+  const response = await send(usaMercadoPagoReal
+    ? {type:'pago_mercadopago_iniciar', mesa:state.clienteMesa}
+    : {type:'pago_sandbox_confirmar', mesa:state.clienteMesa, medio:state.clientePagoMedio});
   state.clientePagoEnviando=false;
   if(!response || !response.ok){
     let payload={}; try{ payload=await response.json(); }catch(e){}
-    state.clientePagoError=payload.error || 'No pudimos completar el pago demo. Probá de nuevo.'; render(); return;
+    state.clientePagoError=payload.error || (usaMercadoPagoReal ? 'No pudimos iniciar el pago con Mercado Pago. Probá de nuevo.' : 'No pudimos completar el pago demo. Probá de nuevo.');
+    render(); return;
   }
   state.modal=null; render();
 }
