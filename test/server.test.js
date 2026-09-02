@@ -1361,3 +1361,47 @@ test('las credenciales de Mercado Pago solo se exponen como booleanos, nunca sus
     if (!stopped) await stopServer(processHandle);
   }
 });
+
+test('el cliente distingue un QR/token de mesa inválido de un corte de conexión temporal', async () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  assert.match(source, /response\.status===401 \|\| response\.status===403/);
+  assert.match(source, /state\.clienteAccesoInvalido = true;/);
+  assert.match(source, /if\(state\.clienteAccesoInvalido\) return accesoInvalidoHtml\(\);/);
+  assert.match(source, /No es un corte de conexión: reintentar solo no lo va a resolver\./);
+  assert.match(source, /Pedile a un mozo que te ayude/);
+  // Con el acceso marcado inválido, el bucle de reconexión debe frenar en vez
+  // de reintentar para siempre con el mismo token roto.
+  assert.match(source, /while\(state\.role==='cliente' && !state\.clienteAccesoInvalido\)\{/);
+
+  const port = await reservePort();
+  const isolatedUrl = `http://127.0.0.1:${port}`;
+  const mesaSecret = crypto.randomBytes(32).toString('hex');
+  let output = '';
+  const processHandle = spawn(process.execPath, ['server.js'], {
+    cwd: root,
+    env: { ...process.env, DATABASE_URL: '', MESA_TOKEN_SECRET: mesaSecret, PORT: String(port), STAFF_PIN: testPin },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  processHandle.stdout.on('data', chunk => { output += chunk; });
+  processHandle.stderr.on('data', chunk => { output += chunk; });
+  let stopped = false;
+  try {
+    await waitUntilReady(isolatedUrl, processHandle, () => output);
+    // Sin token: el cliente debe poder distinguirlo (401) de un 5xx transitorio.
+    const sinToken = await fetch(`${isolatedUrl}/events?mesa=1`);
+    assert.equal(sinToken.status, 401);
+    // Token de otra mesa / adulterado: también es un rechazo explícito y permanente (403).
+    const tokenMesaDos = tokenForMesa(mesaSecret, 2);
+    const tokenEquivocado = await fetch(`${isolatedUrl}/events?mesa=1`, { headers: { 'x-mesa-token': tokenMesaDos } });
+    assert.equal(tokenEquivocado.status, 403);
+    // Token correcto: se conecta normalmente, sin ningún rechazo.
+    const tokenMesaUno = tokenForMesa(mesaSecret, 1);
+    const tokenCorrecto = await fetch(`${isolatedUrl}/events?mesa=1`, { headers: { 'x-mesa-token': tokenMesaUno } });
+    assert.equal(tokenCorrecto.status, 200);
+    await tokenCorrecto.body.cancel();
+    await stopServer(processHandle);
+    stopped = true;
+  } finally {
+    if (!stopped) await stopServer(processHandle);
+  }
+});
