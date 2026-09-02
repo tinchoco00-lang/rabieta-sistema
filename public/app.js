@@ -242,8 +242,17 @@ async function conectarStaff(onFirstSnapshot){
       if(response.status===401){ expirado=true; }
       else{ onFirstSnapshot = await consumirStream(response, onFirstSnapshot, ()=>!!STAFF_TOKEN); }
     }catch(e){}
-    liveReady=false; setConnPill(false);
-    if(expirado){ staffSessionExpired(); break; }
+    liveReady=false;
+    if(expirado){
+      // Igual que con el acceso de mesa: un 401 es un rechazo explícito y
+      // permanente de este token, no un corte de red. La pantalla de login ya
+      // explica "tu sesión venció"; el banner genérico de "sin conexión,
+      // estamos intentando volver" sería contradictorio, así que lo ocultamos.
+      hideConnStatus();
+      staffSessionExpired();
+      break;
+    }
+    setConnPill(false);
     if(STAFF_TOKEN) await new Promise(resolve=>setTimeout(resolve,1000));
   }
 }

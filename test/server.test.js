@@ -1181,7 +1181,7 @@ test('la sesión de personal se guarda localmente y sobrevive a un reload; vence
   assert.equal(f.fetchCalls[0].opts.headers.Authorization, 'Bearer tok-logout');
 
   assert.match(source, /response\.status===401.*expirado=true/);
-  assert.match(source, /if\(expirado\)\{ staffSessionExpired\(\); break; \}/);
+  assert.match(source, /if\(expirado\)\{[\s\S]*?hideConnStatus\(\);[\s\S]*?staffSessionExpired\(\);[\s\S]*?break;[\s\S]*?\}/);
 
   assert.match(source, /onclick="staffLogout\(\)"/);
   const staffHtml = fs.readFileSync(path.join(root, 'public', 'staff.html'), 'utf8');
@@ -1415,4 +1415,18 @@ test('la IA de Rabieta es visible desde el splash y ofrece ejemplos accionables,
   assert.match(source, /class="ai-examples"/);
   assert.match(source, /no inventa platos, precios ni disponibilidad/);
   assert.match(source, /no envía datos a ningún servicio externo/);
+});
+
+test('una sesión de personal vencida no muestra el banner contradictorio de "sin conexión, estamos intentando volver"', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  assert.match(source, /function hideConnStatus\(\)\{/);
+  // El mismo bug que ya se corrigió para el acceso de mesa (401/403 no es un
+  // corte transitorio) también aplicaba al login de personal: verificamos que
+  // ambos caminos ocultan el banner de conexión antes de mostrar su propio
+  // mensaje explícito, en vez de dejar los dos contradiciéndose en pantalla.
+  const conectarMesaBody = source.match(/async function conectarMesa\(onFirstSnapshot\)\{[\s\S]*?\r?\n\}\r?\n/)[0];
+  assert.match(conectarMesaBody, /hideConnStatus\(\);/);
+  const conectarStaffBody = source.match(/async function conectarStaff\(onFirstSnapshot\)\{[\s\S]*?\r?\n  \}\r?\n\}/)[0];
+  assert.match(conectarStaffBody, /hideConnStatus\(\);/);
+  assert.match(conectarStaffBody, /if\(expirado\)\{[\s\S]*?hideConnStatus\(\);[\s\S]*?staffSessionExpired\(\);[\s\S]*?break;/);
 });
