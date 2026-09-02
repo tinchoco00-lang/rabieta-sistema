@@ -59,13 +59,32 @@ endpoint que los entrega exige una sesión de Encargado y nunca expone el secret
 impresión, rotación y colocación física definitiva debe hacerse únicamente en
 el entorno autorizado del local.
 
-El panel de Dueño muestra un checklist honesto de preparación de Mercado Pago.
-Hoy el pago desde la mesa sigue siendo sandbox (no mueve dinero real) sin
-importar estas variables. Las variables opcionales `MERCADOPAGO_ACCESS_TOKEN`,
-`MERCADOPAGO_PUBLIC_KEY` y `MERCADOPAGO_WEBHOOK_SECRET` sólo controlan qué ve
-ese checklist como "listo"; el servidor únicamente comprueba si existen, nunca
-expone sus valores. No hay que escribir ninguna de estas credenciales en el
-repositorio, y activar cobros reales con ellas requiere aprobación del dueño.
+El panel de Dueño muestra un checklist honesto de preparación de Mercado Pago,
+y desde que existe `MERCADOPAGO_ACCESS_TOKEN` el checkout de Mercado Pago
+desde la mesa es real (Checkout Pro): crea una preferencia contra la API
+oficial y el cliente paga en el entorno de Mercado Pago con sus propias
+credenciales de prueba, sin dinero real. Mientras esas variables no existan,
+el pago sigue siendo exactamente el sandbox interno de siempre.
+
+- `MERCADOPAGO_ACCESS_TOKEN` (backend) y `MERCADOPAGO_PUBLIC_KEY` (referencia)
+  habilitan el botón real "Ir a pagar con Mercado Pago" en la mesa.
+- `MERCADOPAGO_WEBHOOK_SECRET` habilita `POST /api/pagos/mercadopago-webhook`
+  y su verificación de firma; sin ella el endpoint no existe (404). Esta
+  verificación sigue el formato documentado por Mercado Pago pero nunca fue
+  probada contra tráfico real (no tenemos credenciales propias) — antes de
+  confiar en ella en producción, hay que validarla con un webhook real desde
+  el panel de Mercado Pago del dueño.
+- `PUBLIC_BASE_URL` (por ejemplo `https://rabieta-sistema.onrender.com`) es la
+  URL pública donde corre este servidor; sin ella se puede pagar igual, pero
+  Mercado Pago no tiene dónde avisarnos y la confirmación queda pendiente de
+  conciliación manual por staff.
+- `MERCADOPAGO_API_BASE` es solo para testing (apunta la integración a un
+  servidor de prueba en vez de `https://api.mercadopago.com`); no hace falta
+  configurarla en el local.
+
+El servidor únicamente comprueba si cada credencial existe, nunca expone sus
+valores. No hay que escribir ninguna de estas credenciales en el repositorio,
+y activar cobros reales (no de prueba) con ellas requiere aprobación del dueño.
 
 ## Cómo ponerlo en internet — paso a paso, sin usar la terminal
 
