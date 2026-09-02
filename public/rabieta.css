@@ -103,6 +103,7 @@
   .splash-skip{background:none;border:none;color:var(--ink-muted);font-size:12.5px;
     text-decoration:underline;text-underline-offset:3px;text-align:center;padding:14px 0 4px;
     cursor:pointer;width:100%;}
+  .splash-ai-btn{width:calc(100% - 32px);margin:0 16px;display:flex;align-items:center;justify-content:center;gap:8px;}
 
   nav.roles{
     display:flex;gap:6px;padding:12px 20px;flex-wrap:wrap;
@@ -187,6 +188,8 @@
   .ai-add{border:0;border-top:1px solid var(--line);background:rgba(238,143,63,.08);color:var(--gold);padding:7px;font-family:'Nunito';font-size:11px;font-weight:900;cursor:pointer;}
   .ai-add:disabled{color:var(--ink-muted);cursor:not-allowed;}
   .ai-empty,.ai-fineprint,.ai-warning,.ai-message{font-size:10.5px;line-height:1.45;margin:10px 0 0;color:var(--ink-muted);}
+  .ai-examples{display:flex;gap:7px;flex-wrap:wrap;margin-top:6px;}
+  .ai-examples button{border:1px solid var(--line-strong);background:var(--bg-elevated);color:var(--ink-2);border-radius:999px;padding:7px 11px;font-family:'Nunito';font-size:11.5px;font-weight:800;cursor:pointer;}
   .ai-message{color:var(--ink-2);font-size:12px;font-weight:700;}
   .ai-warning{color:var(--gold);font-weight:700;display:flex;gap:5px;align-items:flex-start;}
   @media(max-width:640px){.ai-assistant.compact{align-items:flex-start;flex-direction:column}.ai-results{grid-template-columns:1fr}.ai-assistant.compact .btn{width:100%;}.ai-query>div{align-items:stretch}.ai-query .btn{padding-left:10px;padding-right:10px}}

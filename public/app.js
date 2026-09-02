@@ -730,15 +730,16 @@ function banner3dHtml(){
     </div></div>`;
 }
 
+const AI_EJEMPLOS = ['Una pizza barata', 'Algo liviano', 'Sin TACC hasta $3.000'];
 function asistenteCartaHtml(bloqueado){
   if(!state.clienteAsistenteOpen){
-    return `<div class="ai-assistant compact"><div><span class="ai-badge">Recomendación inteligente · demo local</span>
-      <strong>¿No sabés qué pedir?</strong><p>Te orientamos con la carta real de Rabieta.</p></div>
+    return `<div class="ai-assistant compact" id="ai-assistant-anchor"><div><span class="ai-badge">${ic('help')} IA de Rabieta</span>
+      <strong>¿No sabés qué pedir?</strong><p>Te orientamos con la carta real de Rabieta, sin inventar platos ni precios.</p></div>
       <button class="btn primary sm" onclick="toggleAsistente()">Ayudame a elegir</button></div>`;
   }
   const respuesta = state.clienteAsistenteRespuesta;
-  return `<div class="ai-assistant">
-    <div class="ai-head"><div><span class="ai-badge">Asistente Rabieta · local</span><strong>¿Qué te pinta hoy?</strong></div>
+  return `<div class="ai-assistant" id="ai-assistant-anchor">
+    <div class="ai-head"><div><span class="ai-badge">${ic('help')} IA de Rabieta</span><strong>¿Qué te pinta hoy?</strong></div>
       <button class="btn ghost sm" onclick="toggleAsistente()">Cerrar</button></div>
     <form class="ai-query" onsubmit="consultarAsistente(event)">
       <label for="ai-query-input">Escribí como hablarías con el mozo</label>
@@ -751,12 +752,26 @@ function asistenteCartaHtml(bloqueado){
         <button class="ai-result-main" onclick="abrirRecomendacion('${p.id}')"><span><strong>${escapeHtml(p.nombre)}</strong><small>${escapeHtml(reason)}</small></span><b>${money(precioBase(p))}</b></button>
         <button class="ai-add" ${bloqueado?'disabled':''} onclick="agregarRecomendacion('${p.id}')">${state.clienteAsistenteAgregado===p.id?'Sumado ✓':(p.variantes||p.opciones?'Elegir':'Sumar')}</button>
       </article>`).join('')}</div>` : ''}
-      ${respuesta.warning ? `<p class="ai-warning">${ic('warning')} ${escapeHtml(respuesta.warning)}</p>` : ''}` : '<p class="ai-empty">Probá “una pizza barata”, “algo liviano” o “Sin TACC hasta $3.000”.</p>'}
-    <p class="ai-fineprint">Funciona localmente con reglas sobre la carta; no envía datos ni usa un servicio externo.</p>
+      ${respuesta.warning ? `<p class="ai-warning">${ic('warning')} ${escapeHtml(respuesta.warning)}</p>` : ''}`
+      : `<p class="ai-empty">Probá con un ejemplo:</p><div class="ai-examples">${AI_EJEMPLOS.map(ej=>`<button onclick="probarEjemploAsistente('${ej.replace(/'/g,"\\'")}')">${escapeHtml(ej)}</button>`).join('')}</div>`}
+    <p class="ai-fineprint">Funciona en este dispositivo con reglas sobre la carta real; no inventa platos, precios ni disponibilidad, y no envía datos a ningún servicio externo.</p>
   </div>`;
 }
 function toggleAsistente(){ state.clienteAsistenteOpen=!state.clienteAsistenteOpen; render(); }
 function actualizarConsultaAsistente(value){ state.clienteAsistenteConsulta=value; }
+function probarEjemploAsistente(query){
+  state.clientePreferencia=null; state.clienteAsistenteAgregado=null;
+  state.clienteAsistenteConsulta=query;
+  state.clienteAsistenteRespuesta=window.RabietaRecommender.recommend(MENU_DATA,query);
+  render();
+}
+function abrirAsistenteDesdeSplash(){
+  state.clienteSplashDismissed=true;
+  state.clienteAsistenteOpen=true;
+  render();
+  const anchor=document.getElementById('ai-assistant-anchor');
+  if(anchor) anchor.scrollIntoView({behavior:'smooth',block:'start'});
+}
 function consultarAsistente(event){
   if(event) event.preventDefault();
   state.clientePreferencia=null; state.clienteAsistenteAgregado=null;
@@ -804,6 +819,7 @@ function splashHtml(mesa){
       <div class="splash-stage-name">${destacado.nombre}</div>
       <button class="btn callout splash-3d-btn" onclick="openModal3d('${destacado.id}','${destacado.nombre.replace(/'/g,"\\'")}')">${ic('cube')} Probar demo técnica 3D</button>
     </div>
+    <button class="btn ghost splash-ai-btn" onclick="abrirAsistenteDesdeSplash()">${ic('help')} Preguntale a la IA de Rabieta qué pedir</button>
     <button class="splash-skip" onclick="dismissSplash()">Ver toda la carta →</button>
   </div>`;
 }
