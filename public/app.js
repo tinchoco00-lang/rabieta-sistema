@@ -782,7 +782,7 @@ function banner3dHtml(){
       <div class="txt"><strong>Prototipo 3D/AR en desarrollo</strong><span>Probá la interacción técnica; los modelos reales de estos ${platos.length} platos todavía faltan</span></div></div>
     <div class="tiles3d">
       ${platos.map(p=>`<button onclick="openModal3d('${p.id}','${p.nombre.replace(/'/g,"\\'")}')">
-        ${p.imagen ? `<img class="tile3d-img" src="${p.imagen}" alt="${p.nombre}">` : `<span class="em">${ic('plate')}</span>`}
+        ${p.imagen ? `<img class="tile3d-img" src="${p.imagen}" alt="${p.nombre}">` : `<span class="tile3d-placeholder">${ic('plate')}<small>Foto pronto</small></span>`}
         <span class="nm">${p.nombre}</span><span class="cta">Probar demo 3D</span></button>`).join('')}
     </div></div>`;
 }

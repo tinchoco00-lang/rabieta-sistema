@@ -1828,3 +1828,12 @@ test('el panel de Dueño ve un feed de actividad en vivo, más reciente primero,
   assert.match(clientSource, /function actividadRecienteHtml\(analytics\)\{/);
   assert.match(clientSource, /class="activity-feed"/);
 });
+
+test('pulido visual: el carrusel 3D muestra un placeholder de marca (no un ícono roto) para platos sin foto, y el carrito ancla el total como un pie visible', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  assert.match(source, /class="tile3d-placeholder">\$\{ic\('plate'\)\}<small>Foto pronto<\/small><\/span>/);
+  assert.doesNotMatch(source, /<span class="em">/);
+  const css = fs.readFileSync(path.join(root, 'public', 'rabieta.css'), 'utf8');
+  assert.match(css, /\.tile3d-placeholder\{/);
+  assert.match(css, /\.cart-review-total\{margin-top:auto;border-top:1px solid var\(--line-strong\)/);
+});
