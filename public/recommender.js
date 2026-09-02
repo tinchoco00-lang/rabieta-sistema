@@ -9,6 +9,15 @@
     'algo','algun','alguna','con','comer','dame','de','del','el','en','hoy','la','las','lo','los',
     'me','para','pedir','por','que','quiero','recomendame','recomenda','un','una','unos','unas','y'
   ]);
+  // Para "barato"/"poca plata" sin categoría explícita, sesga hacia comida en
+  // vez de devolver agua o gaseosa solo por ser lo más barato del local — en
+  // una carta de restaurante, "algo barato" casi siempre pregunta por un
+  // plato. Si la consulta sí nombra una bebida ("una bebida barata"),
+  // CATEGORY_RULES ya fija intent.category y este sesgo no aplica.
+  const FOOD_CATEGORIES = new Set([
+    'tablas-y-picadas','caliente','sin-tacc','entrepanes','mezcolanzas',
+    'cocina-resistencia','pizzas','promo-maridaje','sobremesa',
+  ]);
   const CATEGORY_RULES = [
     {pattern:/\b(pizza|pizzas)\b/, ids:['pizzas'], label:'pizza'},
     {pattern:/\b(ensalada|ensaladas)\b/, ids:['mezcolanzas'], label:'ensalada'},
@@ -133,7 +142,10 @@
       if(intent.category && intent.category.ids.includes(product.categoriaId)) score += 16;
       if(intent.sinTacc) score += 20;
       if(intent.surprise && product.candidato_destacado) score += 12;
-      if(intent.cheap) score += Math.max(0, 8 - Math.floor(basePrice(product) / 1000));
+      if(intent.cheap){
+        score += Math.max(0, 8 - Math.floor(basePrice(product) / 1000));
+        if(!intent.category && FOOD_CATEGORIES.has(product.categoriaId)) score += 6;
+      }
       if(intent.budget) score += Math.max(0, 5 - Math.floor(basePrice(product) / Math.max(1,intent.budget/5)));
       return {product, score, matchedTokens};
     });
