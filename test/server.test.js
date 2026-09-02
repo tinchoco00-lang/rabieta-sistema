@@ -1761,3 +1761,35 @@ test('el panel de Encargado arma los QR con la IP de red en vez de "localhost" c
   assert.match(source, /function mesaAccessUrl\(path\)\{ return mesaOrigin\(\) \+ path; \}/);
   assert.match(source, /fetch\('\/api\/network-info'/);
 });
+
+test('un .glb/.usdz real dejado en public/models/ con el nombre del plato se usa solo, sin tocar código ni reiniciar', async () => {
+  const modelsDir = path.join(root, 'public', 'models');
+  const glbPath = path.join(modelsDir, 'burger-rabieta.glb');
+  const usdzPath = path.join(modelsDir, 'burger-rabieta.usdz');
+  assert.ok(fs.existsSync(path.join(modelsDir, 'LEEME.md')), 'debe existir la guía de convención de archivos');
+  try {
+    fs.writeFileSync(glbPath, 'contenido de prueba, no es un GLB real');
+    const conGlb = await (await fetch(`${baseUrl}/api/menu`)).json();
+    assert.equal(conGlb._modelos3d['burger-rabieta'].glb, true);
+    assert.equal(conGlb._modelos3d['burger-rabieta'].usdz, undefined);
+    // No inventa disponibilidad para otro plato que no tiene archivo.
+    assert.equal(conGlb._modelos3d['burger-bacon'], undefined);
+
+    fs.writeFileSync(usdzPath, 'contenido de prueba, no es un USDZ real');
+    const conAmbos = await (await fetch(`${baseUrl}/api/menu`)).json();
+    assert.equal(conAmbos._modelos3d['burger-rabieta'].glb, true);
+    assert.equal(conAmbos._modelos3d['burger-rabieta'].usdz, true);
+  } finally {
+    fs.rmSync(glbPath, { force: true });
+    fs.rmSync(usdzPath, { force: true });
+  }
+  // Vuelve a estar vacío: ningún plato tiene modelo real fuera de este test.
+  const limpio = await (await fetch(`${baseUrl}/api/menu`)).json();
+  assert.deepEqual(limpio._modelos3d, {});
+
+  const clientSource = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  assert.match(clientSource, /function modeloParaPlato\(id\)\{/);
+  assert.match(clientSource, /if\(real && real\.glb\)\{/);
+  assert.match(clientSource, /Modelo 3D real de Rabieta/);
+  assert.match(clientSource, /ios-src="\$\{modelo\.usdz\}"/);
+});
