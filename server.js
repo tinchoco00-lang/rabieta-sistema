@@ -150,7 +150,19 @@ function seedAnalytics() {
     productos: {},
     resenas: [],
     crmContactos: [],
+    actividad: [],
   };
+}
+
+// Feed liviano de "qué acaba de pasar" para el panel de Dueño — no es el
+// ledger auditable de eventos de Fase 2 (eso implica timestamps reales,
+// retención definida y un modelo de datos que todavía no se decidió); esto
+// vive solo en memoria/JSONB de esta sesión, igual que el resto de analytics,
+// y se recorta a los últimos 20 hechos para que la lista siga siendo un
+// vistazo rápido y no una auditoría completa.
+function registrarActividad(analytics, tipo, texto, clock) {
+  analytics.actividad.unshift({ ts: clock, tipo, texto });
+  if (analytics.actividad.length > 20) analytics.actividad.length = 20;
 }
 
 function seedState() {
@@ -412,9 +424,16 @@ function recordPaymentAnalytics(mesa, analytics = state.analytics, clock = state
 // Punto único de confirmación de un pago, sea sandbox interno, staff o
 // Mercado Pago real (por webhook). Mantiene analytics y alertas de cuenta
 // consistentes sin importar el origen de la confirmación.
+function etiquetaMedioPago(modo, medio) {
+  if (modo === 'mercadopago') return 'con Mercado Pago';
+  if (medio === 'mercado_pago') return 'con Mercado Pago (sandbox)';
+  if (medio === 'tarjeta') return 'con tarjeta demo';
+  return 'confirmado por staff';
+}
 function confirmarPagoMesa(m, { modo, medio, total, referencia }) {
   m.pago = { modo, estado: 'confirmado', medio, total, referencia, confirmadoTs: state.clockMs };
   recordPaymentAnalytics(m);
+  registrarActividad(state.analytics, 'pago', `Mesa ${m.numero} pagó $${total.toLocaleString('es-AR')} ${etiquetaMedioPago(modo, medio)}`, state.clockMs);
   m.alertas.forEach(alertaCuenta => {
     if (alertaCuenta.tipo === 'cuenta' && alertaCuenta.estado !== 'resuelto') alertaCuenta.estado = 'resuelto';
   });
@@ -486,6 +505,12 @@ function normalizeAnalytics(value) {
         consentimientoTs: contact.consentimientoTs,
         origen: 'post_pago',
       }];
+    });
+  }
+  if (Array.isArray(value.actividad)) {
+    analytics.actividad = value.actividad.slice(0, 20).flatMap(item => {
+      if (!item || typeof item !== 'object' || typeof item.tipo !== 'string' || typeof item.texto !== 'string' || !Number.isFinite(item.ts)) return [];
+      return [{ ts: item.ts, tipo: item.tipo.slice(0, 30), texto: item.texto.slice(0, 200) }];
     });
   }
   return analytics;
@@ -721,6 +746,7 @@ async function handleAction(msg) {
       } else {
         m.pedido = { items, estado: 'enviado', enviadoTs: state.clockMs };
       }
+      registrarActividad(state.analytics, 'pedido', `Mesa ${m.numero} pidió ${items.length} ítem${items.length === 1 ? '' : 's'}`, state.clockMs);
       break;
     }
     case 'pedido_estado': {
@@ -743,6 +769,7 @@ async function handleAction(msg) {
     case 'llamar_mozo': {
       if (!m) return;
       m.alertas.push({ id: uid(), tipo: 'mozo', label: 'Llamado al mozo', prioridad: 'normal', mensaje: '', estado: 'recibido', creadoTs: state.clockMs, escalado: false });
+      registrarActividad(state.analytics, 'alerta', `Mesa ${m.numero} llamó al mozo`, state.clockMs);
       break;
     }
     case 'pedir_cuenta': {
@@ -751,6 +778,7 @@ async function handleAction(msg) {
       m.cuentaPedida = true;
       m.cuentaPedidaTs = state.clockMs;
       m.alertas.push({ id: uid(), tipo: 'cuenta', label: 'Pidió la cuenta', prioridad: 'importante', mensaje: '', estado: 'recibido', creadoTs: state.clockMs, escalado: false });
+      registrarActividad(state.analytics, 'cuenta', `Mesa ${m.numero} pidió la cuenta`, state.clockMs);
       break;
     }
     case 'ayuda': {
@@ -765,6 +793,7 @@ async function handleAction(msg) {
       const category = HELP_CATEGORIES[msg.categoria];
       const prioridad = category.prioridad || clasificarTextoLibre(message.value);
       m.alertas.push({ id: uid(), solicitudId: solicitudId.value || null, tipo: msg.categoria, label: category.label, prioridad, mensaje: message.value, estado: 'recibido', creadoTs: state.clockMs, escalado: false });
+      registrarActividad(state.analytics, 'alerta', `Mesa ${m.numero}: ${category.label}`, state.clockMs);
       break;
     }
     case 'alerta_atender': {
@@ -812,6 +841,7 @@ async function handleAction(msg) {
         if (state.analytics.crmContactos.length > 100) state.analytics.crmContactos.splice(0, state.analytics.crmContactos.length - 100);
       }
       m.resenaEnviada = true;
+      registrarActividad(state.analytics, 'resena', `Mesa ${m.numero} calificó ${msg.puntuacion}/5`, state.clockMs);
       break;
     }
     case 'pago_sandbox_confirmar':
@@ -860,6 +890,7 @@ async function handleAction(msg) {
         return actionError(409, 'La mesa solo puede liberarse después de confirmar el pago');
       }
       m.ocupada = false; m.pedido = null; m.cuentaPedida = false; m.cuentaPedidaTs = null; m.pago = null; m.resenaEnviada = false; m.alertas = [];
+      registrarActividad(state.analytics, 'mesa', `Mesa ${m.numero} se liberó`, state.clockMs);
       break;
     }
     case 'demo_escenario_cargar': {
