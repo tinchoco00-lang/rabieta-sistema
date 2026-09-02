@@ -63,3 +63,16 @@ test('un nombre de plato ambiguo (coincide con más de un producto) no dispara l
   const ambiguo = recommend(menu, 'bastones de mozzarella o la pizza mozzarella, cual me recomendás');
   assert.ok(ambiguo.items.length > 1, 'con una coincidencia ambigua debe seguir el flujo normal de varias opciones');
 });
+
+test('"barato" sin categoría explícita sugiere comida, no agua o gaseosa solo por ser lo más barato del local', () => {
+  const result = recommend(menu, 'estoy con poca plata, tenes algo barato');
+  const FOOD = new Set(['tablas-y-picadas','caliente','sin-tacc','entrepanes','mezcolanzas','cocina-resistencia','pizzas','promo-maridaje','sobremesa']);
+  assert.ok(result.items.length > 0);
+  assert.ok(result.items.every(({product})=>FOOD.has(product.categoriaId)), 'todos los resultados deben ser comida, no bebidas/merchandising');
+
+  // Si la consulta sí pide una bebida barata, el sesgo hacia comida no debe
+  // tapar lo que realmente se preguntó.
+  const bebida = recommend(menu, 'una gaseosa barata');
+  assert.ok(bebida.items.length > 0);
+  assert.ok(bebida.items.every(({product})=>product.categoriaId === 'bebidas-sin-alcohol'));
+});
