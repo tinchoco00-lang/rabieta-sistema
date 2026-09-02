@@ -4,6 +4,26 @@ Esto ya NO es una demo simulada: si dos celulares distintos entran a este sistem
 al mismo tiempo, se ven en vivo el uno al otro. Un cliente pide, la cocina lo ve
 al instante; un cliente llama al mozo, el mozo suena/vibra al instante.
 
+## Probar en casa con celulares + PC (sin desplegar nada)
+
+1. En la PC: `npm install` y después `npm start` (o `node server.js`).
+2. La terminal imprime algo así apenas arranca:
+   ```
+   Rabieta arriba. Para probar desde otro celular en la misma red, abrí:
+     http://192.168.1.43:3000/staff.html
+   ```
+   Todos los celulares tienen que estar en el **mismo wifi** que la PC.
+3. En la PC, abrí `http://localhost:3000/staff.html`, entrá como **Encargado**
+   (PIN `1234`) y andá a **QR / Mesas**. Si abriste como `localhost`, el panel
+   avisa solo y arma los enlaces/QR con la IP de la PC en la red (la de arriba)
+   en vez de `localhost`, que en un celular no significa nada útil.
+4. Desde los celulares: escaneá un QR (o tocá "Copiar enlace" y mandáselo) para
+   entrar como cliente a esa mesa; abrí `http://<esa-ip>:3000/staff.html` para
+   entrar como Mozo, Cocina o Dueño.
+5. Si un celular no puede conectar, lo más común es el firewall de Windows
+   bloqueando conexiones entrantes a Node la primera vez — aceptá el permiso
+   cuando Windows lo pregunte al iniciar `node server.js`.
+
 ## Qué es cada cosa
 
 - `server.js` — el programa que corre 24 hs. Coordina el estado real de las 22

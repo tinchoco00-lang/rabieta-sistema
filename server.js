@@ -19,6 +19,7 @@
    ========================================================= */
 const http = require('http');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { URL } = require('url');
@@ -167,6 +168,36 @@ function staffRoleCan(role, msg) {
 function findMesa(n) { return state.mesas.find(m => m.numero === Number(n)); }
 function validMesaNumber(value) {
   return Number.isInteger(value) && value >= 1 && value <= MESAS_TOTAL;
+}
+
+// Direcciones IPv4 de esta máquina en su red local. Sirve para armar la demo
+// en casa: si Encargado abre el panel como "localhost", los QR generados con
+// esa palabra no van a funcionar desde ningún celular (localhost, en el
+// celular, es el celular). No son secretas: solo son alcanzables desde la
+// misma red y ya las ve cualquiera que use el mismo wifi.
+const NOMBRE_ADAPTADOR_VIRTUAL = /virtual|vmware|virtualbox|docker|hyper-v|vethernet|wsl|tailscale|vpn|zerotier|loopback/i;
+function esIpPrivadaDeRed(address) {
+  // RFC1918 (redes hogareñas/oficina reales) sin 169.254.0.0/16 (APIPA: la PC
+  // se la asigna sola cuando no hay router/DHCP, no sirve para que otro
+  // dispositivo se conecte).
+  return /^192\.168\.\d{1,3}\.\d{1,3}$/.test(address)
+    || /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(address)
+    || /^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(address);
+}
+function detectarIpsLan() {
+  const interfaces = os.networkInterfaces();
+  const candidatas = [];
+  Object.entries(interfaces).forEach(([nombre, lista]) => {
+    (lista || []).forEach(iface => {
+      if (iface.family !== 'IPv4' || iface.internal || !esIpPrivadaDeRed(iface.address)) return;
+      candidatas.push({ address: iface.address, prioridad: NOMBRE_ADAPTADOR_VIRTUAL.test(nombre) ? 1 : 0 });
+    });
+  });
+  // Se prefieren adaptadores que no parezcan virtuales (Wi-Fi/Ethernet reales
+  // antes que Docker/VPN/VirtualBox), y dentro de eso, 192.168.x.x primero
+  // por ser el rango más común en redes hogareñas.
+  candidatas.sort((a, b) => a.prioridad - b.prioridad || (a.address.startsWith('192.168.') ? 0 : 1) - (b.address.startsWith('192.168.') ? 0 : 1));
+  return candidatas.map(c => c.address);
 }
 // Un pago "demo" (sandbox interno o confirmado por staff) sólo puede estar
 // confirmado. Un pago "mercadopago" real puede quedar "pendiente" mientras el
@@ -969,6 +1000,12 @@ function handleHttpRequest(req, res) {
     res.end(JSON.stringify(MENU_DATA));
     return;
   }
+  if (u.pathname === '/api/network-info' && req.method === 'GET') {
+    const session = staffSession(req);
+    if (!session) { sendJson(res, 401, { ok: false, error: 'Autenticación requerida' }); return; }
+    sendJson(res, 200, { ok: true, port: Number(PORT), lanIps: detectarIpsLan() });
+    return;
+  }
   if (u.pathname === '/api/staff-login' && req.method === 'POST') {
     if (!applyRateLimit(req, res, rateLimiters.login, 'staff-login')) return;
     if (!acceptsJson(req)) { sendJson(res, 415, { ok: false, error: 'Content-Type debe ser application/json' }); return; }
@@ -1220,7 +1257,11 @@ async function start() {
   startClock();
   server.listen(PORT, () => {
     const mode = persistence.enabled ? 'PostgreSQL' : 'memoria';
-    logEvent('log', 'server_started', { port: Number(PORT), persistenceMode: mode === 'PostgreSQL' ? 'postgresql' : 'memory' });
+    const lanIps = detectarIpsLan();
+    logEvent('log', 'server_started', { port: Number(PORT), persistenceMode: mode === 'PostgreSQL' ? 'postgresql' : 'memory', lanIps });
+    if (lanIps.length) {
+      console.log(`\nRabieta arriba. Para probar desde otro celular en la misma red, abrí:\n${lanIps.map(ip => `  http://${ip}:${PORT}/staff.html`).join('\n')}\n(NO uses "localhost" en el celular: ahí "localhost" es el celular mismo.)\n`);
+    }
   });
 }
 

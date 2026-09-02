@@ -1707,3 +1707,57 @@ test('la IA de Rabieta recuerda las últimas preguntas y responde directo cuando
     { consulta: 'Una pizza barata', message: 'Encontré 3 opciones de la carta con precio confirmado.' },
   ]);
 });
+
+test('detecta la IP de red real de la PC para armar la demo en casa, descartando localhost/APIPA y priorizando adaptadores no virtuales', () => {
+  const source = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
+  const fnSource = source.match(/const NOMBRE_ADAPTADOR_VIRTUAL[\s\S]*?function detectarIpsLan\(\)\s*\{[\s\S]*?\r?\n\}\r?\n/)[0];
+
+  function detectarConInterfaces(networkInterfaces) {
+    const ctx = { os: { networkInterfaces: () => networkInterfaces } };
+    vm.createContext(ctx);
+    vm.runInContext(fnSource, ctx);
+    return vm.runInContext('detectarIpsLan()', ctx);
+  }
+
+  // Caso real de esta máquina: Wi-Fi con IP hogareña, más ruido de APIPA/loopback que debe descartarse.
+  // (comparación por JSON: el array vuelve de un contexto vm distinto, deepEqual lo trataría como de otra clase)
+  assert.equal(JSON.stringify(detectarConInterfaces({
+    'Wi-Fi': [{ family: 'IPv4', internal: false, address: '192.168.1.43' }],
+    'Loopback Pseudo-Interface 1': [{ family: 'IPv4', internal: true, address: '127.0.0.1' }],
+    'Conexión de red Bluetooth': [{ family: 'IPv4', internal: false, address: '169.254.170.36' }],
+  })), JSON.stringify(['192.168.1.43']));
+
+  // Con Docker/VPN instalados, la IP de verdad (Wi-Fi) debe listarse primero.
+  const conVirtuales = detectarConInterfaces({
+    'vEthernet (Default Switch)': [{ family: 'IPv4', internal: false, address: '172.28.16.1' }],
+    'VirtualBox Host-Only Network': [{ family: 'IPv4', internal: false, address: '192.168.56.1' }],
+    'Wi-Fi': [{ family: 'IPv4', internal: false, address: '192.168.1.43' }],
+  });
+  assert.equal(conVirtuales[0], '192.168.1.43');
+  assert.deepEqual(new Set(conVirtuales), new Set(['192.168.1.43', '172.28.16.1', '192.168.56.1']));
+
+  // Sin ninguna red privada real (por ejemplo, recién arrancó sin wifi), no inventa nada.
+  assert.equal(JSON.stringify(detectarConInterfaces({
+    'Loopback Pseudo-Interface 1': [{ family: 'IPv4', internal: true, address: '127.0.0.1' }],
+  })), '[]');
+});
+
+test('GET /api/network-info exige sesión de personal y devuelve las IPs de red para armar la demo en otros dispositivos', async () => {
+  const sinToken = await fetch(`${baseUrl}/api/network-info`);
+  assert.equal(sinToken.status, 401);
+  const conToken = await fetch(`${baseUrl}/api/network-info`, { headers: { authorization: `Bearer ${staffToken}` } });
+  assert.equal(conToken.status, 200);
+  const payload = await conToken.json();
+  assert.equal(payload.ok, true);
+  assert.ok(Number.isInteger(payload.port));
+  assert.ok(Array.isArray(payload.lanIps));
+});
+
+test('el panel de Encargado arma los QR con la IP de red en vez de "localhost" cuando hace falta, para que abran desde el celular', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  assert.match(source, /function mesaOrigin\(\)\{/);
+  assert.match(source, /function cargarInfoRed\(\)\{/);
+  assert.match(source, /function lanBannerHtml\(\)\{/);
+  assert.match(source, /function mesaAccessUrl\(path\)\{ return mesaOrigin\(\) \+ path; \}/);
+  assert.match(source, /fetch\('\/api\/network-info'/);
+});
