@@ -1837,3 +1837,49 @@ test('pulido visual: el carrusel 3D muestra un placeholder de marca (no un ícon
   assert.match(css, /\.tile3d-placeholder\{/);
   assert.match(css, /\.cart-review-total\{margin-top:auto;border-top:1px solid var\(--line-strong\)/);
 });
+
+test('dueño ve en 10 segundos qué mesas concretas necesitan atención, con la peor razón primero y sin repetir mesa', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  const fnSource = source.match(/function mesasQueNecesitanAtencion\(\)\{[\s\S]*?\r?\n\}\r?\n/)[0];
+  assert.ok(fnSource, 'debe existir mesasQueNecesitanAtencion');
+
+  const ctx = {
+    DESTINO_LABELS: { cocina: 'Cocina', barra: 'Barra' },
+    itemDestino: item => item.destino,
+    timeAgoSec: ts => 1000 - ts, // "ahora" simulado = clockMs 1000
+    todasAlertasAbiertas: () => [
+      { mesa: { numero: 4 }, alerta: { prioridad: 'urgente', creadoTs: 900, label: 'Mi pedido está incorrecto' } },
+      { mesa: { numero: 4 }, alerta: { prioridad: 'importante', creadoTs: 950, label: 'Quiero cambiar algo' } },
+      { mesa: { numero: 11 }, alerta: { prioridad: 'normal', creadoTs: 990, label: 'Necesito al mozo' } },
+    ],
+    itemsListosParaEntregar: () => [
+      { mesa: { numero: 7 }, item: { nombre: 'Agua', destino: 'barra', enviadoTs: 800, estadoTs: { listo: 850 } } },
+      { mesa: { numero: 10 }, item: { nombre: 'Hummus', destino: 'cocina', enviadoTs: 960, estadoTs: { listo: 970 } } },
+    ],
+    state: {
+      mesas: [
+        { numero: 9, cuentaPedida: true, pago: null, cuentaPedidaTs: 800 },
+        { numero: 12, cuentaPedida: true, pago: { estado: 'confirmado' }, cuentaPedidaTs: 100 },
+        { numero: 13, cuentaPedida: false, pago: null, cuentaPedidaTs: null },
+      ],
+    },
+  };
+  vm.createContext(ctx);
+  vm.runInContext(fnSource, ctx);
+  const result = vm.runInContext('mesasQueNecesitanAtencion()', ctx);
+
+  // Mesa 10 (ítem listo hace solo 30s) y Mesa 12 (ya pagada) no deben aparecer.
+  // (comparación por JSON: result viene de un contexto vm distinto, deepEqual lo trataría como de otra clase)
+  assert.equal(JSON.stringify(result.map(item => item.numero)), JSON.stringify([9, 4, 7, 11]));
+  // Mesa 4 tenía dos alertas abiertas: solo se muestra la más grave (urgente), sin duplicar la fila.
+  assert.equal(result[1].motivo, 'Mi pedido está incorrecto');
+  assert.equal(result[1].severidad, 0);
+  assert.equal(result[0].motivo, 'Pidió la cuenta y todavía no se cobró');
+  assert.equal(result[2].motivo, 'Agua esperando en Barra');
+  assert.equal(result[3].severidad, 2);
+
+  assert.match(source, /function mesasAtencionHtml\(\)\{/);
+  assert.match(source, /Mesas que necesitan atención/);
+  assert.match(source, /class="attention-list"/);
+  assert.match(source, /Ninguna mesa necesita atención ahora mismo/);
+});
