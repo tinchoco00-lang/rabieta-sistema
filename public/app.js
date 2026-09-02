@@ -94,7 +94,7 @@ function emptyAnalytics(){
 let state = {
   clockMs:0, mesas:[], analytics:emptyAnalytics(), integraciones:null,
   // ui local, no viene del servidor:
-  role:null, clienteMesa:null, clienteCat:null, clienteFiltroSinTacc:false,
+  role:null, clienteMesa:null, clienteCat:null, clienteFiltroSinTacc:false, clienteAccesoInvalido:false,
   clienteCart:[], clienteCartRecuperado:'', clienteExpand:null, clienteProductoDrafts:{}, clienteHelpOpen:false, clienteSplashDismissed:false,
   clienteAsistenteOpen:false, clientePreferencia:null, clienteAsistenteConsulta:'', clienteAsistenteRespuesta:null,
   clienteAsistenteAgregado:null, clienteResenaError:'', clienteResenaEnviando:false,
@@ -210,14 +210,27 @@ function conectar(onFirstSnapshot){
   conectarStaff(onFirstSnapshot);
 }
 async function conectarMesa(onFirstSnapshot){
-  while(state.role==='cliente'){
+  while(state.role==='cliente' && !state.clienteAccesoInvalido){
     const headers = {};
     if(MESA_TOKEN) headers['X-Mesa-Token'] = MESA_TOKEN;
+    let accesoInvalido=false;
     try{
       const response = await fetch('/events?mesa=' + encodeURIComponent(state.clienteMesa), {headers});
-      onFirstSnapshot = await consumirStream(response, onFirstSnapshot, ()=>state.role==='cliente');
+      if(response.status===401 || response.status===403){ accesoInvalido=true; }
+      else{ onFirstSnapshot = await consumirStream(response, onFirstSnapshot, ()=>state.role==='cliente'); }
     }catch(e){}
-    liveReady=false; setConnPill(false);
+    liveReady=false;
+    if(accesoInvalido){
+      // 401/403 significa que el servidor rechazó explícitamente esta identidad
+      // de mesa (falta o no coincide): reintentar con el mismo token roto nunca
+      // se va a resolver solo, así que dejamos de mostrar "sin conexión" y
+      // avisamos algo accionable en vez de reintentar para siempre en silencio.
+      state.clienteAccesoInvalido = true;
+      hideConnStatus();
+      render();
+      break;
+    }
+    setConnPill(false);
     if(state.role==='cliente') await new Promise(resolve=>setTimeout(resolve,1000));
   }
 }
@@ -317,6 +330,11 @@ function setConnPill(on){
     banner.className='conn-banner offline';
     banner.innerHTML='<strong>Sin conexión con Rabieta</strong><span>Estamos intentando volver. Tu carrito y lo que estabas completando quedan guardados.</span>';
   }
+}
+function hideConnStatus(){
+  if(conexionRecoveryTimer){ clearTimeout(conexionRecoveryTimer); conexionRecoveryTimer=null; }
+  const el = document.getElementById('connPill'); if(el) el.remove();
+  const banner = document.getElementById('connBanner'); if(banner) banner.remove();
 }
 
 function detectarNuevasAlertas(){
@@ -791,7 +809,16 @@ function splashHtml(mesa){
 }
 function dismissSplash(){ state.clienteSplashDismissed = true; render(); }
 
+function accesoInvalidoHtml(){
+  return `<div class="card access-invalid">
+    <div class="access-invalid-icon">${ic('warning')}</div>
+    <strong>Este acceso no es válido</strong>
+    <p>El enlace de esta mesa venció, ya se usó desde otro dispositivo o no coincide con el QR. No es un corte de conexión: reintentar solo no lo va a resolver.</p>
+    <p><b>Pedile a un mozo que te ayude</b> o volvé a escanear el código QR pegado en tu mesa para conseguir un acceso nuevo.</p>
+  </div>`;
+}
 function viewCliente(){
+  if(state.clienteAccesoInvalido) return accesoInvalidoHtml();
   const mesa = findMesa(state.clienteMesa);
   if(!mesa) return `<div class="empty">Este link no tiene una mesa válida asignada.</div>`;
   if(!MENU_DATA) return `<div class="empty">Conectando con el local…</div>`;
