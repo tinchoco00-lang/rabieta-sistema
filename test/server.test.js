@@ -254,6 +254,12 @@ test('Encargado carga un escenario sintético visible de punta a punta', async (
   assert.equal(scenario.mesas[2].cuentaPedida, true);
   assert.equal(scenario.mesas[3].alertas[0].prioridad, 'urgente');
   assert.equal(scenario.mesas[4].pago.estado, 'confirmado');
+  // Mesa 7 (asignada a Sofía, igual que Mesa 1 y Mesa 4) llama al mozo y queda
+  // sin resolver: es el paso "llamado al mozo" del recorrido guiado completo.
+  assert.equal(scenario.mesas[6].alertas.length, 1);
+  assert.equal(scenario.mesas[6].alertas[0].tipo, 'mozo');
+  assert.equal(scenario.mesas[6].alertas[0].estado, 'recibido');
+  assert.equal(scenario.mesas[6].mozo, 'Sofía');
   assert.equal(scenario.analytics.pagosConfirmados, 1);
   assert.equal(scenario.analytics.resenas[0].puntuacion, 5);
   assert.equal(scenario.analytics.crmContactos[0].contacto, 'demo@rabieta.local');
@@ -270,6 +276,10 @@ test('Encargado carga un escenario sintético visible de punta a punta', async (
   assert.match(appSource, /Paso 2 · tocá esta tarjeta/);
   assert.match(appSource, /Paso 3 · entregá este ítem/);
   assert.match(appSource, /Paso 3 · resolvé este reclamo/);
+  assert.match(appSource, /Paso 3 · atendé este llamado/);
+  assert.match(appSource, /atendé el llamado al mozo de Mesa 7/);
+  assert.match(appSource, /Elegí Mercado Pago o tarjeta demo para cerrarla — pago de prueba, sin dinero real/);
+  assert.match(appSource, /Mirá el feed de actividad en vivo — analytics y CRM son sintéticos/);
   assert.match(appSource, /preview=1\$\{hash\}/);
   assert.match(appSource, /root\.dataset\.modalKey===modalKey/);
   assert.doesNotMatch(appSource, /window\.open\(mesaAccessUrl/);

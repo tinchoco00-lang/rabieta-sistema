@@ -611,6 +611,12 @@ async function seedPresentationScenario() {
   state.clockMs = 125;
   result = await run({ type: 'pedido_nuevo', mesa: 2, items: [{ productoId: 'burger-rabieta' }, { productoId: 'papas-rabieta' }] });
   if (!result.ok) return result;
+  state.clockMs = 130;
+  // Mesa 7 (asignada a Sofía, igual que Mesa 1 y Mesa 4) llama al mozo y queda
+  // sin resolver a propósito: el recorrido de presentación la atiende en vivo
+  // en la estación de Salón, mostrando el paso "llamado al mozo" del flujo completo.
+  result = await run({ type: 'llamar_mozo', mesa: 7 });
+  if (!result.ok) return result;
 
   state.clockMs = 145;
   result = await run({ type: 'pedido_nuevo', mesa: 3, items: [{ productoId: 'hummus-rabieta' }] });
