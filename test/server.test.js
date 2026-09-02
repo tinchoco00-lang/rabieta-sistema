@@ -1678,3 +1678,32 @@ test('el modal de checkout se vuelve a pintar al cambiar de medio de pago (no qu
   const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
   assert.match(source, /state\.modal\.type==='checkout'\s*\n\s*\?\s*':'\+state\.clientePagoMedio\+':'\+state\.clientePagoEnviando\+':'\+state\.clientePagoError/);
 });
+
+test('la IA de Rabieta recuerda las últimas preguntas y responde directo cuando se nombra un plato puntual', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  const engine = fs.readFileSync(path.join(root, 'public', 'recommender.js'), 'utf8');
+  assert.match(source, /function registrarRespuestaAsistente\(consulta, respuesta\)\{/);
+  assert.match(source, /class="ai-history"/);
+  assert.match(source, /Antes preguntaste/);
+  assert.match(source, /clienteAsistenteHistorial\.length = Math\.min\(state\.clienteAsistenteHistorial\.length, 4\)/);
+  assert.match(engine, /function lookupExacto\(menu, intent\)\{/);
+  assert.match(engine, /Coincide exactamente con lo que preguntaste/);
+
+  // Bug real encontrado verificando esto en el navegador: si el historial usa
+  // el texto vivo del input en vez de la consulta "congelada" que generó la
+  // respuesta, la segunda pregunta pisa el texto de la primera antes de
+  // guardarla, y el historial queda con la consulta nueva pero el mensaje
+  // viejo. Se ejecuta la función real (no una reimplementación) para
+  // confirmar que no vuelve a pasar.
+  const fnSource = source.match(/function registrarRespuestaAsistente\(consulta, respuesta\)\{[\s\S]*?\r?\n\}\r?\n/)[0];
+  const ctx = { state: { clienteAsistenteHistorial: [], clienteAsistenteRespuesta: null, clienteAsistenteConsulta: '', clienteAsistenteConsultaMostrada: '' } };
+  vm.createContext(ctx);
+  vm.runInContext(fnSource, ctx);
+  vm.runInContext("registrarRespuestaAsistente('Una pizza barata', {message:'Encontré 3 opciones de la carta con precio confirmado.'})", ctx);
+  // El usuario empieza a escribir la segunda consulta (dispara oninput en cada tecla) antes de enviarla.
+  ctx.state.clienteAsistenteConsulta = 'cuanto sale la burger rabieta';
+  vm.runInContext("registrarRespuestaAsistente('cuanto sale la burger rabieta', {message:'Burger Rabieta — $3.400.'})", ctx);
+  assert.deepEqual(JSON.parse(JSON.stringify(ctx.state.clienteAsistenteHistorial)), [
+    { consulta: 'Una pizza barata', message: 'Encontré 3 opciones de la carta con precio confirmado.' },
+  ]);
+});

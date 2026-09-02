@@ -36,3 +36,30 @@ test('no inventa seguridad alimentaria para restricciones no estructuradas', () 
   assert.match(result.message, /No puedo validar/);
   assert.match(result.warning, /requieren confirmación/);
 });
+
+test('nombrar un plato puntual responde directo con sus datos reales, sin inventar nada fuera de la carta', () => {
+  const burger = recommend(menu, 'cuanto sale la burger rabieta');
+  assert.equal(burger.items.length, 1);
+  assert.equal(burger.items[0].product.id, 'burger-rabieta');
+  const producto = menu.categorias.flatMap(c => c.productos).find(p => p.id === 'burger-rabieta');
+  assert.match(burger.message, new RegExp(`\\$${producto.precio.toLocaleString('es-AR')}`));
+  assert.match(burger.message, new RegExp(producto.descripcion.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+
+  // La categoría genérica ("burger" -> hamburguesas) no debe ganarle a un
+  // nombre de plato puntual y sin ambigüedad.
+  assert.notEqual(burger.message, 'Encontré 1 opción de la carta con precio confirmado.');
+});
+
+test('un plato puntual mencionado junto con un presupuesto sigue el camino normal de varias opciones, no el atajo directo', () => {
+  const conPresupuesto = recommend(menu, 'burger rabieta por menos de $2000');
+  // Burger Rabieta sale $3.400 (supera el presupuesto): con presupuesto activo
+  // seguimos el flujo normal de candidatos dentro de precio, no la respuesta
+  // directa sobre un plato que en este caso ni siquiera entraría.
+  assert.doesNotMatch(conPresupuesto.message, /Blend de carnes/);
+  assert.match(conPresupuesto.message, /^Encontré/);
+});
+
+test('un nombre de plato ambiguo (coincide con más de un producto) no dispara la respuesta directa', () => {
+  const ambiguo = recommend(menu, 'bastones de mozzarella o la pizza mozzarella, cual me recomendás');
+  assert.ok(ambiguo.items.length > 1, 'con una coincidencia ambigua debe seguir el flujo normal de varias opciones');
+});
