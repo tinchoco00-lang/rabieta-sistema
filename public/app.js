@@ -1448,10 +1448,12 @@ function mesaTileHtml(m){
 }
 function alertRowHtml(mesa,a,acciones){
   const edad = timeAgoSec(a.creadoTs);
-  const demoTarget = state.presentacionCargada && STAFF_ALLOWED_VIEWS.includes('encargado') && mesa.numero===4 && acciones;
-  return `<div class="alert-row ${a.escalado?'escalado':''}${demoTarget?' demo-target':''}">
+  const enDemo = state.presentacionCargada && STAFF_ALLOWED_VIEWS.includes('encargado') && acciones;
+  const demoTarget = enDemo && mesa.numero===4;
+  const demoTargetLlamado = enDemo && mesa.numero===7;
+  return `<div class="alert-row ${a.escalado?'escalado':''}${demoTarget||demoTargetLlamado?' demo-target':''}">
     <div><div class="msg">Mesa ${mesa.numero} — ${escapeHtml(a.label)}${a.mensaje?`: "${escapeHtml(a.mensaje)}"`:''}</div>
-    ${demoTarget?'<span class="demo-target-badge">Paso 3 · resolvé este reclamo</span>':''}<div class="meta"><span class="pill ${a.prioridad}">${a.prioridad.toUpperCase()}</span> hace ${fmtSec(edad)} ${a.escalado?` · ${ic('warning')} ESCALADO`:''} ${a.estado==='atencion'?' · en atención':''}</div></div>
+    ${demoTarget?'<span class="demo-target-badge">Paso 3 · resolvé este reclamo</span>':demoTargetLlamado?'<span class="demo-target-badge">Paso 3 · atendé este llamado</span>':''}<div class="meta"><span class="pill ${a.prioridad}">${a.prioridad.toUpperCase()}</span> hace ${fmtSec(edad)} ${a.escalado?` · ${ic('warning')} ESCALADO`:''} ${a.estado==='atencion'?' · en atención':''}</div></div>
     ${acciones?`<div class="actions">${a.estado==='recibido'?`<button class="btn dark sm" onclick="marcarAtencion(${a.id})">En atención</button>`:''}
       <button class="btn good sm" onclick="resolverAlerta(${a.id})">Resolver</button></div>`:''}</div>`;
 }
@@ -1552,9 +1554,9 @@ function presentacionGuideHtml(){
     <div class="presentation-steps">
       <article class="presentation-step${demoStepClass(1)}"><span class="step-number">${state.demoPasosVistos.has(1)?ic('checkring'):'1'}</span><div><strong>Cliente · Mesa 1</strong><p>${escapeHtml(demoStepStatus(1))}</p></div>${mesaDemoLinkHtml(1,state.demoPasosVistos.has(1)?'Volver a abrir':'Empezar demo','primary','user',1)}</article>
       <article class="presentation-step${demoStepClass(2)}"><span class="step-number">${state.demoPasosVistos.has(2)?ic('checkring'):'2'}</span><div><strong>Cocina + Barra</strong><p>Avanzá Hummus y Agua en colas separadas.</p></div><button class="btn dark sm" onclick="irPasoDemo('cocina',null,2)">${ic('flame')} Abrir KDS</button></article>
-      <article class="presentation-step${demoStepClass(3)}"><span class="step-number">${state.demoPasosVistos.has(3)?ic('checkring'):'3'}</span><div><strong>Salón · Sofía</strong><p>Retirá Agua de Mesa 1 y atendé ${demoStepStatus(4).toLowerCase()}.</p></div><button class="btn dark sm" onclick="irPasoDemo('mozo','Sofía',3)">${ic('plate')} Abrir Salón</button></article>
-      <article class="presentation-step${demoStepClass(4)}"><span class="step-number">${state.demoPasosVistos.has(4)?ic('checkring'):'4'}</span><div><strong>Cliente · Cuenta</strong><p>Mesa 3: ${escapeHtml(demoStepStatus(3))}.</p></div>${mesaDemoLinkHtml(3,'Abrir cuenta','dark','receipt',4)}</article>
-      <article class="presentation-step${demoStepClass(5)}"><span class="step-number">${state.demoPasosVistos.has(5)?ic('checkring'):'5'}</span><div><strong>Dueño · Resultado</strong><p>Mesa 5: ${escapeHtml(demoStepStatus(5))}. Analytics y CRM son sintéticos.</p></div><button class="btn good sm" onclick="irPasoDemo('dueno',null,5)">${ic('chart')} Abrir analytics</button></article>
+      <article class="presentation-step${demoStepClass(3)}"><span class="step-number">${state.demoPasosVistos.has(3)?ic('checkring'):'3'}</span><div><strong>Salón · Sofía</strong><p>Retirá Mesa 1, atendé el llamado al mozo de Mesa 7 y resolvé el reclamo urgente de Mesa 4.</p></div><button class="btn dark sm" onclick="irPasoDemo('mozo','Sofía',3)">${ic('plate')} Abrir Salón</button></article>
+      <article class="presentation-step${demoStepClass(4)}"><span class="step-number">${state.demoPasosVistos.has(4)?ic('checkring'):'4'}</span><div><strong>Cliente · Cuenta y pago</strong><p>Mesa 3: ${escapeHtml(demoStepStatus(3))}. Elegí Mercado Pago o tarjeta demo para cerrarla — pago de prueba, sin dinero real.</p></div>${mesaDemoLinkHtml(3,'Abrir cuenta','dark','receipt',4)}</article>
+      <article class="presentation-step${demoStepClass(5)}"><span class="step-number">${state.demoPasosVistos.has(5)?ic('checkring'):'5'}</span><div><strong>Dueño · Resultado</strong><p>Mesa 5: ${escapeHtml(demoStepStatus(5))}. Mirá el feed de actividad en vivo — analytics y CRM son sintéticos.</p></div><button class="btn good sm" onclick="irPasoDemo('dueno',null,5)">${ic('chart')} Abrir analytics</button></article>
     </div>
   </section>`;
 }
