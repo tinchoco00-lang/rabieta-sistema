@@ -59,6 +59,14 @@ endpoint que los entrega exige una sesión de Encargado y nunca expone el secret
 impresión, rotación y colocación física definitiva debe hacerse únicamente en
 el entorno autorizado del local.
 
+El panel de Dueño muestra un checklist honesto de preparación de Mercado Pago.
+Hoy el pago desde la mesa sigue siendo sandbox (no mueve dinero real) sin
+importar estas variables. Las variables opcionales `MERCADOPAGO_ACCESS_TOKEN`,
+`MERCADOPAGO_PUBLIC_KEY` y `MERCADOPAGO_WEBHOOK_SECRET` sólo controlan qué ve
+ese checklist como "listo"; el servidor únicamente comprueba si existen, nunca
+expone sus valores. No hay que escribir ninguna de estas credenciales en el
+repositorio, y activar cobros reales con ellas requiere aprobación del dueño.
+
 ## Cómo ponerlo en internet — paso a paso, sin usar la terminal
 
 Vamos a usar **Render** (gratis para empezar). Necesita que el código esté en

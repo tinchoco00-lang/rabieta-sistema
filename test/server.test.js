@@ -1303,3 +1303,61 @@ test('dueño ve un embudo operativo vivo con foco sugerido', () => {
   assert.match(source, /label:'Pagadas'/);
   assert.match(source, /Foco sugerido/);
 });
+
+test('dueño ve un checklist honesto de preparación de Mercado Pago; sin credenciales todo aparece pendiente y solo Dueño lo recibe', async () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  assert.match(source, /Preparación de Mercado Pago/);
+  assert.match(source, /Ningún pago real se procesa todavía/);
+
+  const duenoLogin = await loginAs('dueno');
+  const duenoMessage = await getStaffStateWithToken(duenoLogin.token);
+  assert.deepEqual(duenoMessage.integraciones, {
+    mercadoPago: { accessToken: false, publicKey: false, webhookSecret: false },
+  });
+
+  const encargadoLogin = await loginAs('encargado');
+  const encargadoMessage = await getStaffStateWithToken(encargadoLogin.token);
+  assert.equal(encargadoMessage.integraciones, undefined);
+});
+
+test('las credenciales de Mercado Pago solo se exponen como booleanos, nunca sus valores', async () => {
+  const port = await reservePort();
+  const isolatedUrl = `http://127.0.0.1:${port}`;
+  const secretAccessToken = 'TEST-mp-access-' + crypto.randomBytes(8).toString('hex');
+  const secretPublicKey = 'TEST-mp-public-' + crypto.randomBytes(8).toString('hex');
+  let output = '';
+  const processHandle = spawn(process.execPath, ['server.js'], {
+    cwd: root,
+    env: {
+      ...process.env, DATABASE_URL: '', PORT: String(port), STAFF_PIN: testPin,
+      MERCADOPAGO_ACCESS_TOKEN: secretAccessToken, MERCADOPAGO_PUBLIC_KEY: secretPublicKey,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  processHandle.stdout.on('data', chunk => { output += chunk; });
+  processHandle.stderr.on('data', chunk => { output += chunk; });
+  let stopped = false;
+  try {
+    await waitUntilReady(isolatedUrl, processHandle, () => output);
+    const login = await fetch(`${isolatedUrl}/api/staff-login`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pin: testPin, role: 'dueno' }),
+    });
+    const { token } = await login.json();
+    const response = await fetch(`${isolatedUrl}/api/staff-events`, { headers: { authorization: `Bearer ${token}` } });
+    const reader = response.body.getReader();
+    const event = await readSseEvent(reader);
+    await reader.cancel();
+    assert.deepEqual(event.message.integraciones, {
+      mercadoPago: { accessToken: true, publicKey: true, webhookSecret: false },
+    });
+    const rawPayload = JSON.stringify(event.message);
+    assert.doesNotMatch(rawPayload, new RegExp(secretAccessToken));
+    assert.doesNotMatch(rawPayload, new RegExp(secretPublicKey));
+    await stopServer(processHandle);
+    stopped = true;
+    assert.doesNotMatch(output, new RegExp(secretAccessToken));
+    assert.doesNotMatch(output, new RegExp(secretPublicKey));
+  } finally {
+    if (!stopped) await stopServer(processHandle);
+  }
+});

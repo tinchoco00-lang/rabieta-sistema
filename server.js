@@ -58,6 +58,17 @@ const PUBLIC_ACTIONS = new Set(['pedido_nuevo', 'llamar_mozo', 'pedir_cuenta', '
 const STAFF_ACTIONS = new Set(['pedido_estado', 'alerta_atender', 'alerta_resolver', 'pago_demo_confirmar', 'mesa_liberar', 'demo_escenario_cargar', 'reset_demo']);
 const MESA_ACTIONS = new Set(['pedido_nuevo', 'pedido_estado', 'llamar_mozo', 'pedir_cuenta', 'ayuda', 'resena_enviar', 'pago_sandbox_confirmar', 'pago_demo_confirmar', 'mesa_liberar']);
 const PAGO_SANDBOX_MEDIOS = new Set(['tarjeta', 'mercado_pago']);
+// Preparación honesta de la integración real de Mercado Pago (Fase 3 del roadmap):
+// solo exponemos al Dueño si cada credencial existe como variable de entorno,
+// nunca su valor. Sin estas variables, el pago sigue siendo el sandbox demo
+// actual, sin dinero real ni llamadas a la API de Mercado Pago.
+const INTEGRACIONES = {
+  mercadoPago: {
+    accessToken: Boolean(process.env.MERCADOPAGO_ACCESS_TOKEN),
+    publicKey: Boolean(process.env.MERCADOPAGO_PUBLIC_KEY),
+    webhookSecret: Boolean(process.env.MERCADOPAGO_WEBHOOK_SECRET),
+  },
+};
 const PEDIDO_ESTADOS = ['enviado', 'preparando', 'listo', 'entregado'];
 const HELP_CATEGORIES = {
   no_llego: { label: 'No llegó mi pedido', prioridad: 'urgente' },
@@ -490,7 +501,10 @@ function estadoPayload(client) {
     visibleState = { clockMs: state.clockMs, mesas: [findMesa(client.mesa)] };
   }
   const message = client.kind === 'staff'
-    ? { type: 'estado', state: visibleState, mesasTotal: MESAS_TOTAL, role: client.role, allowedViews: STAFF_ROLE_VIEWS[client.role] }
+    ? {
+        type: 'estado', state: visibleState, mesasTotal: MESAS_TOTAL, role: client.role, allowedViews: STAFF_ROLE_VIEWS[client.role],
+        ...(client.role === 'dueno' ? { integraciones: INTEGRACIONES } : {}),
+      }
     : { type: 'estado', state: visibleState };
   return 'data: ' + JSON.stringify(message) + '\n\n';
 }

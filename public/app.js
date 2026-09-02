@@ -92,7 +92,7 @@ function emptyAnalytics(){
 }
 
 let state = {
-  clockMs:0, mesas:[], analytics:emptyAnalytics(),
+  clockMs:0, mesas:[], analytics:emptyAnalytics(), integraciones:null,
   // ui local, no viene del servidor:
   role:null, clienteMesa:null, clienteCat:null, clienteFiltroSinTacc:false,
   clienteCart:[], clienteCartRecuperado:'', clienteExpand:null, clienteProductoDrafts:{}, clienteHelpOpen:false, clienteSplashDismissed:false,
@@ -189,6 +189,7 @@ function aplicarMensajeRealtime(data, onFirstSnapshot){
     state.mesas = msg.state.mesas;
     state.analytics = msg.state.analytics || emptyAnalytics();
     state.presentacionCargada = msg.state.presentacionCargada === true;
+    if(msg.integraciones) state.integraciones = msg.integraciones;
     if(msg.role) STAFF_ROLE = msg.role;
     if(Array.isArray(msg.allowedViews)) STAFF_ALLOWED_VIEWS = msg.allowedViews;
     detectarNuevasAlertas();
@@ -1511,7 +1512,26 @@ function viewDueno(){
     <div class="grid cols-3">
       ${crmRecientes.length ? crmRecientes.map(c=>`<div class="insight review-insight"><span>Mesa ${c.mesa} · ${c.canal==='email'?'Email':'WhatsApp'} · hace ${fmtSec(timeAgoSec(c.consentimientoTs))}</span><b>${c.nombre?escapeHtml(c.nombre)+' · ':''}${escapeHtml(c.contacto)}</b></div>`).join('') : '<div class="empty">Los contactos aparecerán solo cuando una persona acepte recibir novedades.</div>'}
     </div>
+    ${viewPagosReadinessHtml()}
     ${view3dReadinessHtml()}`;
+}
+function viewPagosReadinessHtml(){
+  const mp = (state.integraciones && state.integraciones.mercadoPago) || {accessToken:false,publicKey:false,webhookSecret:false};
+  const items = [
+    {label:'Cobro sandbox en la demo', ready:true, detail:'Tarjeta demo y Mercado Pago sandbox ya funcionan en el flujo de cuenta. No mueven dinero real.'},
+    {label:'Access Token de Mercado Pago', ready:mp.accessToken, detail:mp.accessToken?'Variable de entorno MERCADOPAGO_ACCESS_TOKEN configurada en este servidor.':'Falta cargar MERCADOPAGO_ACCESS_TOKEN como variable de entorno del servidor. Nunca debe escribirse en el repositorio.'},
+    {label:'Public Key de Mercado Pago', ready:mp.publicKey, detail:mp.publicKey?'Variable de entorno MERCADOPAGO_PUBLIC_KEY configurada en este servidor.':'Falta cargar MERCADOPAGO_PUBLIC_KEY para el checkout del cliente.'},
+    {label:'Webhook de confirmación firmado', ready:mp.webhookSecret, detail:mp.webhookSecret?'MERCADOPAGO_WEBHOOK_SECRET configurado; falta implementar la verificación real de la firma.':'Falta MERCADOPAGO_WEBHOOK_SECRET y el endpoint que valide notificaciones reales de pago.'},
+    {label:'Conciliación con caja/POS', ready:false, detail:'Pendiente de Fase 3 del roadmap; requiere decisión del dueño sobre el POS a integrar.'},
+  ];
+  const listas = items.filter(i=>i.ready).length;
+  return `<div class="section-h">Preparación de Mercado Pago</div>
+    <div class="mock-banner">${ic('clipboard')} Ningún pago real se procesa todavía. Activar Mercado Pago en producción requiere credenciales propias de Rabieta y aprobación del dueño antes de mover dinero real.</div>
+    <div class="grid cols-3 asset-summary">
+      ${statTile('Listo para producción', `${listas} / ${items.length}`, listas<items.length?'faltan pasos por confirmar':'checklist completo', listas<items.length?'downAlert':null)}
+    </div>
+    <div class="asset-grid">${items.map(i=>`<article class="asset-card"><div class="asset-card-head"><strong>${escapeHtml(i.label)}</strong><span class="pill ${i.ready?'normal':'importante'}">${i.ready?'Listo':'Falta'}</span></div>
+      <p>${escapeHtml(i.detail)}</p></article>`).join('')}</div>`;
 }
 function view3dReadinessHtml(){
   const platos=platosDestacadosData();
