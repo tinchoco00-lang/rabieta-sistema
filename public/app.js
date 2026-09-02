@@ -93,7 +93,7 @@ let state = {
   clockMs:0, mesas:[], analytics:emptyAnalytics(),
   // ui local, no viene del servidor:
   role:null, clienteMesa:null, clienteCat:null, clienteFiltroSinTacc:false,
-  clienteCart:[], clienteExpand:null, clienteHelpOpen:false, clienteSplashDismissed:false,
+  clienteCart:[], clienteExpand:null, clienteProductoDrafts:{}, clienteHelpOpen:false, clienteSplashDismissed:false,
   clienteAsistenteOpen:false, clientePreferencia:null, clienteAsistenteConsulta:'', clienteAsistenteRespuesta:null,
   clienteAsistenteAgregado:null, clienteResenaError:'', clienteResenaEnviando:false,
   clienteRepetirAviso:'', clientePedidoEnviando:false, clientePedidoError:'',
@@ -164,7 +164,7 @@ function aplicarMensajeRealtime(data, onFirstSnapshot){
 }
 function clienteEditandoFormulario(){
   const active = document.activeElement;
-  return state.role==='cliente' && active && typeof active.closest==='function' && Boolean(active.closest('.review-card, .ai-assistant'));
+  return state.role==='cliente' && active && typeof active.closest==='function' && Boolean(active.closest('.review-card, .ai-assistant, .dish-detail, .help-panel'));
 }
 function conectar(onFirstSnapshot){
   if(state.role==='cliente'){
@@ -815,19 +815,20 @@ function dishCardHtml(p, bloqueado){
   return `<div class="dish" id="dish-${p.id}">${cuerpo}</div>`;
 }
 function dishDetailHtml(p){
+  const draft = obtenerProductoDraft(p);
   let variantePicker = '';
   if(p.variantes){
     variantePicker = `<div class="opt-label">Elegí versión</div>` + p.variantes.map((v,i)=>`
-      <div class="opt-row"><label><input type="radio" name="var_${p.id}" value="${i}" ${i===0?'checked':''}> ${v.nombre} — ${money(v.precio)}</label></div>`).join('');
+      <div class="opt-row"><label><input type="radio" name="var_${p.id}" value="${i}" ${draft.variante===i?'checked':''} onchange="actualizarProductoDraft('${p.id}','variante',${i})"> ${v.nombre} — ${money(v.precio)}</label></div>`).join('');
   }
   let opcionPicker = '';
   if(p.opciones){
     opcionPicker = `<div class="opt-label">Elegí una opción</div>` + p.opciones.map((o,i)=>`
-      <div class="opt-row"><label><input type="radio" name="op_${p.id}" value="${o}" ${i===0?'checked':''}> ${o}</label></div>`).join('');
+      <div class="opt-row"><label><input type="radio" name="op_${p.id}" value="${i}" ${draft.opcion===i?'checked':''} onchange="actualizarProductoDraft('${p.id}','opcion',${i})"> ${o}</label></div>`).join('');
   }
   return `<div class="dish-detail">
     ${variantePicker}${opcionPicker}
-    <input type="text" class="nota" id="nota_${p.id}" placeholder="Observación para cocina (ej: sin cebolla)…">
+    <input type="text" class="nota" id="nota_${p.id}" maxlength="500" value="${escapeHtml(draft.observacion)}" oninput="actualizarProductoDraft('${p.id}','observacion',this.value)" placeholder="Observación para cocina (ej: sin cebolla)…">
     <div style="margin-top:10px;display:flex;gap:8px;">
       <button class="btn primary sm" onclick="agregarAlCarrito('${p.id}')">Agregar</button>
       <button class="btn ghost sm" onclick="toggleDish(null)">Cerrar</button>
@@ -837,6 +838,16 @@ function dishDetailHtml(p){
 function setCat(c){ state.clienteCat=c; state.clienteExpand=null; render(); }
 function toggleFiltroSinTacc(){ state.clienteFiltroSinTacc=!state.clienteFiltroSinTacc; render(); }
 function toggleDish(id){ state.clienteExpand = state.clienteExpand===id?null:id; render(); }
+function obtenerProductoDraft(producto){
+  if(!state.clienteProductoDrafts[producto.id]) state.clienteProductoDrafts[producto.id]={variante:0,opcion:0,observacion:''};
+  return state.clienteProductoDrafts[producto.id];
+}
+function actualizarProductoDraft(id,campo,valor){
+  const producto=findProducto(id);
+  if(!producto || !['variante','opcion','observacion'].includes(campo)) return;
+  const draft=obtenerProductoDraft(producto);
+  draft[campo]=campo==='observacion'?String(valor).slice(0,500):Number(valor);
+}
 function toggleHelp(){
   if(state.clienteAyudaEnviando) return;
   state.clienteHelpOpen=!state.clienteHelpOpen;
@@ -847,19 +858,22 @@ function toggleHelp(){
 
 function agregarAlCarrito(id){
   const p = findProducto(id);
+  if(!p) return;
+  const draft = obtenerProductoDraft(p);
   let nombre = p.nombre, precio = precioBase(p);
   let variante = null, opcion = null;
   if(p.variantes){
-    const idx = parseInt((document.querySelector(`input[name="var_${id}"]:checked`)||{}).value || 0, 10);
+    const idx = Number.isInteger(draft.variante) && p.variantes[draft.variante] ? draft.variante : 0;
     variante = p.variantes[idx].nombre;
     nombre += ' — ' + variante; precio = p.variantes[idx].precio;
   }
   if(p.opciones){
-    const op = (document.querySelector(`input[name="op_${id}"]:checked`)||{}).value;
+    const op = p.opciones[Number.isInteger(draft.opcion) && p.opciones[draft.opcion] ? draft.opcion : 0];
     if(op){ opcion = op; nombre += ' (' + op + ')'; }
   }
-  const nota = (document.getElementById('nota_'+id)||{}).value || '';
+  const nota = draft.observacion.trim();
   agregarLineaCarrito({productoId:id, variante, opcion, observacion:nota, nombre, precio, notas:nota});
+  delete state.clienteProductoDrafts[id];
   state.clienteRepetirAviso='';
   state.clienteExpand = null;
   render();

@@ -1129,6 +1129,19 @@ test('cliente confirma, conserva y reintenta solicitudes de ayuda', () => {
   assert.match(source, /Salón ya recibió tu aviso/);
 });
 
+test('cliente conserva variantes, opciones y observaciones durante actualizaciones realtime', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  assert.match(source, /clienteProductoDrafts:\{\}/);
+  assert.match(source, /active\.closest\('\.review-card, \.ai-assistant, \.dish-detail, \.help-panel'\)/);
+  assert.match(source, /function obtenerProductoDraft\(producto\)/);
+  assert.match(source, /onchange="actualizarProductoDraft\('\$\{p\.id\}','variante',\$\{i\}\)"/);
+  assert.match(source, /onchange="actualizarProductoDraft\('\$\{p\.id\}','opcion',\$\{i\}\)"/);
+  assert.match(source, /value="\$\{escapeHtml\(draft\.observacion\)\}"/);
+  assert.match(source, /const nota = draft\.observacion\.trim\(\)/);
+  assert.match(source, /delete state\.clienteProductoDrafts\[id\]/);
+  assert.doesNotMatch(source, /document\.querySelector\(`input\[name="var_/);
+});
+
 test('el traspaso de ítems listos se confirma desde salón y no desde Cocina o Barra', () => {
   const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
   assert.match(source, /function itemsListosParaEntregar\(mozo\)/);
