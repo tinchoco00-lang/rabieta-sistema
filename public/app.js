@@ -97,6 +97,7 @@ let state = {
   role:null, clienteMesa:null, clienteCat:null, clienteFiltroSinTacc:false, clienteAccesoInvalido:false,
   clienteCart:[], clienteCartRecuperado:'', clienteExpand:null, clienteProductoDrafts:{}, clienteHelpOpen:false, clienteSplashDismissed:false,
   clienteAsistenteOpen:false, clientePreferencia:null, clienteAsistenteConsulta:'', clienteAsistenteRespuesta:null,
+  clienteAsistenteHistorial:[], clienteAsistenteConsultaMostrada:'',
   clienteAsistenteAgregado:null, clienteResenaError:'', clienteResenaEnviando:false,
   clienteRepetirAviso:'', clientePedidoEnviando:false, clientePedidoError:'',
   clienteServicioEnviando:false, clienteServicioError:'',
@@ -767,15 +768,31 @@ function asistenteCartaHtml(bloqueado){
       </article>`).join('')}</div>` : ''}
       ${respuesta.warning ? `<p class="ai-warning">${ic('warning')} ${escapeHtml(respuesta.warning)}</p>` : ''}`
       : `<p class="ai-empty">Probá con un ejemplo:</p><div class="ai-examples">${AI_EJEMPLOS.map(ej=>`<button onclick="probarEjemploAsistente('${ej.replace(/'/g,"\\'")}')">${escapeHtml(ej)}</button>`).join('')}</div>`}
+    ${state.clienteAsistenteHistorial.length ? `<div class="ai-history"><span class="ai-history-label">Antes preguntaste</span>${state.clienteAsistenteHistorial.map(h=>`<div class="ai-history-item"><b>${escapeHtml(h.consulta)}</b><span>${escapeHtml(h.message)}</span></div>`).join('')}</div>` : ''}
     <p class="ai-fineprint">Funciona en este dispositivo con reglas sobre la carta real; no inventa platos, precios ni disponibilidad, y no envía datos a ningún servicio externo.</p>
   </div>`;
 }
 function toggleAsistente(){ state.clienteAsistenteOpen=!state.clienteAsistenteOpen; render(); }
 function actualizarConsultaAsistente(value){ state.clienteAsistenteConsulta=value; }
+// Guarda el intercambio anterior (pregunta + respuesta real) antes de
+// reemplazarlo, para que el panel se sienta como una conversación con
+// memoria corta en vez de un buscador que olvida lo último que preguntaste.
+function registrarRespuestaAsistente(consulta, respuesta){
+  // clienteAsistenteConsulta es el texto vivo del input (cambia con cada
+  // tecla); clienteAsistenteConsultaMostrada queda "congelado" a la consulta
+  // que generó la respuesta actual, así el historial no confunde lo que ya
+  // se escribió después con lo que realmente se preguntó antes.
+  if(state.clienteAsistenteRespuesta){
+    state.clienteAsistenteHistorial.unshift({consulta: state.clienteAsistenteConsultaMostrada, message: state.clienteAsistenteRespuesta.message});
+    state.clienteAsistenteHistorial.length = Math.min(state.clienteAsistenteHistorial.length, 4);
+  }
+  state.clienteAsistenteConsulta = consulta;
+  state.clienteAsistenteConsultaMostrada = consulta;
+  state.clienteAsistenteRespuesta = respuesta;
+}
 function probarEjemploAsistente(query){
   state.clientePreferencia=null; state.clienteAsistenteAgregado=null;
-  state.clienteAsistenteConsulta=query;
-  state.clienteAsistenteRespuesta=window.RabietaRecommender.recommend(MENU_DATA,query);
+  registrarRespuestaAsistente(query, window.RabietaRecommender.recommend(MENU_DATA,query));
   render();
 }
 function abrirAsistenteDesdeSplash(){
@@ -788,15 +805,15 @@ function abrirAsistenteDesdeSplash(){
 function consultarAsistente(event){
   if(event) event.preventDefault();
   state.clientePreferencia=null; state.clienteAsistenteAgregado=null;
-  state.clienteAsistenteRespuesta=window.RabietaRecommender.recommend(MENU_DATA,state.clienteAsistenteConsulta);
+  registrarRespuestaAsistente(state.clienteAsistenteConsulta, window.RabietaRecommender.recommend(MENU_DATA,state.clienteAsistenteConsulta));
   render();
 }
 function setPreferenciaAsistente(perfil){
   const option = ASISTENTE_OPCIONES.find(op=>op.id===perfil);
   if(!option) return;
-  state.clientePreferencia=perfil; state.clienteAsistenteConsulta=option.label;
+  state.clientePreferencia=perfil;
   state.clienteAsistenteAgregado=null;
-  state.clienteAsistenteRespuesta=window.RabietaRecommender.recommend(MENU_DATA,option.label);
+  registrarRespuestaAsistente(option.label, window.RabietaRecommender.recommend(MENU_DATA,option.label));
   render();
 }
 function abrirRecomendacion(id){

@@ -80,12 +80,46 @@
     if(matchedTokens.length) return `Coincide con “${matchedTokens.slice(0,2).join('” y “')}”.`;
     return 'Es un destacado con precio confirmado.';
   }
+  // Si la consulta nombra un solo plato de la carta de forma inconfundible (y
+  // no mezcla otra intención como presupuesto, categoría o perfil), respondemos
+  // directo con sus datos reales en vez de una lista de recomendaciones — más
+  // parecido a una conversación ("¿qué tiene la burger rabieta?") que a un
+  // buscador. Nunca describe nada que no esté ya en la carta.
+  function lookupExacto(menu, intent){
+    // La categoría queda afuera de esta guarda a propósito: una palabra como
+    // "burger" activa la categoría genérica "hamburguesa", pero si además el
+    // texto nombra un plato puntual y sin ambigüedad ("burger rabieta"), esa
+    // mención específica debe ganarle a la categoría genérica.
+    const otraIntencion = intent.sinTacc || intent.profile || intent.cheap || intent.surprise || intent.budget;
+    if(otraIntencion) return null;
+    const coincidencias = products(menu).filter(product=>{
+      const nombreNormalizado = normalize(product.nombre);
+      return nombreNormalizado.length >= 5 && intent.text.includes(nombreNormalizado);
+    });
+    if(coincidencias.length !== 1) return null;
+    const product = coincidencias[0];
+    const precio = basePrice(product);
+    if(!Number.isFinite(precio)) return null;
+    const precioLabel = Array.isArray(product.variantes) && product.variantes.length > 1
+      ? `Desde $${precio.toLocaleString('es-AR')}, según la variante que elijas.`
+      : `$${precio.toLocaleString('es-AR')}.`;
+    const detalle = product.descripcion ? ` ${product.descripcion}.` : '';
+    const dietario = (product.filtro_dietario||[]).includes('sin_tacc') ? ' Está marcado Sin TACC en la carta.' : '';
+    return {
+      items: [{product, reason: 'Coincide exactamente con lo que preguntaste.'}],
+      intent, warning: '',
+      message: `${product.nombre} — ${precioLabel}${detalle}${dietario}`,
+    };
+  }
+
   function recommend(menu, query, limit = 3){
     const intent = analyze(query);
     if(!intent.text.trim()) return {items:[], intent, message:'Contame qué te gustaría comer o cuánto querés gastar.', warning:''};
     if(intent.unsafeRestriction && !intent.sinTacc){
       return {items:[], intent, message:'No puedo validar esa restricción sólo con la carta. Llamá al personal para elegir con seguridad.', warning:'Las alergias y dietas requieren confirmación del equipo de Rabieta.'};
     }
+    const lookup = lookupExacto(menu, intent);
+    if(lookup) return lookup;
     const candidates = products(menu).filter(product=>{
       const price = basePrice(product);
       if(!Number.isFinite(price)) return false;

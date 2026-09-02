@@ -192,6 +192,11 @@
   .ai-examples button{border:1px solid var(--line-strong);background:var(--bg-elevated);color:var(--ink-2);border-radius:999px;padding:7px 11px;font-family:'Nunito';font-size:11.5px;font-weight:800;cursor:pointer;}
   .ai-message{color:var(--ink-2);font-size:12px;font-weight:700;}
   .ai-warning{color:var(--gold);font-weight:700;display:flex;gap:5px;align-items:flex-start;}
+  .ai-history{margin-top:14px;padding-top:10px;border-top:1px dashed var(--line-strong);}
+  .ai-history-label{display:block;font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-muted);margin-bottom:6px;}
+  .ai-history-item{padding:5px 0;font-size:11px;}
+  .ai-history-item b{display:block;color:var(--ink-2);font-weight:700;}
+  .ai-history-item span{display:block;color:var(--ink-muted);margin-top:1px;}
   @media(max-width:640px){.ai-assistant.compact{align-items:flex-start;flex-direction:column}.ai-results{grid-template-columns:1fr}.ai-assistant.compact .btn{width:100%;}.ai-query>div{align-items:stretch}.ai-query .btn{padding-left:10px;padding-right:10px}}
 
   /* carta — pestañas subrayadas, no una pared de pastillas */
