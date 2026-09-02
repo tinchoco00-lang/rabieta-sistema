@@ -1112,6 +1112,83 @@ test('cliente ve estado y tiempo realtime de cada ítem del pedido', () => {
   assert.match(source, /class="customer-order-meta"[\s\S]*itemElapsedLabel\(it\)/);
 });
 
+test('la sesión de personal se guarda localmente y sobrevive a un reload; vence de forma segura ante un 401', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  const sessionBlock = source.match(/function setStaffToken\(token\)\{[\s\S]*?\nfunction staffLogout\(\)\{[\s\S]*?\r?\n\}\r?\n/);
+  assert.ok(sessionBlock, 'debe existir el bloque de sesión de personal persistente');
+
+  function makeContext(){
+    const store = new Map();
+    const fetchCalls = [];
+    const endedCalls = [];
+    const ctx = {
+      STAFF_TOKEN: null, STAFF_ROLE: null, STAFF_ALLOWED_VIEWS: [],
+      localStorage: {
+        getItem(key){ return store.has(key) ? store.get(key) : null; },
+        setItem(key,value){ store.set(key,String(value)); },
+        removeItem(key){ store.delete(key); },
+      },
+      fetch(url,opts){ fetchCalls.push({url,opts}); return Promise.resolve({ok:true}); },
+      window: {},
+    };
+    ctx.window.onStaffSessionEnded = (reason)=>endedCalls.push(reason);
+    vm.createContext(ctx);
+    vm.runInContext(sessionBlock[0], ctx);
+    return { ctx, store, fetchCalls, endedCalls };
+  }
+
+  // Login normal: persist por defecto en localStorage.
+  const a = makeContext();
+  vm.runInContext("setStaffSession('tok-123','dueno',['dueno'])", a.ctx);
+  assert.equal(a.ctx.STAFF_TOKEN, 'tok-123');
+  const saved = JSON.parse(a.store.get('rabieta_staff_session_v1'));
+  assert.deepEqual(saved, { token:'tok-123', role:'dueno', allowedViews:['dueno'] });
+
+  // "Reload": un contexto nuevo pero con el mismo localStorage puede recuperar la sesión.
+  const b = makeContext();
+  b.store.set('rabieta_staff_session_v1', a.store.get('rabieta_staff_session_v1'));
+  const recovered = vm.runInContext('loadStoredStaffSession()', b.ctx);
+  assert.equal(JSON.stringify(recovered), JSON.stringify({ token:'tok-123', role:'dueno', allowedViews:['dueno'] }));
+
+  // Resumir con persist=false no debe reescribir el storage.
+  const c = makeContext();
+  c.store.set('rabieta_staff_session_v1', JSON.stringify({token:'tok-999',role:'mozo',allowedViews:['mozo']}));
+  vm.runInContext("setStaffSession('tok-999','mozo',['mozo'],false)", c.ctx);
+  assert.equal(c.store.get('rabieta_staff_session_v1'), JSON.stringify({token:'tok-999',role:'mozo',allowedViews:['mozo']}));
+
+  // Token vencido (401 del servidor): se limpia la sesión y se avisa a la UI para pedir el PIN de nuevo.
+  const d = makeContext();
+  vm.runInContext("setStaffSession('tok-viejo','mozo',['mozo'])", d.ctx);
+  vm.runInContext('staffSessionExpired()', d.ctx);
+  assert.equal(d.ctx.STAFF_TOKEN, null);
+  assert.equal(d.store.has('rabieta_staff_session_v1'), false);
+  assert.deepEqual(d.endedCalls, ['expired']);
+
+  // Sin sesión activa, un 401 no debe disparar el aviso de vencimiento.
+  const e = makeContext();
+  vm.runInContext('staffSessionExpired()', e.ctx);
+  assert.deepEqual(e.endedCalls, []);
+
+  // Cierre de sesión manual: limpia local y avisa al servidor para invalidar el token.
+  const f = makeContext();
+  vm.runInContext("setStaffSession('tok-logout','encargado',['encargado'])", f.ctx);
+  vm.runInContext('staffLogout()', f.ctx);
+  assert.equal(f.ctx.STAFF_TOKEN, null);
+  assert.equal(f.store.has('rabieta_staff_session_v1'), false);
+  assert.deepEqual(f.endedCalls, ['logout']);
+  assert.equal(f.fetchCalls.length, 1);
+  assert.equal(f.fetchCalls[0].url, '/api/staff-logout');
+  assert.equal(f.fetchCalls[0].opts.headers.Authorization, 'Bearer tok-logout');
+
+  assert.match(source, /response\.status===401.*expirado=true/);
+  assert.match(source, /if\(expirado\)\{ staffSessionExpired\(\); break; \}/);
+
+  assert.match(source, /onclick="staffLogout\(\)"/);
+  const staffHtml = fs.readFileSync(path.join(root, 'public', 'staff.html'), 'utf8');
+  assert.match(staffHtml, /window\.onStaffSessionEnded = function\(reason\)\{/);
+  assert.match(staffHtml, /const sesion = loadStoredStaffSession\(\);/);
+});
+
 test('cliente conserva confirmación visible cuando salón resuelve una solicitud', () => {
   const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
   assert.match(source, /mesa\.alertas\.filter\(a=>a\.estado===['"]resuelto['"]\)/);

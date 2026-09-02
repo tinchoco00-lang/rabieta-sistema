@@ -126,6 +126,8 @@
   nav.roles button.staff.active{background:linear-gradient(135deg,#2a2620,#1a1712);color:var(--gold);border-color:var(--gold-deep);}
   nav.roles button .dot{width:7px;height:7px;border-radius:50%;background:var(--critical);display:none;}
   nav.roles button .dot.show{display:inline-block;}
+  nav.roles button.logout-btn{margin-left:auto;background:transparent;color:var(--ink-muted);border-style:dashed;}
+  nav.roles button.logout-btn:hover{color:var(--critical);border-color:var(--critical);}
 
   main{padding:20px;}
   h1.view-title{font-family:'Fredoka',sans-serif;font-weight:700;font-size:32px;letter-spacing:.01em;margin:0 0 4px;}
