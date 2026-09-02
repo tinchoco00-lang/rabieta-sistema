@@ -1607,6 +1607,7 @@ function viewDueno(){
     <div class="owner-funnel">
       ${flujo.map((paso,index)=>`<div class="funnel-step ${paso.value?'active':''}"><span class="funnel-index">${index+1}</span><div><b>${paso.label}</b><small>${paso.hint}</small></div><strong>${paso.value}</strong></div>`).join('')}
     </div>
+    ${mesasAtencionHtml()}
     <div class="owner-focus ${cuello.value?'attention':''}">${cuello.value?`${ic('warning')} Foco sugerido: <b>${cuello.label}</b> concentra ${cuello.value} unidad(es) ahora.`:`${ic('checkring')} No hay cuellos de botella activos en este momento.`}</div>
     ${actividadRecienteHtml(analytics)}
     <div class="grid cols-4">
@@ -1699,6 +1700,62 @@ function statTile(label,value,delta,deltaClass){
   return `<div class="stat-tile"><div class="label">${label}</div>
     <div class="value ${deltaClass==='downAlert'?'alert':''}">${value}</div>
     ${delta?`<div class="delta ${deltaClass==='up'?'up':deltaClass==='downAlert'?'down':''}">${delta}</div>`:''}</div>`;
+}
+// Junta, en un solo vistazo, qué mesa concreta necesita algo ahora y qué
+// acción resuelve eso — para que el dueño no tenga que traducir "2 alertas
+// activas" en cuáles mesas son. Si una mesa tiene más de un problema, se
+// muestra solo el más grave para no saturar la lista.
+function mesasQueNecesitanAtencion(){
+  const candidatos = [];
+  todasAlertasAbiertas().forEach(({mesa,alerta})=>{
+    candidatos.push({
+      numero: mesa.numero,
+      severidad: alerta.prioridad==='urgente'?0:alerta.prioridad==='importante'?1:2,
+      espera: timeAgoSec(alerta.creadoTs),
+      motivo: alerta.label,
+      accion: 'Resolver desde Salón',
+    });
+  });
+  itemsListosParaEntregar(null).forEach(({mesa,item})=>{
+    const espera = timeAgoSec(item.estadoTs.listo||item.enviadoTs);
+    if(espera<60) return;
+    candidatos.push({
+      numero: mesa.numero,
+      severidad: espera>180?0:1,
+      espera,
+      motivo: `${item.nombre} esperando en ${DESTINO_LABELS[itemDestino(item)]}`,
+      accion: 'Retirar y llevar a la mesa',
+    });
+  });
+  state.mesas.forEach(mesa=>{
+    if(!mesa.cuentaPedida || mesa.pago) return;
+    const espera = timeAgoSec(mesa.cuentaPedidaTs);
+    if(espera<60) return;
+    candidatos.push({
+      numero: mesa.numero,
+      severidad: espera>180?0:1,
+      espera,
+      motivo: 'Pidió la cuenta y todavía no se cobró',
+      accion: 'Cobrar o confirmar el pago',
+    });
+  });
+  const peorPorMesa = new Map();
+  candidatos.forEach(item=>{
+    const existente = peorPorMesa.get(item.numero);
+    if(!existente || item.severidad<existente.severidad) peorPorMesa.set(item.numero,item);
+  });
+  return [...peorPorMesa.values()].sort((a,b)=>a.severidad-b.severidad || b.espera-a.espera).slice(0,6);
+}
+function mesasAtencionHtml(){
+  const items = mesasQueNecesitanAtencion();
+  const SEVERIDAD_LABEL = ['urgente','importante','normal'];
+  return `<div class="section-h">${ic('warning')} Mesas que necesitan atención</div>
+    ${items.length ? `<div class="attention-list">${items.map(it=>`<div class="attention-row sev-${SEVERIDAD_LABEL[it.severidad]}">
+      <span class="pill ${SEVERIDAD_LABEL[it.severidad]}">Mesa ${it.numero}</span>
+      <span class="attention-motivo">${escapeHtml(it.motivo)}<small>hace ${fmtSec(it.espera)}</small></span>
+      <span class="attention-accion">${escapeHtml(it.accion)}</span>
+    </div>`).join('')}</div>`
+      : `<div class="empty">${ic('checkring')} Ninguna mesa necesita atención ahora mismo.</div>`}`;
 }
 const ACTIVIDAD_ICONOS = {pedido:'plate', alerta:'bell', cuenta:'receipt', pago:'checkring', resena:'chart', mesa:'refresh'};
 function actividadRecienteHtml(analytics){
