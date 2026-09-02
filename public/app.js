@@ -222,11 +222,14 @@ async function conectarMesa(onFirstSnapshot){
 }
 async function conectarStaff(onFirstSnapshot){
   while(STAFF_TOKEN){
+    let expirado=false;
     try{
       const response = await fetch('/api/staff-events', {headers:{Authorization:'Bearer ' + STAFF_TOKEN}});
-      onFirstSnapshot = await consumirStream(response, onFirstSnapshot, ()=>!!STAFF_TOKEN);
+      if(response.status===401){ expirado=true; }
+      else{ onFirstSnapshot = await consumirStream(response, onFirstSnapshot, ()=>!!STAFF_TOKEN); }
     }catch(e){}
     liveReady=false; setConnPill(false);
+    if(expirado){ staffSessionExpired(); break; }
     if(STAFF_TOKEN) await new Promise(resolve=>setTimeout(resolve,1000));
   }
 }
@@ -255,10 +258,38 @@ function send(obj){
   return fetch('/api/action', {method:'POST', headers, body:JSON.stringify(obj)}).catch(()=>{});
 }
 function setStaffToken(token){ STAFF_TOKEN = token; }
-function setStaffSession(token,role,allowedViews){
+const STAFF_SESSION_KEY = 'rabieta_staff_session_v1';
+function setStaffSession(token,role,allowedViews,persist){
   STAFF_TOKEN = token;
   STAFF_ROLE = role;
   STAFF_ALLOWED_VIEWS = Array.isArray(allowedViews) ? allowedViews : [role];
+  if(persist!==false){
+    try{ localStorage.setItem(STAFF_SESSION_KEY, JSON.stringify({token,role,allowedViews:STAFF_ALLOWED_VIEWS})); }catch(e){}
+  }
+}
+function loadStoredStaffSession(){
+  try{
+    const raw = localStorage.getItem(STAFF_SESSION_KEY);
+    if(!raw) return null;
+    const data = JSON.parse(raw);
+    if(!data || typeof data.token!=='string' || !data.token || typeof data.role!=='string') return null;
+    return data;
+  }catch(e){ return null; }
+}
+function clearStaffSession(){
+  STAFF_TOKEN = null; STAFF_ROLE = null; STAFF_ALLOWED_VIEWS = [];
+  try{ localStorage.removeItem(STAFF_SESSION_KEY); }catch(e){}
+}
+function staffSessionExpired(){
+  const hadSession = Boolean(STAFF_TOKEN);
+  clearStaffSession();
+  if(hadSession && typeof window!=='undefined' && typeof window.onStaffSessionEnded==='function') window.onStaffSessionEnded('expired');
+}
+function staffLogout(){
+  const token = STAFF_TOKEN;
+  clearStaffSession();
+  if(token) fetch('/api/staff-logout', {method:'POST', headers:{Authorization:'Bearer '+token}}).catch(()=>{});
+  if(typeof window!=='undefined' && typeof window.onStaffSessionEnded==='function') window.onStaffSessionEnded('logout');
 }
 function setMesaToken(token){ MESA_TOKEN = token || null; }
 function setConnPill(on){
@@ -378,7 +409,8 @@ function renderStaffNav(){
   ].filter(role=>STAFF_ALLOWED_VIEWS.includes(role.id));
   const n = todasAlertasAbiertas().length;
   nav.innerHTML = roles.map(r=>`<button class="${state.role===r.id?'active':''}" onclick="setRole('${r.id}')">
-    <span>${ic(r.icon)}</span><span>${r.label}</span><span class="dot ${n>0?'show':''}"></span></button>`).join('');
+    <span>${ic(r.icon)}</span><span>${r.label}</span><span class="dot ${n>0?'show':''}"></span></button>`).join('')
+    + `<button class="logout-btn" onclick="staffLogout()" title="Cerrar sesión en este dispositivo"><span>${ic('lock')}</span><span>Cerrar sesión</span></button>`;
 }
 function setRole(id){
   if(!STAFF_ALLOWED_VIEWS.includes(id)) return;

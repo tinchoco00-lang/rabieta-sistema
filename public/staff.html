@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@400;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/rabieta.css?v=20260902-cartrestore1">
+<link rel="stylesheet" href="/rabieta.css?v=20260901-staffsession1">
 </head>
 <body>
 
@@ -43,7 +43,7 @@
       <div class="mark"><svg class="i-ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/></svg></div>
       <div><div class="name">RABIETA</div><div class="sub">Lomas de Zamora · Panel de personal</div></div>
     </div>
-    <div class="note">Conectado en vivo con las mesas reales del sistema.</div>
+    <div class="note">Conectado en vivo con las mesas reales del sistema. La sesión queda guardada en este dispositivo.</div>
   </header>
   <nav class="roles" id="staffNav"></nav>
   <main><div id="app"></div></main>
@@ -55,7 +55,7 @@
 
 <script src="/vendor/qrcode.js"></script>
 <script src="/recommender.js?v=20260901-cart1"></script>
-<script src="/app.js?v=20260902-cartrestore1"></script>
+<script src="/app.js?v=20260901-staffsession1"></script>
 <script>
   function intentarPin(){
     const pin = document.getElementById('pinInput').value;
@@ -95,6 +95,25 @@
       menuOk = true; tryRender();
     });
   }
+
+  window.onStaffSessionEnded = function(reason){
+    document.getElementById('shell').style.display='none';
+    document.getElementById('demoBar').style.display='none';
+    document.getElementById('sndGate').style.display='none';
+    document.getElementById('gate').style.display='flex';
+    document.getElementById('pinErr').textContent = reason==='expired'
+      ? 'Tu sesión venció por seguridad. Ingresá el PIN de nuevo.'
+      : '';
+  };
+
+  (function reanudarSesionGuardada(){
+    const sesion = loadStoredStaffSession();
+    if(!sesion) return;
+    setStaffSession(sesion.token, sesion.role, sesion.allowedViews, false);
+    document.getElementById('gate').style.display='none';
+    if(sesion.role==='dueno') abrirPanelStaff();
+    else document.getElementById('sndGate').style.display='flex';
+  })();
 </script>
 </body>
 </html>
