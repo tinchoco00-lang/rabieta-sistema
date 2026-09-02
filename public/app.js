@@ -87,7 +87,7 @@ function emptyAnalytics(){
     pagosConfirmados:0,ventasDemo:0,tiempoPagoTotalSec:0,itemsVendidos:0,
     itemsListos:0,itemsEntregados:0,tiempoPreparacionTotalSec:0,tiempoPaseTotalSec:0,
     destinos:{cocina:{itemsListos:0,tiempoPreparacionTotalSec:0},barra:{itemsListos:0,tiempoPreparacionTotalSec:0}},
-    productos:{},resenas:[],crmContactos:[]
+    productos:{},resenas:[],crmContactos:[],actividad:[]
   };
 }
 
@@ -1606,6 +1606,7 @@ function viewDueno(){
       ${flujo.map((paso,index)=>`<div class="funnel-step ${paso.value?'active':''}"><span class="funnel-index">${index+1}</span><div><b>${paso.label}</b><small>${paso.hint}</small></div><strong>${paso.value}</strong></div>`).join('')}
     </div>
     <div class="owner-focus ${cuello.value?'attention':''}">${cuello.value?`${ic('warning')} Foco sugerido: <b>${cuello.label}</b> concentra ${cuello.value} unidad(es) ahora.`:`${ic('checkring')} No hay cuellos de botella activos en este momento.`}</div>
+    ${actividadRecienteHtml(analytics)}
     <div class="grid cols-4">
       ${statTile('Cobrado demo', money(analytics.ventasDemo), analytics.pagosConfirmados+' cuenta(s)', null)}
       ${statTile('Ticket promedio', money(ticketPromedio), 'cuentas confirmadas', null)}
@@ -1696,4 +1697,11 @@ function statTile(label,value,delta,deltaClass){
   return `<div class="stat-tile"><div class="label">${label}</div>
     <div class="value ${deltaClass==='downAlert'?'alert':''}">${value}</div>
     ${delta?`<div class="delta ${deltaClass==='up'?'up':deltaClass==='downAlert'?'down':''}">${delta}</div>`:''}</div>`;
+}
+const ACTIVIDAD_ICONOS = {pedido:'plate', alerta:'bell', cuenta:'receipt', pago:'checkring', resena:'chart', mesa:'refresh'};
+function actividadRecienteHtml(analytics){
+  const items = (analytics.actividad||[]).slice(0,8);
+  return `<div class="section-h">${ic('sound')} Actividad en vivo</div>
+    ${items.length ? `<div class="activity-feed">${items.map(item=>`<div class="activity-item"><span class="activity-icon ${item.tipo}">${ic(ACTIVIDAD_ICONOS[item.tipo]||'clipboard')}</span><span class="activity-text">${escapeHtml(item.texto)}</span><span class="activity-time">hace ${fmtSec(timeAgoSec(item.ts))}</span></div>`).join('')}</div>`
+      : '<div class="empty">Todavía no pasó nada en esta sesión. Apenas alguien pida, llame al mozo o pague, va a aparecer acá al instante.</div>'}`;
 }

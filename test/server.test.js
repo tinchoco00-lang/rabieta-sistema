@@ -1793,3 +1793,28 @@ test('un .glb/.usdz real dejado en public/models/ con el nombre del plato se usa
   assert.match(clientSource, /Modelo 3D real de Rabieta/);
   assert.match(clientSource, /ios-src="\$\{modelo\.usdz\}"/);
 });
+
+test('el panel de Dueño ve un feed de actividad en vivo, más reciente primero, con lo que realmente pasó en la sesión', async () => {
+  await resetState();
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 7, items: [{ productoId: 'hummus-rabieta' }] })).status, 200);
+  assert.equal((await action({ type: 'llamar_mozo', mesa: 7 })).status, 200);
+  assert.equal((await action({ type: 'pedir_cuenta', mesa: 7 })).status, 200);
+  assert.equal((await action({ type: 'pago_sandbox_confirmar', mesa: 7, medio: 'tarjeta' })).status, 200);
+
+  const actividad = (await getStaffState()).analytics.actividad;
+  assert.equal(actividad.length, 4);
+  // Más reciente primero: el pago (último en ocurrir) va arriba de todo.
+  assert.match(actividad[0].texto, /Mesa 7 pagó \$4\.600 con tarjeta demo/);
+  assert.equal(actividad[0].tipo, 'pago');
+  assert.match(actividad[1].texto, /Mesa 7 pidió la cuenta/);
+  assert.match(actividad[2].texto, /Mesa 7 llamó al mozo/);
+  assert.match(actividad[3].texto, /Mesa 7 pidió 1 ítem/);
+  actividad.forEach(item => assert.ok(Number.isFinite(item.ts)));
+
+  await resetState();
+  assert.deepEqual((await getStaffState()).analytics.actividad, []);
+
+  const clientSource = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  assert.match(clientSource, /function actividadRecienteHtml\(analytics\)\{/);
+  assert.match(clientSource, /class="activity-feed"/);
+});
