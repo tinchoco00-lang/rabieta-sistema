@@ -249,6 +249,7 @@
 
   .help-cats{display:flex;flex-direction:column;gap:8px;margin-bottom:10px;}
   .help-cats button{text-align:left;border:1px solid var(--line-strong);background:var(--bg-elevated);padding:11px 14px;border-radius:9px;font-size:13.5px;font-weight:700;cursor:pointer;color:var(--ink-1);font-family:'Nunito';}
+  .help-cats button:disabled{opacity:.6;cursor:wait;}.help-panel-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:10px}.help-panel-head strong,.help-panel-head span{display:block}.help-panel-head strong{font-size:13.5px}.help-panel-head span{font-size:11px;color:var(--ink-muted);margin-top:2px}.help-panel-head .help-sending{color:var(--gold);font:700 10px 'IBM Plex Mono',monospace;text-transform:uppercase;letter-spacing:.08em}.help-message{min-height:76px;resize:vertical}.help-send-error{display:flex;gap:9px;padding:11px 12px;margin-bottom:10px;border:1px solid rgba(214,85,70,.5);border-radius:9px;background:rgba(214,85,70,.12);font-size:12px;line-height:1.4}.help-send-error>svg{flex:0 0 auto;color:var(--critical)}.help-send-error strong,.help-send-error span{display:block}.help-send-error strong{color:var(--critical)}.help-send-error .btn{margin-top:8px}
 
   .pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:800;padding:3px 9px;border-radius:999px;letter-spacing:.02em;}
   .pill.urgente{background:rgba(224,85,85,0.18);color:#ff9797;}

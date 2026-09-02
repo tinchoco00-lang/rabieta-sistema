@@ -98,6 +98,7 @@ let state = {
   clienteAsistenteAgregado:null, clienteResenaError:'', clienteResenaEnviando:false,
   clienteRepetirAviso:'', clientePedidoEnviando:false, clientePedidoError:'',
   clienteServicioEnviando:false, clienteServicioError:'',
+  clienteAyudaDraft:'', clienteAyudaEnviando:false, clienteAyudaError:'', clienteAyudaPendiente:null,
   clientePagoMedio:'tarjeta', clientePagoEnviando:false, clientePagoError:'',
   clienteResenaDraft:{puntuacion:null,comentario:'',crmConsentimiento:false,crmCanal:'whatsapp',crmContacto:'',crmNombre:''},
   mozoActivo:MOZOS[0], modal:null, mesaLinks:null, mesaLinksLoading:false, mesaLinksError:'', presentacionCargada:false,
@@ -516,6 +517,15 @@ function renderModal(){
         <p>Tu llamado fue recibido. Un mozo se va a acercar a la <b>Mesa ${state.clienteMesa}</b> en breve.</p>
         <button class="btn primary block" onclick="closeModal()">Entendido</button>
       </div></div>`;
+  } else if(state.modal.type==='ayuda-enviada'){
+    root.innerHTML = `<div class="modal-bg" onclick="closeModal(event)">
+      <div class="modal" onclick="event.stopPropagation()">
+        <div class="icon">${ic('checkring')}</div>
+        <span class="presentation-kicker">Solicitud confirmada</span>
+        <h3>Salón ya recibió tu aviso</h3>
+        <p><b>${escapeHtml(state.modal.label)}</b>${state.modal.mensaje?` · “${escapeHtml(state.modal.mensaje)}”`:''}. El equipo puede verlo ahora y acercarse a la <b>Mesa ${state.clienteMesa}</b>.</p>
+        <button class="btn good block" onclick="closeModal()">Volver a la carta</button>
+      </div></div>`;
   } else if(state.modal.type==='confirm-cuenta'){
     const unidades=cantidadCarrito();
     root.innerHTML = `<div class="modal-bg" onclick="closeModal(event)">
@@ -827,7 +837,13 @@ function dishDetailHtml(p){
 function setCat(c){ state.clienteCat=c; state.clienteExpand=null; render(); }
 function toggleFiltroSinTacc(){ state.clienteFiltroSinTacc=!state.clienteFiltroSinTacc; render(); }
 function toggleDish(id){ state.clienteExpand = state.clienteExpand===id?null:id; render(); }
-function toggleHelp(){ state.clienteHelpOpen=!state.clienteHelpOpen; render(); }
+function toggleHelp(){
+  if(state.clienteAyudaEnviando) return;
+  state.clienteHelpOpen=!state.clienteHelpOpen;
+  state.clienteAyudaError='';
+  if(!state.clienteHelpOpen) state.clienteAyudaPendiente=null;
+  render();
+}
 
 function agregarAlCarrito(id){
   const p = findProducto(id);
@@ -1043,22 +1059,52 @@ async function enviarResena(){
     render();
   }
 }
-function enviarAyuda(id){ send({type:'ayuda', mesa:state.clienteMesa, categoria:id}); state.clienteHelpOpen=false; render(); }
-function enviarAyudaLibre(){
-  const val = (document.getElementById('freeHelp')||{}).value || '';
-  if(!val.trim()) return;
-  send({type:'ayuda', mesa:state.clienteMesa, categoria:'otro', mensaje:val.trim()});
-  state.clienteHelpOpen=false; render();
+function nuevaSolicitudAyudaId(){
+  if(globalThis.crypto && typeof globalThis.crypto.randomUUID==='function') return globalThis.crypto.randomUUID();
+  return 'ayuda-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);
 }
+function actualizarAyudaDraft(value){
+  state.clienteAyudaDraft=value;
+  const button=document.getElementById('sendFreeHelp');
+  if(button) button.disabled=!value.trim() || state.clienteAyudaEnviando;
+}
+async function enviarAyuda(id,mensaje='',reintento=false){
+  if(state.clienteAyudaEnviando) return;
+  const categoria=HELP_CATEGORIAS.find(item=>item.id===id);
+  if(!categoria && id!=='otro') return;
+  const limpio=String(mensaje||'').trim();
+  if(id==='otro' && !limpio) return;
+  if(!reintento || !state.clienteAyudaPendiente){
+    state.clienteAyudaPendiente={categoria:id,mensaje:limpio,solicitudId:nuevaSolicitudAyudaId(),label:categoria?categoria.label:'Mensaje a salón'};
+  }
+  const pendiente=state.clienteAyudaPendiente;
+  state.clienteAyudaEnviando=true; state.clienteAyudaError=''; render();
+  const response=await send({type:'ayuda',mesa:state.clienteMesa,categoria:pendiente.categoria,mensaje:pendiente.mensaje,solicitudId:pendiente.solicitudId});
+  state.clienteAyudaEnviando=false;
+  if(!response || !response.ok){
+    let payload={}; if(response){ try{ payload=await response.json(); }catch(e){} }
+    state.clienteAyudaError=payload.error || 'No pudimos avisar a salón. Revisá tu conexión y probá de nuevo.';
+    state.clienteHelpOpen=true; render(); return;
+  }
+  state.clienteAyudaDraft=''; state.clienteAyudaPendiente=null; state.clienteHelpOpen=false;
+  state.modal={type:'ayuda-enviada',label:pendiente.label,mensaje:pendiente.mensaje}; render();
+}
+function reintentarAyuda(){
+  const pendiente=state.clienteAyudaPendiente;
+  if(pendiente) enviarAyuda(pendiente.categoria,pendiente.mensaje,true);
+}
+function enviarAyudaLibre(){ enviarAyuda('otro',state.clienteAyudaDraft); }
 function helpPanelHtml(){
-  return `<div class="card" style="margin-top:14px;">
-    <div style="font-weight:800;font-size:13.5px;margin-bottom:10px;">¿En qué te podemos ayudar?</div>
-    <div class="help-cats">${HELP_CATEGORIAS.map(h=>`<button onclick="enviarAyuda('${h.id}')">${h.label}</button>`).join('')}</div>
+  const pendiente=state.clienteAyudaPendiente;
+  return `<div class="card help-panel" aria-busy="${state.clienteAyudaEnviando?'true':'false'}" style="margin-top:14px;">
+    <div class="help-panel-head"><div><strong>¿En qué te podemos ayudar?</strong><span>El aviso llega directamente a Salón.</span></div>${state.clienteAyudaEnviando?'<span class="help-sending">Enviando…</span>':''}</div>
+    ${state.clienteAyudaError?`<div class="help-send-error" role="alert">${ic('warning')}<div><strong>No se envió la solicitud.</strong><span>${escapeHtml(state.clienteAyudaError)} Tu elección y mensaje siguen acá.</span><button class="btn critical sm" onclick="reintentarAyuda()">Reintentar solicitud</button></div></div>`:''}
+    <div class="help-cats">${HELP_CATEGORIAS.map(h=>`<button ${state.clienteAyudaEnviando?'disabled':''} onclick="enviarAyuda('${h.id}')">${state.clienteAyudaEnviando&&pendiente&&pendiente.categoria===h.id?'Enviando…':h.label}</button>`).join('')}</div>
     <div style="font-size:12px;color:var(--ink-muted);margin-bottom:6px;">O contanos con tus palabras:</div>
-    <input type="text" class="nota" id="freeHelp" placeholder='Ej: "Pedí sin cebolla y vino con cebolla"'>
+    <textarea class="nota help-message" id="freeHelp" maxlength="500" ${state.clienteAyudaEnviando?'disabled':''} placeholder='Ej: "Pedí sin cebolla y vino con cebolla"' oninput="actualizarAyudaDraft(this.value)">${escapeHtml(state.clienteAyudaDraft)}</textarea>
     <div style="margin-top:8px;display:flex;gap:8px;">
-      <button class="btn critical sm" onclick="enviarAyudaLibre()">Enviar</button>
-      <button class="btn ghost sm" onclick="toggleHelp()">Cancelar</button>
+      <button class="btn critical sm" id="sendFreeHelp" ${state.clienteAyudaEnviando||!state.clienteAyudaDraft.trim()?'disabled':''} onclick="enviarAyudaLibre()">${state.clienteAyudaEnviando&&pendiente&&pendiente.categoria==='otro'?'Enviando…':'Enviar mensaje'}</button>
+      <button class="btn ghost sm" ${state.clienteAyudaEnviando?'disabled':''} onclick="toggleHelp()">Cancelar</button>
     </div></div>`;
 }
 
