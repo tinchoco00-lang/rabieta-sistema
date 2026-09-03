@@ -1277,7 +1277,13 @@ async function enviarResena(){
   state.clienteResenaError=''; state.clienteResenaEnviando=true; render();
   const response = await send({
     type:'resena_enviar', mesa:state.clienteMesa, puntuacion:draft.puntuacion, comentario,
-    crmConsentimiento, crmCanal, crmContacto, crmNombre,
+    crmConsentimiento,
+    // El draft siempre trae un crmCanal por defecto ('whatsapp') para que el
+    // selector no arranque vacío el día que se tilde el consentimiento — pero
+    // si nunca se tildó, mandarlo igual hacía que el servidor viera "hay datos
+    // de contacto" y exigiera consentimiento para calificar sin querer
+    // compartir nada. Solo van si el cliente aceptó de verdad.
+    ...(crmConsentimiento ? {crmCanal, crmContacto, crmNombre} : {}),
   });
   state.clienteResenaEnviando=false;
   if(!response || !response.ok){

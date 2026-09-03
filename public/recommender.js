@@ -59,13 +59,24 @@
     else if(/\b(contundente|hambre|llenador|llenadora|fuerte)\b/.test(text)) profile = 'contundente';
     else if(/\b(liviano|liviana|ligero|ligera|fresco|fresca)\b/.test(text)) profile = 'liviano';
     else if(/\b(postre|dulce)\b/.test(text)) profile = 'dulce';
-    const cheap = /\b(barato|barata|economico|economica|mas barato|precio bajo)\b/.test(text);
-    const surprise = /\b(sorprendeme|sorpresa|lo mejor|favorito|favorita|destacado|destacada)\b/.test(text);
+    // "somos 3", "somos 4 personas": nadie preguntó por un perfil puntual, pero
+    // un grupo de 2 o más casi siempre busca algo para compartir en la mesa.
+    else if(/\bsomos\s*([2-9]|1[0-9])\b/.test(text)) profile = 'compartir';
+    // "no quiero gastar mucho"/"poca plata" son tan comunes como "barato" pero
+    // no usan esa palabra exacta — sin esto, la consulta más típica de un
+    // cliente con presupuesto ajustado no encontraba nada.
+    const cheap = /\b(barato|barata|economico|economica|mas barato|precio bajo|gastar mucho|gastar poco|poca plata|poco plata)\b/.test(text);
+    // "qué me recomendás"/"recomendame algo" es la forma más común de abrir la
+    // conversación con el asistente, y antes no activaba ninguna intención (las
+    // palabras "recomendame"/"recomendás" están en STOP_WORDS): la pregunta más
+    // esperable devolvía "no encontré nada". La tratamos como "sorprendeme" y
+    // mostramos destacados con precio confirmado.
+    const surprise = /\b(sorprendeme|sorpresa|lo mejor|favorito|favorita|destacado|destacada|recomend\w*|recomiend\w*|suger\w*|que pido|que como|no se que pedir|no se que comer)\b/.test(text);
     const removed = text.replace(/[0-9$]/g,' ').split(/\s+/).filter(Boolean);
     const ignored = new Set([
       'hasta','menos','maximo','presupuesto','pasar','barato','barata','economico','economica','compartir',
       'contundente','liviano','liviana','ligero','ligera','fresco','fresca','tacc','gluten','celiaco','celiaca',
-      'sorprendeme','sorpresa','mejor','favorito','favorita','destacado','destacada'
+      'sorprendeme','sorpresa','mejor','favorito','favorita','destacado','destacada','somos'
     ]);
     const tokens = [...new Set(removed.filter(token=>token.length>2 && !STOP_WORDS.has(token) && !ignored.has(token)))];
     return {text, sinTacc, unsafeRestriction, category, profile, cheap, surprise, budget:parseBudget(text), tokens};

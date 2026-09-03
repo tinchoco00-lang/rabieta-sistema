@@ -1835,7 +1835,20 @@ test('pulido visual: el carrusel 3D muestra un placeholder de marca (no un ícon
   assert.doesNotMatch(source, /<span class="em">/);
   const css = fs.readFileSync(path.join(root, 'public', 'rabieta.css'), 'utf8');
   assert.match(css, /\.tile3d-placeholder\{/);
-  assert.match(css, /\.cart-review-total\{margin-top:auto;border-top:1px solid var\(--line-strong\)/);
+  assert.match(css, /\.cart-review-total\{margin-top:16px;border-top:1px solid var\(--line-strong\)/);
+});
+
+test('pulido visual: en mobile, el carrito con pocos ítems no deja media pantalla vacía entre el pedido y el total', () => {
+  const css = fs.readFileSync(path.join(root, 'public', 'rabieta.css'), 'utf8');
+  const mobileCartBlock = css.match(/@media\(max-width:560px\)\{\.modal\.cart-modal\{[\s\S]*?\.repeat-order-row \.btn\{width:100%;\}\}/);
+  assert.ok(mobileCartBlock, 'debe existir el bloque mobile de .cart-modal');
+  // La lista de ítems ya no fuerza flex:1 (que la estiraba a llenar toda la
+  // pantalla incluso con 1-2 ítems, dejando un hueco negro antes del total).
+  assert.doesNotMatch(mobileCartBlock[0], /\.cart-review-list\{flex:1;/);
+  assert.match(mobileCartBlock[0], /\.cart-review-list\{flex:0 1 auto;min-height:0/);
+  // El modal sigue ocupando todo el ancho de la pantalla (sin la franja del
+  // overlay de .modal-bg a los costados).
+  assert.match(mobileCartBlock[0], /\.modal\.cart-modal\{height:100vh;width:calc\(100% \+ 40px\);margin-left:-20px;margin-right:-20px;/);
 });
 
 test('dueño ve en 10 segundos qué mesas concretas necesitan atención, con la peor razón primero y sin repetir mesa', () => {
