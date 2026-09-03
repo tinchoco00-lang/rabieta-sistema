@@ -36,6 +36,7 @@
     color:var(--ink-1);
     font-family:var(--font-body);
     -webkit-font-smoothing:antialiased;
+    accent-color:var(--gold);
   }
   .display{font-family:var(--font-display); font-weight:500; letter-spacing:.002em;}
   /* íconos de línea (reemplazan los emojis) */
