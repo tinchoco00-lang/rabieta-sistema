@@ -76,3 +76,26 @@ test('"barato" sin categoría explícita sugiere comida, no agua o gaseosa solo 
   assert.ok(bebida.items.length > 0);
   assert.ok(bebida.items.every(({product})=>product.categoriaId === 'bebidas-sin-alcohol'));
 });
+
+test('"no quiero gastar mucho" activa el mismo sesgo hacia comida barata que "barato"', () => {
+  const result = recommend(menu, 'no quiero gastar mucho');
+  assert.ok(result.items.length > 0);
+  assert.ok(result.intent.cheap);
+});
+
+test('"qué me recomendás" (sin más contexto) muestra destacados con precio confirmado en vez de "no encontré nada"', () => {
+  const result = recommend(menu, 'qué me recomendás');
+  assert.ok(result.items.length > 0, 'la pregunta más común para abrir el asistente no puede devolver una lista vacía');
+  assert.ok(result.items.every(({product})=>product.candidato_destacado));
+  assert.ok(result.items.every(({product})=>Number.isFinite(product.precio) || Number.isFinite(product.variantes?.[0]?.precio)));
+
+  const variante = recommend(menu, 'recomendame algo');
+  assert.ok(variante.items.length > 0);
+});
+
+test('"somos 4" sugiere platos para compartir, igual que pedirlo explícitamente', () => {
+  const result = recommend(menu, 'somos 4');
+  assert.ok(result.items.length > 0);
+  assert.equal(result.intent.profile, 'compartir');
+  assert.ok(result.items.some(({product})=>product.para_compartir));
+});
