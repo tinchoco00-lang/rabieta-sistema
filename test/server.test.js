@@ -1426,7 +1426,7 @@ test('las credenciales de Mercado Pago solo se exponen como booleanos, nunca sus
 
 test('el cliente distingue un QR/token de mesa inválido de un corte de conexión temporal', async () => {
   const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
-  assert.match(source, /response\.status===401 \|\| response\.status===403/);
+  assert.match(source, /response\.status===400 \|\| response\.status===401 \|\| response\.status===403/);
   assert.match(source, /state\.clienteAccesoInvalido = true;/);
   assert.match(source, /if\(state\.clienteAccesoInvalido\) return accesoInvalidoHtml\(\);/);
   assert.match(source, /No es un corte de conexión: reintentar solo no lo va a resolver\./);
@@ -1452,6 +1452,12 @@ test('el cliente distingue un QR/token de mesa inválido de un corte de conexió
     // Sin token: el cliente debe poder distinguirlo (401) de un 5xx transitorio.
     const sinToken = await fetch(`${isolatedUrl}/events?mesa=1`);
     assert.equal(sinToken.status, 401);
+    // Un número de mesa fuera de rango (QR viejo, mesa que no existe, error de
+    // tipeo) es igual de permanente que un token roto: también debe ser 400,
+    // no algo que el cliente reintente para siempre como si fuera un corte de
+    // conexión.
+    const mesaFueraDeRango = await fetch(`${isolatedUrl}/events?mesa=999`);
+    assert.equal(mesaFueraDeRango.status, 400);
     // Token de otra mesa / adulterado: también es un rechazo explícito y permanente (403).
     const tokenMesaDos = tokenForMesa(mesaSecret, 2);
     const tokenEquivocado = await fetch(`${isolatedUrl}/events?mesa=1`, { headers: { 'x-mesa-token': tokenMesaDos } });

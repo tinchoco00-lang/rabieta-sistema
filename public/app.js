@@ -218,15 +218,16 @@ async function conectarMesa(onFirstSnapshot){
     let accesoInvalido=false;
     try{
       const response = await fetch('/events?mesa=' + encodeURIComponent(state.clienteMesa), {headers});
-      if(response.status===401 || response.status===403){ accesoInvalido=true; }
+      if(response.status===400 || response.status===401 || response.status===403){ accesoInvalido=true; }
       else{ onFirstSnapshot = await consumirStream(response, onFirstSnapshot, ()=>state.role==='cliente'); }
     }catch(e){}
     liveReady=false;
     if(accesoInvalido){
-      // 401/403 significa que el servidor rechazó explícitamente esta identidad
-      // de mesa (falta o no coincide): reintentar con el mismo token roto nunca
-      // se va a resolver solo, así que dejamos de mostrar "sin conexión" y
-      // avisamos algo accionable en vez de reintentar para siempre en silencio.
+      // 400/401/403 significa que el servidor rechazó explícitamente este pedido
+      // de mesa (número fuera de rango, identidad faltante o que no coincide):
+      // reintentar con el mismo link roto nunca se va a resolver solo, así que
+      // dejamos de mostrar "sin conexión" y avisamos algo accionable en vez de
+      // reintentar para siempre en silencio.
       state.clienteAccesoInvalido = true;
       hideConnStatus();
       render();
