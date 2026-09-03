@@ -248,7 +248,12 @@
   .opt-row{display:flex;align-items:center;gap:10px;font-size:13px;margin-bottom:8px;flex-wrap:wrap;}
   .opt-row label{display:flex;align-items:center;gap:5px;cursor:pointer;color:var(--ink-1);}
   .opt-label{font-size:10.5px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.08em;font-weight:600;margin-bottom:5px;}
-  input[type=text].nota{width:100%;padding:10px 12px;border-radius:4px;border:1px solid var(--line-strong);background:var(--bg-elevated);color:var(--ink-1);font-size:13px;font-family:var(--font-body);margin-top:4px;}
+  /* .nota se usa en <input type=text> (observación de plato) y también en
+     <textarea> (comentario de reseña, mensaje de ayuda libre) — el selector
+     original solo cubría el input, así que esas dos textareas quedaban con
+     el fondo blanco por defecto del navegador, un choque brutal contra el
+     resto de la paleta oscura. */
+  input[type=text].nota,textarea.nota{width:100%;padding:10px 12px;border-radius:4px;border:1px solid var(--line-strong);background:var(--bg-elevated);color:var(--ink-1);font-size:13px;font-family:var(--font-body);margin-top:4px;}
 
   /* pie del carrito: plano, sin degradé — un separador fino alcanza */
   .cart-bar{position:sticky;bottom:0;background:var(--bg-panel);border-top:1px solid var(--line-strong);border-radius:0;padding:16px 4px;margin-top:22px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;}
