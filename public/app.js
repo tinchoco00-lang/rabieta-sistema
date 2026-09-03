@@ -31,8 +31,43 @@ const ICONS = {
   refresh:   '<path d="M4 12a8 8 0 0 1 14-5"/><polyline points="18 3 18 8 13 8"/><path d="M20 12a8 8 0 0 1-14 5"/><polyline points="6 21 6 16 11 16"/>',
   warning:   '<path d="M12 4 21 19H3Z"/><line x1="12" y1="9.5" x2="12" y2="14"/><circle cx="12" cy="16.6" r="0.9" fill="currentColor" stroke="none"/>',
   checkring: '<circle cx="12" cy="12" r="8"/><polyline points="8.3 12.2 10.8 14.7 15.8 9.2"/>',
+  zoom:      '<circle cx="10.5" cy="10.5" r="6.5"/><line x1="15.3" y1="15.3" x2="20" y2="20"/><line x1="7.7" y1="10.5" x2="13.3" y2="10.5"/><line x1="10.5" y1="7.7" x2="10.5" y2="13.3"/>',
+  target:    '<path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8"/><path d="M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8"/><path d="M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16"/><path d="M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none"/>',
+  close:     '<line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/>',
 };
 function ic(name, cls){ return `<svg class="i-ic${cls?' '+cls:''}" viewBox="0 0 24 24">${ICONS[name]||''}</svg>`; }
+// La mascota de Rabieta: una copa con carácter propio (dos ojos y una
+// sonrisa mínima trazados con el mismo lenguaje de línea fina que el resto
+// de los íconos) en vez de un engranaje o un robot genérico. Es el "acceso"
+// al concierge de IA — algo con lo que dan ganas de interactuar sin que
+// nadie tenga que explicar qué es.
+function mascotHtml(cls){
+  return `<svg class="mascot${cls?' '+cls:''}" viewBox="0 0 24 28" aria-hidden="true">
+    <path d="M7.5 3 C7.5 9.5 9.3 13 12 13 C14.7 13 16.5 9.5 16.5 3 Z"/>
+    <line x1="12" y1="13" x2="12" y2="20"/>
+    <line x1="8.3" y1="24" x2="15.7" y2="24"/>
+    <line x1="12" y1="20" x2="12" y2="24"/>
+    <circle class="mascot-eye" cx="10.1" cy="6.6" r="0.75" fill="currentColor" stroke="none"/>
+    <circle class="mascot-eye" cx="13.9" cy="6.6" r="0.75" fill="currentColor" stroke="none"/>
+    <path class="mascot-mouth" d="M10.3 9 Q12 10.1 13.7 9" stroke-width="1.3"/>
+    <circle class="mascot-bubble b1" cx="10.6" cy="10.8" r="0.55" fill="currentColor" stroke="none"/>
+    <circle class="mascot-bubble b2" cx="13.2" cy="11.6" r="0.4" fill="currentColor" stroke="none"/>
+  </svg>`;
+}
+// Microcomposición "plato → gira en 3D → aparece en tu mesa", pensada para
+// entenderse mirándola, no leyéndola: el plato de línea (izquierda) es el
+// mismo ícono que ya usa el resto del sistema; el del medio gira despacio
+// sobre sí mismo; el de la derecha es una mira de cámara AR que late apenas,
+// sugiriendo "acá se ubica".
+function scene3dStripHtml(){
+  return `<span class="scene3d-strip" aria-hidden="true">
+    ${ic('plate','scene3d-plate')}
+    <span class="scene3d-arrow"></span>
+    ${ic('cube','scene3d-spin')}
+    <span class="scene3d-arrow"></span>
+    ${ic('target','scene3d-target')}
+  </span>`;
+}
 
 const PEDIDO_ESTADOS = ['enviado','preparando','listo','entregado'];
 const DESTINO_LABELS = {cocina:'Cocina', barra:'Barra'};
@@ -116,6 +151,18 @@ function escapeHtml(value){
 }
 function timeAgoSec(ts){ return Math.max(0, Math.floor(state.clockMs - ts)); }
 function fmtSec(s){ const m=Math.floor(s/60), r=s%60; return (m>0? m+'m ':'')+r+'s'; }
+// Reloj MM:SS para la comanda de Cocina: el tiempo es el protagonista de esa
+// pantalla, así que necesita el formato de cronómetro grande (04:12), no la
+// forma conversacional "hace 4m 12s" que usa el resto del sistema.
+function fmtClock(s){ const m=Math.floor(s/60), r=s%60; return String(m).padStart(2,'0')+':'+String(r).padStart(2,'0'); }
+// Verde/amarillo/rojo según cuánto hace que el ítem más viejo de la comanda
+// está esperando — el color tiene que señalar el problema con precisión, no
+// pintar toda la tarjeta apenas algo tarda un poco.
+function ticketTimeState(edadSeg){
+  if(edadSeg>=360) return {cls:'crit', label:'Rojo'};
+  if(edadSeg>=180) return {cls:'warn', label:'Amarillo'};
+  return {cls:'ok', label:'Verde'};
+}
 function findMesa(n){ return state.mesas.find(m=>m.numero===n); }
 function findProducto(id){ for(const c of MENU_DATA.categorias) for(const p of c.productos) if(p.id===id) return p; }
 function todosLosProductos(){ const out=[]; MENU_DATA.categorias.forEach(c=>c.productos.forEach(p=>out.push({...p,categoriaId:c.id}))); return out; }
@@ -614,30 +661,40 @@ function renderModal(){
     const modelo = modeloParaPlato(state.modal.id);
     const producto = findProducto(state.modal.id);
     const poster = producto && producto.imagen ? producto.imagen : '/img/hero-barra.jpg';
-    root.innerHTML = `<div class="modal-bg" onclick="closeModal(event)">
-      <div class="modal modal-3d" onclick="event.stopPropagation()">
-        <div class="stage3d-real">
+    // Esta pantalla es la única del sistema que NO usa el modal-bg / .modal
+    // compartido: es una escena propia a pantalla completa (entorno oscuro,
+    // plato grande, onboarding de gestos) para que la experiencia 3D/AR se
+    // sienta como su propio momento, no como otro cuadro de diálogo más.
+    root.innerHTML = `<div class="stage3d-bg" onclick="closeModal(event)">
+      <div class="stage3d-scene" onclick="event.stopPropagation()">
+        <header class="stage3d-top">
+          <span class="badge-preview ${modelo.esReal?'real':''}">${modelo.esReal?'Modelo 3D real de Rabieta':'Prototipo técnico · modelo genérico'}</span>
+          <button class="stage3d-close" onclick="closeModal()" aria-label="Cerrar">${ic('close')}</button>
+        </header>
+        <div class="stage3d-viewport">
           <model-viewer id="mv3d" src="${modelo.url}" camera-controls auto-rotate auto-rotate-delay="300"
             ar ar-modes="scene-viewer webxr quick-look" shadow-intensity="1" exposure="1"
             ${modelo.usdz?`ios-src="${modelo.usdz}"`:''}
             poster="${poster}" alt="Vista 3D ${modelo.esReal?'real':'genérica'} para ${escapeHtml(state.modal.nombre)}" loading="eager" reveal="auto"
             onload="modelo3dListo()" onerror="modelo3dError()"
-            style="width:100%;height:100%;background:transparent;"></model-viewer>
+            style="width:100%;height:100%;background:transparent;">
+            <button slot="ar-button" style="display:none"></button>
+          </model-viewer>
           <div id="fallback3d" class="fallback3d" hidden>
             <img src="${poster}" alt="Foto de ${escapeHtml(state.modal.nombre)}">
             <span>La foto real queda disponible aunque el modelo 3D no cargue.</span>
           </div>
+          <h3 class="stage3d-name">${escapeHtml(state.modal.nombre)}</h3>
         </div>
-        <div class="body3d">
-          <span class="badge-preview ${modelo.esReal?'real':''}">${modelo.esReal?'Modelo 3D real de Rabieta':'Prototipo técnico · modelo genérico, no representa este plato'}</span>
-          <h3>${escapeHtml(state.modal.nombre)}</h3>
-          <p>Activá la cámara, enfocá tu mesa, y el plato aparece ahí arriba en tamaño real — como si ya te lo hubieran servido. También podés arrastrar acá abajo para girarlo sin cámara.</p>
+        <div class="stage3d-hints">
+          <span>${ic('refresh')} Girá</span><span>${ic('zoom')} Acercá</span><span>${ic('target')} Colocá en tu mesa</span>
+        </div>
+        <div class="stage3d-footer">
           <button class="btn callout block" onclick="activarAR()">${ic('cube')} Ver en mi mesa con la cámara</button>
           <div id="arStatus" class="ar-status" aria-live="polite">Cargando la experiencia 3D…</div>
           <p class="ar-fineprint">${modelo.esReal
             ? `Modelo real escaneado para Rabieta.${modelo.usdz?'':' Todavía falta el archivo USDZ para que abra la cámara AR directamente en iPhone.'}`
             : `Esta prueba valida interacción y cámara, no la apariencia del plato. Para publicar <b>${state.modal.nombre}</b> faltan su modelo GLB real, su USDZ real y una medida de escala verificada. El modelo visible ahora es ${modelo.nombre}.`}</p>
-          <button class="btn dark block" onclick="closeModal()">Cerrar</button>
         </div>
       </div></div>`;
   } else if(state.modal.type==='cart'){
@@ -779,25 +836,26 @@ function banner3dHtml(){
   const platos = platosDestacadosData();
   if(!platos.length) return '';
   return `<div class="banner3d">
-    <div class="head"><div class="ico">${ic('cube')}</div>
-      <div class="txt"><strong>Prototipo 3D/AR en desarrollo</strong><span>Probá la interacción técnica; los modelos reales de estos ${platos.length} platos todavía faltan</span></div></div>
+    <div class="head">${scene3dStripHtml()}
+      <div class="txt"><strong>Ponelo en tu mesa antes de pedir</strong><span>Girá cualquiera de estos platos y ubicalo en tamaño real con la cámara. <em>Prototipo 3D/AR en desarrollo:</em> los modelos reales de estos ${platos.length} platos todavía faltan.</span></div></div>
     <div class="tiles3d">
-      ${platos.map(p=>`<button onclick="openModal3d('${p.id}','${p.nombre.replace(/'/g,"\\'")}')">
+      ${platos.map(p=>`<button onclick="openModal3d('${p.id}','${p.nombre.replace(/'/g,"\\'")}')" aria-label="Ver ${p.nombre} en 3D sobre tu mesa">
         ${p.imagen ? `<img class="tile3d-img" src="${p.imagen}" alt="${p.nombre}">` : `<span class="tile3d-placeholder">${ic('plate')}<small>Foto pronto</small></span>`}
-        <span class="nm">${p.nombre}</span><span class="cta">Probar demo 3D</span></button>`).join('')}
+        <span class="nm">${p.nombre}</span></button>`).join('')}
     </div></div>`;
 }
 
 const AI_EJEMPLOS = ['Una pizza barata', 'Algo liviano', 'Sin TACC hasta $3.000'];
 function asistenteCartaHtml(bloqueado){
   if(!state.clienteAsistenteOpen){
-    return `<div class="ai-assistant compact" id="ai-assistant-anchor"><div><span class="ai-badge">${ic('help')} IA de Rabieta</span>
-      <strong>¿No sabés qué pedir?</strong><p>Te orientamos con la carta real de Rabieta, sin inventar platos ni precios.</p></div>
-      <button class="btn primary sm" onclick="toggleAsistente()">Ayudame a elegir</button></div>`;
+    return `<button class="ai-assistant compact" id="ai-assistant-anchor" onclick="toggleAsistente()">
+      <span class="concierge-avatar">${mascotHtml()}</span>
+      <span class="concierge-copy"><span class="ai-badge">IA de Rabieta</span><em>¿No sabés qué pedir?</em><small>Te orientamos con la carta real, sin inventar platos ni precios</small></span>
+    </button>`;
   }
   const respuesta = state.clienteAsistenteRespuesta;
   return `<div class="ai-assistant" id="ai-assistant-anchor">
-    <div class="ai-head"><div><span class="ai-badge">${ic('help')} IA de Rabieta</span><strong>¿Qué te pinta hoy?</strong></div>
+    <div class="ai-head"><div class="concierge-row"><span class="concierge-avatar sm">${mascotHtml()}</span><div class="concierge-copy"><span class="ai-badge">IA de Rabieta</span><strong>¿Qué te pinta hoy?</strong></div></div>
       <button class="btn ghost sm" onclick="toggleAsistente()">Cerrar</button></div>
     <form class="ai-query" onsubmit="consultarAsistente(event)">
       <label for="ai-query-input">Escribí como hablarías con el mozo</label>
@@ -889,11 +947,16 @@ function splashHtml(mesa){
     <div class="splash-stage">
       ${destacado.imagen ? `<img class="splash-stage-img" src="${destacado.imagen}" alt="${destacado.nombre}">` : ''}
       <div class="splash-stage-scrim"></div>
+      <button class="stage3d-chip" onclick="openModal3d('${destacado.id}','${destacado.nombre.replace(/'/g,"\\'")}')" aria-label="Probar demo técnica 3D — ver ${destacado.nombre.replace(/"/g,'&quot;')} girando sobre tu mesa">
+        ${ic('plate','stage3d-chip-spin')}<span>Ponelo en tu mesa</span>
+      </button>
       <div class="splash-stage-tag">Plato destacado de hoy</div>
       <div class="splash-stage-name">${destacado.nombre}</div>
-      <button class="btn callout splash-3d-btn" onclick="openModal3d('${destacado.id}','${destacado.nombre.replace(/'/g,"\\'")}')">${ic('cube')} Probar demo técnica 3D</button>
     </div>
-    <button class="btn ghost splash-ai-btn" onclick="abrirAsistenteDesdeSplash()">${ic('help')} Preguntale a la IA de Rabieta qué pedir</button>
+    <button class="concierge-entry" onclick="abrirAsistenteDesdeSplash()" aria-label="Preguntale a la IA de Rabieta qué pedir">
+      <span class="concierge-avatar">${mascotHtml()}</span>
+      <span class="concierge-copy"><em>¿Qué tenés ganas de comer?</em><small>El concierge de Rabieta te ayuda a elegir</small></span>
+    </button>
     <button class="splash-skip" onclick="dismissSplash()">Ver toda la carta →</button>
   </div>`;
 }
@@ -1380,15 +1443,20 @@ function ticketHtml(m,destino){
   const itemsActivos = m.pedido.items.filter(it=>it.estado!=='entregado' && (!destino || itemDestino(it)===destino));
   const oldestTs = itemsActivos.reduce((oldest,it)=>Math.min(oldest,it.enviadoTs), state.clockMs);
   const edad = timeAgoSec(oldestTs);
-  const late = itemsActivos.some(it=>it.estado==='preparando') && edad>240;
+  const tiempo = ticketTimeState(edad);
   const demoTarget = state.presentacionCargada && STAFF_ALLOWED_VIEWS.includes('encargado') && m.numero===1;
-  return `<div class="ticket ${late?'late':''}${demoTarget?' demo-target':''}">
-    <div class="head"><span class="mesa">MESA ${m.numero}</span>
-      <span class="pill ${itemEstadoClass(m.pedido.estado)}">${estadoPedidoLabel(m)}</span></div>
+  // El tiempo es el protagonista de esta pantalla: un reloj grande en verde,
+  // amarillo o rojo según cuánto hace que se pidió, en vez de pintar todo el
+  // borde de la tarjeta de rojo apenas algo se demora un poco.
+  return `<div class="ticket${demoTarget?' demo-target':''}">
+    <div class="ticket-head">
+      <div class="ticket-head-left"><span class="ticket-mesa">MESA ${m.numero}</span>
+        <span class="pill ${itemEstadoClass(m.pedido.estado)}">${estadoPedidoLabel(m)}</span></div>
+      <div class="ticket-clock ${tiempo.cls}"><span class="ticket-clock-time">${fmtClock(edad)}</span><span class="ticket-clock-state">${tiempo.label}</span></div>
+    </div>
     ${demoTarget?`<span class="demo-target-badge">Paso 2 · tocá esta tarjeta</span>`:''}
-    <div class="timer">hace ${fmtSec(edad)}</div>
     <ul>${itemsActivos.map(it=>`<li style="margin-bottom:10px;">
-      <div>${escapeHtml(it.nombre)} <span class="item-mod">${DESTINO_LABELS[itemDestino(it)]}</span>${it.notas?` <span class="item-mod">— "${escapeHtml(it.notas)}"</span>`:''}</div>
+      <div class="ticket-item-name">${escapeHtml(it.nombre)} <span class="item-mod">${DESTINO_LABELS[itemDestino(it)]}</span>${it.notas?` <span class="item-mod">— "${escapeHtml(it.notas)}"</span>`:''}</div>
       <div style="display:flex;align-items:center;gap:6px;margin-top:5px;">
         <span class="pill ${itemEstadoClass(it.estado)}">${PEDIDO_LABELS[it.estado]}</span>
         <span class="item-mod">${itemElapsedLabel(it)}</span>
