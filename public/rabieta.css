@@ -43,6 +43,18 @@
   .i-ic{width:1em;height:1em;display:inline-block;vertical-align:-0.15em;
     fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
 
+  /* La mascota: mismo trazo fino que el resto de los íconos, currentColor,
+     nada de relleno de dibujito — pero con ojos y una sonrisa mínima que le
+     dan carácter. Las burbujas suben despacio, la mirada parpadea de vez en
+     cuando: viva, no una tarjeta más. */
+  .mascot{width:1em;height:1.16em;display:block;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;color:var(--gold);}
+  .mascot-eye{animation:mascotBlink 4.5s ease-in-out infinite;transform-box:fill-box;transform-origin:center;}
+  .mascot-eye:nth-child(6){animation-delay:.12s;}
+  @keyframes mascotBlink{ 0%,92%,100%{transform:scaleY(1);} 96%{transform:scaleY(.15);} }
+  .mascot-bubble{opacity:.85;animation:mascotBubble 2.8s ease-in infinite;}
+  .mascot-bubble.b2{animation-delay:.9s;}
+  @keyframes mascotBubble{ 0%{transform:translateY(0);opacity:.9;} 80%{opacity:.2;} 100%{transform:translateY(-5px);opacity:0;} }
+
   /* fondo real de toda la página — la foto del local, de arriba a abajo, siempre.
      Es un elemento position:fixed (no background-attachment:fixed, que en iOS Safari
      se rompe y scrollea como si nada) así que cubre el viewport completo sin moverse
@@ -108,13 +120,36 @@
   .splash-stage-tag{position:relative;z-index:2;background:rgba(21,18,14,.5);
     padding:5px 13px;border-radius:2px;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-2);margin:16px 0 0 16px;font-family:var(--font-body);font-weight:500;}
   .splash-stage-name{position:relative;z-index:2;font-family:var(--font-display);font-size:26px;
-    font-weight:500;margin:10px 20px 3px;color:var(--ink-1);}
-  .splash-3d-btn{position:relative;z-index:2;width:calc(100% - 32px);margin:10px 16px 16px;
-    display:flex;align-items:center;justify-content:center;gap:8px;}
+    font-weight:500;margin:10px 20px 16px;color:var(--ink-1);}
   .splash-skip{background:none;border:none;color:var(--ink-muted);font-size:12.5px;
     text-decoration:none;border-bottom:1px solid var(--line-strong);text-align:center;padding:18px 0 5px;
     cursor:pointer;width:100%;font-family:var(--font-body);}
-  .splash-ai-btn{width:calc(100% - 32px);margin:0 16px;display:flex;align-items:center;justify-content:center;gap:8px;}
+
+  /* Acceso a la experiencia 3D: no un botón ancho de software con un ícono
+     de cubo — una chapita que se entiende mirándola (el plato gira) y ocupa
+     una esquina de la foto, como una etiqueta editorial, no un CTA. */
+  .stage3d-chip{position:absolute;z-index:3;top:14px;right:14px;display:flex;align-items:center;gap:7px;
+    background:rgba(21,18,14,.72);backdrop-filter:blur(4px);border:1px solid rgba(232,218,199,.22);
+    border-radius:999px;padding:7px 13px 7px 8px;color:var(--ink-1);font-family:var(--font-body);
+    font-size:11.5px;font-weight:500;cursor:pointer;}
+  .stage3d-chip .i-ic{width:19px;height:19px;color:var(--gold);}
+  .stage3d-chip-spin{animation:stage3dSpin 3.2s linear infinite;}
+  @keyframes stage3dSpin{ to{transform:rotate(360deg);} }
+
+  /* Concierge de IA: la misma mascota — copa con carácter propio — en
+     cualquier lugar donde se entra a pedirle una recomendación. */
+  .concierge-entry{display:flex;align-items:center;gap:12px;width:100%;margin:22px 0 0;padding:14px 4px;
+    background:none;border:none;border-top:1px solid var(--line);text-align:left;cursor:pointer;}
+  .concierge-avatar{flex:0 0 auto;width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    background:var(--bg-elevated);border:1px solid var(--line-strong);color:var(--gold);
+    animation:mascotFloat 3.4s ease-in-out infinite;}
+  .concierge-avatar.sm{width:30px;height:30px;}
+  .concierge-avatar .mascot{width:22px;height:26px;}
+  .concierge-avatar.sm .mascot{width:16px;height:19px;}
+  @keyframes mascotFloat{ 0%,100%{transform:translateY(0);} 50%{transform:translateY(-3px);} }
+  .concierge-copy{display:flex;flex-direction:column;gap:2px;min-width:0;}
+  .concierge-copy em{font-family:var(--font-display);font-style:italic;font-weight:500;font-size:16.5px;color:var(--ink-1);}
+  .concierge-copy small{font-size:11.5px;color:var(--ink-2);}
 
   /* Selector de rol de personal: silencioso — texto, no pastillas de color.
      El rol activo se marca con un subrayado fino, como una pestaña editorial. */
@@ -176,14 +211,14 @@
   .filter-chips button{border:1px solid var(--line-strong);background:transparent;color:var(--ink-2);padding:6px 14px;border-radius:2px;font-size:11.5px;font-weight:500;letter-spacing:.02em;cursor:pointer;}
   .filter-chips button.active{background:transparent;border-color:var(--gold);color:var(--gold);}
 
-  /* IA como concierge: una nota discreta, no un widget de producto con caja
-     de gradiente. Resultados en lista editorial, igual que la carta. */
+  /* IA como concierge: la mascota de Rabieta, no un ícono técnico. Resultados
+     en lista editorial, igual que la carta — nada de tarjetas en grid. */
   .ai-assistant{border:1px solid var(--line-strong);background:var(--bg-panel);border-radius:var(--radius);padding:18px;margin:0 0 18px;}
-  .ai-assistant.compact{display:flex;align-items:center;justify-content:space-between;gap:14px;}
+  .ai-assistant.compact{display:flex;align-items:center;gap:14px;width:100%;background:var(--bg-panel);border:1px solid var(--line-strong);cursor:pointer;text-align:left;font-family:var(--font-body);}
   .ai-assistant strong{display:block;font-family:var(--font-display);font-weight:500;font-style:italic;font-size:19px;color:var(--ink-1);}
-  .ai-assistant.compact p{font-size:12px;color:var(--ink-2);margin:3px 0 0;}
-  .ai-badge{display:block;color:var(--gold);font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:.18em;margin-bottom:7px;}
+  .ai-badge{display:block;color:var(--gold);font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:.18em;margin-bottom:5px;}
   .ai-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:14px;}
+  .concierge-row{display:flex;align-items:center;gap:11px;}
   .ai-query{margin-bottom:10px;}
   .ai-query label{display:block;color:var(--ink-2);font-size:10.5px;font-weight:600;margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em;}
   .ai-query>div{display:flex;gap:7px;}
@@ -298,13 +333,21 @@
   .pill.ocupada{background:rgba(193,39,45,0.14);color:#ff9a9a;}
 
   .kds-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;}
-  .ticket{border:1px solid var(--line-strong);border-radius:var(--radius);background:var(--bg-panel);padding:12px;}
-  .ticket.late{border-color:var(--critical);box-shadow:0 0 0 1px var(--critical) inset;}
-  .ticket .head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;}
-  .ticket .head .mesa{font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:15px;letter-spacing:.04em;color:var(--gold);}
-  .ticket .timer{font-size:11.5px;color:var(--ink-2);font-weight:700;}
-  .ticket ul{margin:0 0 10px;padding-left:18px;font-size:13px;line-height:1.6;}
-  .ticket .item-mod{color:var(--gold);font-weight:700;}
+  .ticket{border:1px solid var(--line-strong);border-radius:var(--radius);background:var(--bg-panel);padding:14px;}
+  /* Cocina: el protagonista es el tiempo. Un reloj grande a la derecha,
+     coloreado con precisión (verde/amarillo/rojo) en vez de teñir toda la
+     tarjeta apenas algo se demora. */
+  .ticket-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:4px;}
+  .ticket-head-left{display:flex;flex-direction:column;align-items:flex-start;gap:6px;}
+  .ticket-mesa{font-family:var(--font-mono);font-weight:500;font-size:15px;letter-spacing:.04em;color:var(--ink-1);}
+  .ticket-clock{text-align:right;line-height:1.1;}
+  .ticket-clock-time{display:block;font-family:var(--font-mono);font-weight:600;font-size:26px;letter-spacing:0;color:var(--good);}
+  .ticket-clock-state{display:block;font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:var(--good);margin-top:2px;}
+  .ticket-clock.warn .ticket-clock-time,.ticket-clock.warn .ticket-clock-state{color:var(--warning);}
+  .ticket-clock.crit .ticket-clock-time,.ticket-clock.crit .ticket-clock-state{color:var(--critical);}
+  .ticket-item-name{font-family:var(--font-display);font-size:14.5px;color:var(--ink-1);}
+  .ticket ul{margin:10px 0 10px;padding-left:0;list-style:none;font-size:13px;line-height:1.6;border-top:1px solid var(--line);padding-top:10px;}
+  .ticket .item-mod{color:var(--gold);font-weight:500;font-family:var(--font-body);}
   .handoff-waiting{font-size:11px;font-weight:800;color:var(--gold);border:1px solid rgba(238,143,63,.35);border-radius:999px;padding:3px 8px;}
   .handoff-help{font-size:12px;color:var(--ink-2);margin:-4px 0 10px;}
   .handoff-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;}
@@ -403,19 +446,33 @@
   .modal h3{font-family:var(--font-display);font-weight:500;font-size:24px;letter-spacing:0;margin:0 0 9px;}
   .modal p{font-size:13px;color:var(--ink-2);line-height:1.6;margin:0 0 18px;}
 
-  .modal.modal-3d{max-width:440px;text-align:left;padding:0;overflow:hidden;border-color:var(--line-strong);}
-  .modal-3d .body3d{padding:20px 22px 22px;}
   .mesa-preview-modal{width:min(430px,100%);max-width:none;height:min(780px,92vh);padding:0;overflow:hidden;text-align:left;border-color:var(--line-strong);display:flex;flex-direction:column;}
   .mesa-preview-bg{z-index:250;}
   .mesa-preview-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 13px;background:#15100c;border-bottom:1px solid var(--line-strong);}.mesa-preview-head strong{display:block;font-family:var(--font-display);font-size:17px;margin-top:2px;}.mesa-preview-modal iframe{width:100%;height:100%;border:0;background:var(--bg);}
   @media(max-width:560px){.modal-bg.mesa-preview-bg{padding:0;}.mesa-preview-modal{width:100%;height:100vh;max-height:none;border-radius:0;border:0;}.mesa-preview-head{padding-top:max(11px,env(safe-area-inset-top));}}
   .badge-preview{display:inline-block;font-size:9.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;
     color:var(--gold);background:transparent;border:1px solid rgba(192,146,90,0.4);
-    padding:4px 10px;border-radius:2px;margin-bottom:10px;}
+    padding:4px 10px;border-radius:2px;}
   .badge-preview.real{color:var(--good);background:transparent;border-color:rgba(122,156,120,0.4);}
-  .modal-3d h3{margin-top:2px;}
-  .modal-3d .btn.callout{margin-bottom:10px;}
   .ar-fineprint{font-size:11px;color:var(--ink-muted);line-height:1.5;margin:2px 0 14px;}
+
+  /* La experiencia 3D/AR es su propia escena a pantalla completa — no el
+     modal-bg compartido del resto del sistema. Entorno oscuro, el plato
+     domina, y un onboarding de gestos (girar/acercar/colocar) en vez de un
+     párrafo explicando cómo se usa. */
+  .stage3d-bg{position:fixed;inset:0;z-index:150;background:rgba(5,4,3,.96);display:flex;flex-direction:column;}
+  .stage3d-scene{flex:1;display:flex;flex-direction:column;min-height:0;}
+  .stage3d-top{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;padding-top:max(14px,env(safe-area-inset-top));}
+  .stage3d-close{flex:0 0 auto;width:34px;height:34px;border-radius:50%;border:1px solid var(--line-strong);background:rgba(255,255,255,.04);color:var(--ink-2);display:flex;align-items:center;justify-content:center;cursor:pointer;}
+  .stage3d-close .i-ic{width:15px;height:15px;}
+  .stage3d-viewport{position:relative;flex:1;min-height:0;}
+  .stage3d-viewport model-viewer{width:100%;height:100%;--poster-color:transparent;}
+  .stage3d-name{position:absolute;z-index:2;left:18px;bottom:14px;margin:0;font-family:var(--font-display);font-weight:500;font-style:italic;font-size:22px;color:var(--ink-1);text-shadow:0 2px 14px rgba(0,0,0,.65);pointer-events:none;}
+  .stage3d-hints{display:flex;justify-content:center;gap:24px;padding:13px 16px;border-top:1px solid var(--line);}
+  .stage3d-hints span{display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--ink-2);font-weight:500;}
+  .stage3d-hints .i-ic{width:14px;height:14px;color:var(--gold);}
+  .stage3d-footer{padding:14px 18px max(18px,env(safe-area-inset-bottom));}
+  @media(min-width:640px){.stage3d-bg{align-items:center;}.stage3d-scene{max-width:480px;max-height:min(800px,92vh);margin:0;border-radius:var(--radius-lg);overflow:hidden;border:1px solid var(--line-strong);}}
 
   /* la experiencia 3D/AR vive integrada en la carta como una nota más —
      sin cartel pulsante llamando la atención. */
@@ -424,23 +481,33 @@
     background:var(--bg-panel);
     border-radius:var(--radius);padding:18px;margin-bottom:18px;
   }
-  .banner3d .head{display:flex;align-items:center;gap:11px;margin-bottom:13px;}
-  .banner3d .head .ico{font-size:22px;line-height:1;color:var(--gold);}
+  .banner3d .head{display:flex;align-items:center;gap:14px;margin-bottom:15px;}
   .banner3d .head .txt strong{display:block;font-family:var(--font-display);font-weight:500;font-style:italic;font-size:18px;color:var(--ink-1);letter-spacing:0;}
-  .banner3d .head .txt span{font-size:11.5px;color:var(--ink-2);}
-  .tiles3d{display:flex;gap:10px;overflow-x:auto;padding-bottom:2px;-webkit-overflow-scrolling:touch;scrollbar-width:none;}
+  .banner3d .head .txt span{font-size:11.5px;color:var(--ink-2);line-height:1.5;}
+  .banner3d .head .txt span em{font-style:normal;color:var(--ink-muted);}
+
+  /* la microcomposición plato → gira → aparece en la mesa: se entiende
+     mirándola, no leyéndola. */
+  .scene3d-strip{flex:0 0 auto;display:flex;align-items:center;gap:3px;}
+  .scene3d-strip .i-ic{width:22px;height:22px;color:var(--gold);}
+  .scene3d-arrow{width:12px;height:1px;background:var(--line-strong);position:relative;}
+  .scene3d-arrow::after{content:'';position:absolute;right:0;top:-2px;width:5px;height:5px;border-right:1px solid var(--line-strong);border-bottom:1px solid var(--line-strong);transform:rotate(-45deg);}
+  .scene3d-spin{animation:stage3dSpin 3.2s linear infinite;}
+  .scene3d-target{animation:scene3dPulse 2s ease-in-out infinite;}
+  @keyframes scene3dPulse{ 0%,100%{opacity:.65;transform:scale(.92);} 50%{opacity:1;transform:scale(1.08);} }
+
+  .tiles3d{display:flex;gap:14px;overflow-x:auto;padding:2px 2px 4px;-webkit-overflow-scrolling:touch;scrollbar-width:none;}
   .tiles3d::-webkit-scrollbar{display:none;}
-  .tiles3d button{flex:0 0 auto;display:flex;flex-direction:column;align-items:center;gap:7px;
-    min-width:100px;padding:10px 10px 12px;border-radius:4px;border:1px solid var(--line-strong);
-    background:var(--bg-elevated);color:var(--ink-1);font-family:var(--font-body);cursor:pointer;}
-  .tiles3d button:active{background:var(--bg-elevated-2);}
-  .tiles3d button .tile3d-img{width:80px;height:64px;object-fit:cover;border-radius:2px;}
-  .tiles3d button .tile3d-placeholder{width:80px;height:64px;border-radius:2px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
-    background:var(--bg-elevated-2);color:var(--gold);}
+  .tiles3d button{flex:0 0 auto;display:flex;flex-direction:column;align-items:center;gap:8px;
+    width:78px;padding:0;border:none;
+    background:none;color:var(--ink-1);font-family:var(--font-body);cursor:pointer;}
+  .tiles3d button .tile3d-img{width:72px;height:72px;object-fit:cover;border-radius:50%;border:1px solid var(--line-strong);}
+  .tiles3d button:active .tile3d-img{border-color:var(--gold);}
+  .tiles3d button .tile3d-placeholder{width:72px;height:72px;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+    background:var(--bg-elevated-2);border:1px solid var(--line-strong);color:var(--gold);}
   .tiles3d button .tile3d-placeholder .i-ic{width:20px;height:20px;}
   .tiles3d button .tile3d-placeholder small{font-size:8px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;color:var(--ink-muted);}
-  .tiles3d button .nm{font-size:11.5px;font-weight:700;text-align:center;line-height:1.3;font-family:var(--font-display);}
-  .tiles3d button .cta{font-size:10px;color:var(--gold);font-weight:800;text-transform:uppercase;letter-spacing:.05em;}
+  .tiles3d button .nm{font-size:11px;font-weight:500;text-align:center;line-height:1.3;font-family:var(--font-body);color:var(--ink-2);}
 
   /* ============ servidor real ============ */
   .conn-pill{position:fixed;top:8px;right:8px;z-index:200;font-size:10px;font-weight:800;
