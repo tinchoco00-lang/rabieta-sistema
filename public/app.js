@@ -635,7 +635,7 @@ function modelosRealesDisponibles(){ return (MENU_DATA && MENU_DATA._modelos3d) 
 function modeloParaPlato(id){
   const real = modelosRealesDisponibles()[id];
   if(real && real.glb){
-    return {url:'/models/'+id+'.glb', usdz: real.usdz ? '/models/'+id+'.usdz' : null, esReal:true, nombre:'el modelo real de este plato'};
+    return {url:'/models/'+id+'.glb', usdz: real.usdz ? '/models/'+id+'.usdz' : null, esReal:true, nombre:'el modelo 3D específico de demostración de este plato'};
   }
   const lista = [...CANDIDATOS_3D];
   const idx = lista.indexOf(id);
@@ -703,11 +703,11 @@ function renderModal(){
           <span>${ic('refresh')} Giralo</span><span>${ic('zoom')} Acercalo</span><span>${ic('target')} Ponelo acá</span>
         </div>
         <div class="stage3d-footer">
-          <span class="badge-preview ${modelo.esReal?'real':''}">${modelo.esReal?'Modelo 3D real de Rabieta':'Prototipo técnico, no es el plato real todavía'}</span>
+          <span class="badge-preview ${modelo.esReal?'real':''}">${modelo.esReal?'Modelo 3D específico de este plato · demostración':'Prototipo técnico, no es el plato real todavía'}</span>
           <button class="btn callout block" onclick="activarAR()">${ic('target')} Ponelo en tu mesa</button>
           <div id="arStatus" class="ar-status" aria-live="polite">Cargando…</div>
           <p class="ar-fineprint">${modelo.esReal
-            ? `Modelo real escaneado para Rabieta.${modelo.usdz?'':' Todavía falta el archivo USDZ para que abra la cámara AR directamente en iPhone.'}`
+            ? `Modelo 3D específico de demostración, creado para validar esta experiencia — todavía no es un escaneo del plato real de Rabieta.${modelo.usdz?'':' Falta el archivo USDZ para que abra la cámara AR directamente en iPhone.'}`
             : `Esta prueba valida interacción y cámara, no la apariencia del plato. Para publicar <b>${state.modal.nombre}</b> faltan su modelo GLB real, su USDZ real y una medida de escala verificada. El modelo visible ahora es ${modelo.nombre}.`}</p>
         </div>
       </div></div>`;
@@ -765,7 +765,7 @@ function renderModal(){
       <div class="modal" onclick="event.stopPropagation()">
         <div class="icon">${ic('receipt')}</div>
         <h3>¿Pedir la cuenta?</h3>
-        <p>Salón recibirá la solicitud de la <b>Mesa ${state.clienteMesa}</b> y habilitará el checkout sandbox.</p>
+        <p>Salón recibirá la solicitud de la <b>Mesa ${state.clienteMesa}</b> y habilitará el pago de prueba.</p>
         ${unidades?`<div class="mock-banner">${ic('warning')} Tenés ${unidades} unidad(es) sin enviar. Solo se quitarán del carrito cuando la cuenta sea solicitada con éxito.</div>`:''}
         ${state.clienteServicioError?`<div class="review-error" role="alert">${escapeHtml(state.clienteServicioError)} Tu carrito sigue intacto.</div>`:''}
         <div style="display:flex;gap:10px;">
@@ -776,7 +776,7 @@ function renderModal(){
   } else if(state.modal.type==='cuenta-enviada'){
     root.innerHTML = `<div class="modal-bg"><div class="modal">
       <div class="icon">${ic('checkring')}</div><h3>Cuenta solicitada</h3>
-      <p>Salón recibió el aviso de la <b>Mesa ${state.clienteMesa}</b>. El total y el checkout sandbox aparecerán en vivo.</p>
+      <p>Salón recibió el aviso de la <b>Mesa ${state.clienteMesa}</b>. El total y el pago de prueba aparecerán en vivo.</p>
       <button class="btn primary block" onclick="closeModal()">Ver mi cuenta</button>
     </div></div>`;
   } else if(state.modal.type==='checkout'){
@@ -785,7 +785,7 @@ function renderModal(){
     const usaMercadoPagoReal = state.clientePagoMedio==='mercado_pago' && state.mercadoPagoDisponible;
     root.innerHTML = `<div class="modal-bg" onclick="closeModal(event)">
       <div class="modal checkout-modal" onclick="event.stopPropagation()">
-        <div class="checkout-head"><span class="checkout-lock">${ic('lock')} ${usaMercadoPagoReal?'MERCADO PAGO · MODO DE PRUEBA':'SANDBOX SEGURO'}</span><h3>Pagá desde la mesa</h3><p>${usaMercadoPagoReal?'Vas a completar el pago en Mercado Pago con credenciales de prueba del local. No es dinero real.':'Simulación completa para la demo. No se cobra dinero ni se solicitan datos reales.'}</p></div>
+        <div class="checkout-head"><span class="checkout-lock">${ic('lock')} ${usaMercadoPagoReal?'MERCADO PAGO · MODO DE PRUEBA':'PAGO DE PRUEBA SEGURO'}</span><h3>Pagá desde la mesa</h3><p>${usaMercadoPagoReal?'Vas a completar el pago en Mercado Pago con credenciales de prueba del local. No es dinero real.':'Simulación completa para la demo. No se cobra dinero ni se solicitan datos reales.'}</p></div>
         <div class="checkout-summary">
           ${(mesa&&mesa.pedido?mesa.pedido.items:[]).map(item=>`<div><span>${escapeHtml(item.nombre)}</span><b>${money(item.precio)}</b></div>`).join('')}
           <div class="checkout-total"><span>Total</span><b>${money(total)}</b></div>
@@ -793,7 +793,7 @@ function renderModal(){
         <div class="checkout-label">Elegí cómo ${state.mercadoPagoDisponible?'pagar':'simular el pago'}</div>
         <div class="payment-methods">
           <button class="${state.clientePagoMedio==='tarjeta'?'active':''}" onclick="elegirMedioPago('tarjeta')"><b>Tarjeta demo</b><span>•••• 4242</span></button>
-          <button class="${state.clientePagoMedio==='mercado_pago'?'active':''}" onclick="elegirMedioPago('mercado_pago')"><b>Mercado Pago</b><span>${state.mercadoPagoDisponible?'Modo de prueba, sin dinero real':'Cuenta sandbox'}</span></button>
+          <button class="${state.clientePagoMedio==='mercado_pago'?'active':''}" onclick="elegirMedioPago('mercado_pago')"><b>Mercado Pago</b><span>${state.mercadoPagoDisponible?'Modo de prueba, sin dinero real':'Modo de prueba'}</span></button>
         </div>
         ${state.clientePagoError?`<div class="review-error">${escapeHtml(state.clientePagoError)}</div>`:''}
         <button class="btn primary block" ${state.clientePagoEnviando?'disabled':''} onclick="confirmarPagoSandbox()">${state.clientePagoEnviando?'Procesando…':usaMercadoPagoReal?'Ir a pagar con Mercado Pago':'Confirmar pago demo por '+money(total)}</button>
@@ -1010,11 +1010,11 @@ function viewCliente(){
     const idx = PEDIDO_ESTADOS.indexOf(mesa.pedido.estado);
     const variasRondas = mesa.pedido.items.some(it=>(it.ronda||1)>1);
     const pagoHtml = mesa.pago && mesa.pago.estado==='confirmado'
-      ? `<div class="payment-receipt"><span>${ic('checkring')}</span><div><b>${mesa.pago.modo==='mercadopago'?'Pago con Mercado Pago aprobado':'Pago demo aprobado'}</b><small>${money(mesa.pago.total)} · ${mesa.pago.modo==='mercadopago'?'Mercado Pago':mesa.pago.medio==='mercado_pago'?'Mercado Pago sandbox':mesa.pago.medio==='tarjeta'?'Tarjeta demo •••• 4242':'Confirmado por staff'}<br>Comprobante ${escapeHtml(mesa.pago.referencia||'demo')}</small></div></div>${resenaHtml(mesa)}`
+      ? `<div class="payment-receipt"><span>${ic('checkring')}</span><div><b>${mesa.pago.modo==='mercadopago'?'Pago con Mercado Pago aprobado':'Pago demo aprobado'}</b><small>${money(mesa.pago.total)} · ${mesa.pago.modo==='mercadopago'?'Mercado Pago':mesa.pago.medio==='mercado_pago'?'Mercado Pago (modo de prueba)':mesa.pago.medio==='tarjeta'?'Tarjeta demo •••• 4242':'Confirmado por staff'}<br>Comprobante ${escapeHtml(mesa.pago.referencia||'demo')}</small></div></div>${resenaHtml(mesa)}`
       : mesa.pago && mesa.pago.estado==='pendiente' && mesa.pago.modo==='mercadopago'
         ? `<div class="checkout-callout mp-pending"><div><b>${ic('lock')} Esperando confirmación de Mercado Pago</b><span>Total ${money(mesa.pago.total)} · si ya pagaste, esto se actualiza solo apenas Mercado Pago nos confirme.</span></div><button class="btn primary sm" data-mp-checkout-url="${escapeHtml(mesa.pago.checkoutUrl)}" onclick="abrirCheckoutMercadoPago(this)">Abrir Mercado Pago</button></div>`
         : mesa.cuentaPedida
-          ? `<div class="checkout-callout"><div><b>${ic('receipt')} Tu cuenta está lista</b><span>Total ${money(pedidoTotal(mesa))} · podés completar el flujo sin dinero real.</span></div><button class="btn primary sm" onclick="abrirCheckout()">Pagar en sandbox</button></div>`
+          ? `<div class="checkout-callout"><div><b>${ic('receipt')} Tu cuenta está lista</b><span>Total ${money(pedidoTotal(mesa))} · podés completar el flujo sin dinero real.</span></div><button class="btn primary sm" onclick="abrirCheckout()">Pagar (modo de prueba)</button></div>`
           : '';
     pedidoStatusHtml = `<div class="card">
       <div style="font-weight:800;font-size:13.5px;margin-bottom:4px;">Tu pedido</div>
@@ -1067,7 +1067,7 @@ function viewCliente(){
         : mesa.pago && mesa.pago.estado==='pendiente'
           ? `<button class="btn dark" data-mp-checkout-url="${escapeHtml(mesa.pago.checkoutUrl)}" onclick="abrirCheckoutMercadoPago(this)">${ic('lock')} Esperando Mercado Pago</button>`
           : mesa.cuentaPedida
-            ? `<button class="btn primary" onclick="abrirCheckout()">${ic('lock')} Abrir pago sandbox</button>`
+            ? `<button class="btn primary" onclick="abrirCheckout()">${ic('lock')} Abrir pago de prueba</button>`
             : `<button class="btn dark" onclick="pedirCuenta()">${ic('receipt')} Pedir la cuenta</button>`}
       <button class="btn critical" onclick="toggleHelp()">${ic('help')} Necesito ayuda</button>
     </div>
@@ -1829,10 +1829,10 @@ function view3dReadinessHtml(){
   const publicables=platos.filter(p=>reales[p.id] && reales[p.id].glb && reales[p.id].usdz);
   return `<div class="section-h">Preparación 3D/AR por plato</div>
     <div class="${conGlb.length?'secure-banner':'mock-banner'}">${ic(conGlb.length?'checkring':'warning')} ${conGlb.length
-      ? `${conGlb.length} de ${platos.length} platos ya tienen un modelo real cargado en public/models/. El resto sigue con el modelo genérico, rotulado como prototipo técnico.`
-      : 'Prototipo técnico: hoy se usa un modelo genérico solo para validar cámara e interacción. Ningún plato tiene todavía un modelo 3D real publicable. La infraestructura ya está lista: alcanza con dejar el .glb/.usdz en public/models/ con el nombre exacto del plato (ver public/models/LEEME.md), sin tocar código.'}</div>
+      ? `${conGlb.length} de ${platos.length} platos ya tienen un modelo 3D específico de demostración cargado en public/models/ (no un escaneo real del plato todavía). El resto sigue con el modelo genérico, rotulado como prototipo técnico.`
+      : 'Prototipo técnico: hoy se usa un modelo genérico solo para validar cámara e interacción. Ningún plato tiene todavía un modelo 3D específico publicable. La infraestructura ya está lista: alcanza con dejar el .glb/.usdz en public/models/ con el nombre exacto del plato (ver public/models/LEEME.md), sin tocar código.'}</div>
     <div class="grid cols-3 asset-summary">
-      ${statTile('Modelos 3D reales', `${conGlb.length} / ${platos.length}`, publicables.length===platos.length?'todos publicables':`faltan ${platos.length-conGlb.length} GLB + ${platos.length-conUsdz.length} USDZ`, conGlb.length<platos.length?'downAlert':null)}
+      ${statTile('Modelos 3D específicos', `${conGlb.length} / ${platos.length}`, publicables.length===platos.length?'todos publicables':`faltan ${platos.length-conGlb.length} GLB + ${platos.length-conUsdz.length} USDZ`, conGlb.length<platos.length?'downAlert':null)}
       ${statTile('Fotos reales', `${conFoto.length} / ${platos.length}`, sinFoto.length?`faltan ${sinFoto.map(p=>p.nombre).join(' y ')}`:'referencias completas', sinFoto.length?'downAlert':null)}
       ${statTile('Shell AR', 'Listo', 'detecta y usa modelos reales solo', null)}
     </div>

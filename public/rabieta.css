@@ -40,6 +40,12 @@
     accent-color:var(--gold);
   }
   .display{font-family:var(--font-display); font-weight:400; letter-spacing:.02em;}
+  /* Acento manuscrito puntual del Cliente: el cierre de la experiencia
+     (reseña), no un titular más — un gesto personal, no una tipografía
+     extra. El resto de la identidad tipográfica (Bebas Neue/Inter/mono) ya
+     se aplica de punta a punta vía --font-display/--font-body/--font-mono,
+     así que no hace falta duplicarla acá escopeada a Cliente. */
+  body.mesa-app .review-thanks{font-family:var(--font-brush);font-weight:400;font-size:15px;letter-spacing:.01em;}
   /* íconos de línea (reemplazan los emojis) */
   .i-ic{width:1em;height:1em;display:inline-block;vertical-align:-0.15em;
     fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
@@ -301,7 +307,7 @@
      scrollee en vez de empujar el total fuera de pantalla) y cualquier
      espacio libre real queda al final, debajo de "Vaciar" — un blanco al
      pie de una pantalla completa no se lee como un error. */
-  @media(max-width:560px){.modal.cart-modal{height:100vh;width:calc(100% + 40px);margin-left:-20px;margin-right:-20px;border-radius:0;border:0;display:flex;flex-direction:column;padding:max(18px,env(safe-area-inset-top)) 16px max(18px,env(safe-area-inset-bottom));}.cart-review-list{flex:0 1 auto;min-height:0;max-height:none}.cart-review-list li{grid-template-columns:minmax(0,1fr) auto 32px}.cart-review-list b{grid-column:1/-1;text-align:left}.cart-review-total{margin-top:16px;border-top:1px solid var(--line-strong);background:var(--bg-elevated);margin-left:-16px;margin-right:-16px;padding:14px 16px;}.cart-modal-actions{grid-template-columns:1fr}.cart-modal-actions .ghost{order:2}.repeat-order-row{align-items:stretch;flex-direction:column}.repeat-order-row .btn{width:100%;}}
+  @media(max-width:560px){.modal.cart-modal{height:100vh;width:calc(100% + 40px);margin-left:-20px;margin-right:-20px;border-radius:0;border:0;display:flex;flex-direction:column;padding:max(18px,env(safe-area-inset-top)) 16px max(18px,env(safe-area-inset-bottom));}.cart-review-list{flex:0 1 auto;min-height:0;max-height:none}.cart-review-list li{grid-template-columns:minmax(0,1fr) auto 32px}.cart-review-list b{grid-column:1/-1;text-align:left}.cart-review-total{margin-top:16px;border-top:1px solid var(--line-strong);background:var(--bg-elevated);margin-left:-16px;margin-right:-16px;padding:14px 16px;}.cart-modal-actions{grid-template-columns:1fr}.cart-modal-actions .ghost{order:2}.cart-modal-head{padding-top:26px;}.repeat-order-row{align-items:stretch;flex-direction:column}.repeat-order-row .btn{width:100%;}}
 
   .status-stepper{display:flex;align-items:center;gap:0;margin:10px 0 18px;}
   .status-stepper .step{flex:1;text-align:center;position:relative;}
