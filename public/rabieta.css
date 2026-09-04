@@ -33,6 +33,37 @@
     accent-color:var(--gold);
   }
   .display{font-family:'Fredoka',system-ui,sans-serif; font-weight:600; letter-spacing:.01em;}
+
+  /* ============ CLIENTE — identidad Rabieta Lomitas (bar real, no SaaS) ============
+     Escopeado a body.mesa-app para no tocar el panel de personal (Fredoka/Nunito
+     se mantienen ahí sin cambios). Bebas Neue para titulares (carbón + ámbar,
+     letra de cartel de bar), Inter para el cuerpo de texto, Permanent Marker
+     solo como acento puntual — nunca para párrafos completos. */
+  body.mesa-app{font-family:'Inter',system-ui,-apple-system,sans-serif;}
+  body.mesa-app .brand .name,
+  body.mesa-app .splash-h1,
+  body.mesa-app .splash-stage-name,
+  body.mesa-app .view-title,
+  body.mesa-app .section-h,
+  body.mesa-app .badge-mesa,
+  body.mesa-app .modal h3,
+  body.mesa-app .dish .row1 strong,
+  body.mesa-app .ai-assistant strong,
+  body.mesa-app .checkout-modal h3,
+  body.mesa-app .cart-modal-head h3{
+    font-family:'Bebas Neue',system-ui,sans-serif; font-weight:400; letter-spacing:.02em;
+  }
+  body.mesa-app .view-title{font-size:34px;}
+  body.mesa-app .splash-h1{font-size:34px;letter-spacing:.01em;}
+  body.mesa-app .splash-eyebrow,
+  body.mesa-app .ai-badge,
+  body.mesa-app .filter-chips button,
+  body.mesa-app .cat-tabs button,
+  body.mesa-app .tag{font-family:'Inter',sans-serif;}
+  /* Acento manuscrito puntual: el cierre de la experiencia (reseña), no un
+     titular más — así se siente un gesto personal, no una tipografía extra. */
+  body.mesa-app .review-thanks{font-family:'Permanent Marker',cursive;font-weight:400;font-size:15px;letter-spacing:.01em;}
+
   /* íconos de línea (reemplazan los emojis) */
   .i-ic{width:1em;height:1em;display:inline-block;vertical-align:-0.15em;
     fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
@@ -258,7 +289,7 @@
      scrollee en vez de empujar el total fuera de pantalla) y cualquier
      espacio libre real queda al final, debajo de "Vaciar" — un blanco al
      pie de una pantalla completa no se lee como un error. */
-  @media(max-width:560px){.modal.cart-modal{height:100vh;width:calc(100% + 40px);margin-left:-20px;margin-right:-20px;border-radius:0;border:0;display:flex;flex-direction:column;padding:max(18px,env(safe-area-inset-top)) 16px max(18px,env(safe-area-inset-bottom));}.cart-review-list{flex:0 1 auto;min-height:0;max-height:none}.cart-review-list li{grid-template-columns:minmax(0,1fr) auto 32px}.cart-review-list b{grid-column:1/-1;text-align:left}.cart-review-total{margin-top:16px;border-top:1px solid var(--line-strong);background:var(--bg-elevated);margin-left:-16px;margin-right:-16px;padding:14px 16px;}.cart-modal-actions{grid-template-columns:1fr}.cart-modal-actions .ghost{order:2}.repeat-order-row{align-items:stretch;flex-direction:column}.repeat-order-row .btn{width:100%;}}
+  @media(max-width:560px){.modal.cart-modal{height:100vh;width:calc(100% + 40px);margin-left:-20px;margin-right:-20px;border-radius:0;border:0;display:flex;flex-direction:column;padding:max(18px,env(safe-area-inset-top)) 16px max(18px,env(safe-area-inset-bottom));}.cart-review-list{flex:0 1 auto;min-height:0;max-height:none}.cart-review-list li{grid-template-columns:minmax(0,1fr) auto 32px}.cart-review-list b{grid-column:1/-1;text-align:left}.cart-review-total{margin-top:16px;border-top:1px solid var(--line-strong);background:var(--bg-elevated);margin-left:-16px;margin-right:-16px;padding:14px 16px;}.cart-modal-actions{grid-template-columns:1fr}.cart-modal-actions .ghost{order:2}.cart-modal-head{padding-top:26px;}.repeat-order-row{align-items:stretch;flex-direction:column}.repeat-order-row .btn{width:100%;}}
 
   .status-stepper{display:flex;align-items:center;gap:0;margin:10px 0 18px;}
   .status-stepper .step{flex:1;text-align:center;position:relative;}

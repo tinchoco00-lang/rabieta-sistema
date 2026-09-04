@@ -1160,7 +1160,7 @@ test('3D y AR mantienen una foto útil y explican dispositivos incompatibles', (
   assert.match(source, /onerror="modelo3dError\(\)"/);
   assert.match(source, /mv\.canActivateAR===false/);
   assert.match(source, /No se pudo abrir la cámara AR/);
-  assert.match(source, /Ningún plato tiene todavía un modelo 3D real publicable/);
+  assert.match(source, /Ningún plato tiene todavía un modelo 3D específico publicable/);
   assert.match(source, /GLB real de \$\{p\.nombre\}/);
   assert.match(source, /USDZ real de \$\{p\.nombre\}/);
   assert.match(source, /foto real de \$\{p\.nombre\}/);
@@ -1806,7 +1806,13 @@ test('un .glb/.usdz real dejado en public/models/ con el nombre del plato se usa
   const clientSource = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
   assert.match(clientSource, /function modeloParaPlato\(id\)\{/);
   assert.match(clientSource, /if\(real && real\.glb\)\{/);
-  assert.match(clientSource, /Modelo 3D real de Rabieta/);
+  // El primer modelo entregado es una representación de demostración creada
+  // para validar la experiencia, no un escaneo/fotogrametría real del plato
+  // servido — el texto nunca debe prometer "escaneo real" hasta que exista uno.
+  assert.match(clientSource, /Modelo 3D específico de este plato · demostración/);
+  assert.match(clientSource, /todavía no es un escaneo del plato real de Rabieta/);
+  assert.doesNotMatch(clientSource, /Modelo real escaneado/);
+  assert.doesNotMatch(clientSource, /Modelo 3D real de Rabieta/);
   assert.match(clientSource, /ios-src="\$\{modelo\.usdz\}"/);
 });
 

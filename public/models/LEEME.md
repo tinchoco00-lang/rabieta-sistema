@@ -59,4 +59,38 @@ genérico para ese plato puntual; el `.usdz` se puede sumar después.
 El plato sigue usando el modelo genérico de demostración, rotulado siempre
 como prototipo técnico — nunca se muestra como si fuera el modelo real de ese
 plato. El panel de Dueño (`QR / Mesas` no, la pestaña **Dueño**) muestra en
-vivo cuántos de los 12 platos ya tienen `.glb`/`.usdz` reales acá.
+vivo cuántos de los 12 platos ya tienen `.glb`/`.usdz` específicos acá.
+
+## Cómo se rotula el primer modelo que llega (importante)
+
+Apenas aparece un `.glb`/`.usdz` acá con el nombre correcto, el sistema lo usa
+automáticamente — pero el texto que ve el cliente y el Dueño lo llama
+**"modelo 3D específico de demostración"**, nunca "escaneo real del plato" ni
+"modelo real de Rabieta". Esa distinción es a propósito: el primer modelo de
+Burger Rabieta que se va a recibir es una representación creada para validar
+la experiencia (cámara, AR, escala), no una fotogrametría del plato tal cual
+sale de cocina. Recién cuando exista un escaneo/fotogrametría real del plato
+served se puede empezar a llamarlo "modelo real" — y eso requiere además
+actualizar el texto en `public/app.js` (`modeloParaPlato`, el badge y el
+fineprint del modal 3D), no solo subir el archivo.
+
+## Escala para Burger Rabieta — DEMO / POR CONFIRMAR
+
+Todavía no medimos el plato real de Rabieta. Estos valores son solo una
+referencia de arranque para que quien modele no parta de cero; **hay que
+confirmarlos contra el plato servido antes de dar la escala por buena**:
+
+- **Unidad**: 1 unidad del `.glb` = 1 metro (convención glTF estándar; así
+  interpreta la escala `<model-viewer>`/ARKit/ARCore).
+- **Orientación**: eje Y hacia arriba, burger apoyada sobre el plano XZ (de
+  pie sobre su base, no de costado).
+- **Origen/pivote**: centrado en X/Z y en Y=0 en la base del plato/tabla, no
+  en el centro geométrico de la burger — así se apoya sobre la mesa en AR en
+  vez de flotar o hundirse a mitad de altura.
+- **Dimensiones aproximadas (DEMO, sin confirmar)**: diámetro ≈ 0.12–0.14 m,
+  altura total (con el pan) ≈ 0.08–0.10 m. Son un punto de partida razonable
+  para una hamburguesa de bodegón servida en plato, **no una medida oficial**.
+
+Cuando se mida el plato real, reemplazar estos valores acá mismo y en
+cualquier ficha de producción del modelo — no hace falta tocar código: la
+escala vive dentro del `.glb`.
