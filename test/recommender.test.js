@@ -99,3 +99,31 @@ test('"somos 4" sugiere platos para compartir, igual que pedirlo explícitamente
   assert.equal(result.intent.profile, 'compartir');
   assert.ok(result.items.some(({product})=>product.para_compartir));
 });
+
+test('las opciones rápidas del concierge ("un trago", "algo potente", "sin romperla", "elegí por mí") responden con la misma lógica que sus equivalentes explícitos', () => {
+  // "con birra" queda mapeado a la categoría de Cervezas Rabieta para cuando
+  // el local cargue precios propios (hoy los 16 productos de esa categoría
+  // no tienen precio confirmado, así que nunca podría recomendar nada sin
+  // inventar un precio — por eso la opción rápida del concierge usa "un
+  // trago" en su lugar, que sí tiene precios reales).
+  const birra = recommend(menu, 'una birra bien fría');
+  assert.equal(birra.intent.category && birra.intent.category.ids[0], 'cervezas-rabieta');
+  assert.equal(birra.items.length, 0, 'hoy ningún producto de Cervezas Rabieta tiene precio confirmado, así que no debe inventar una recomendación');
+
+  const trago = recommend(menu, 'un trago');
+  assert.ok(trago.items.length > 0);
+  assert.ok(trago.items.every(({product})=>product.categoriaId === 'tragos'));
+
+  const potente = recommend(menu, 'algo potente');
+  assert.equal(potente.intent.profile, 'contundente');
+  assert.ok(potente.items.length > 0);
+
+  const sinRomperla = recommend(menu, 'sin romperla');
+  assert.ok(sinRomperla.intent.cheap);
+  assert.ok(sinRomperla.items.length > 0);
+
+  const elegimePorMi = recommend(menu, 'elegí por mí');
+  assert.ok(elegimePorMi.intent.surprise);
+  assert.ok(elegimePorMi.items.length > 0);
+  assert.ok(elegimePorMi.items.every(({product})=>product.candidato_destacado));
+});
