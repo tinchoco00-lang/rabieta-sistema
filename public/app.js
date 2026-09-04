@@ -76,6 +76,18 @@ const DEMO_UMBRALES_ESPERA_SEG = {
   urgenteSeg: 180,      // 3min+ sin resolver pasa a la prioridad más alta
   cocinaLentaSeg: 480,  // 8min+ "preparando" se marca como cocina/barra lenta
 };
+// SUPUESTO DE SIMULACIÓN — minutos que le tomaría tradicionalmente a un
+// mozo/cajero resolver cada acción a mano. NO son datos reales de Rabieta:
+// son un punto de partida razonable para ilustrar el orden de magnitud del
+// tiempo humano que cada autoservicio evita, y quedan siempre rotulados como
+// supuesto en la UI. Ajustables acá si el local mide sus propios tiempos.
+const DEMO_MINUTOS_SUPUESTOS = {
+  tomarPedido: 3,
+  responderConsulta: 2,
+  segundaRonda: 3,
+  pedirCuenta: 2,
+  cobrar: 4,
+};
 // Las mismas opciones que un mozo te tira de memoria en la barra, no un
 // formulario de filtros — "Sin TACC" ya vive como chip aparte en la carta y
 // se sigue pudiendo escribir cualquier cosa en el buscador libre.
@@ -91,6 +103,20 @@ const HELP_CATEGORIAS = [
   {id:'mozo',      label:'Necesito al mozo',            prioridad:'normal'},
   {id:'cambiar',   label:'Quiero cambiar algo',         prioridad:'importante'},
   {id:'cuenta',    label:'Quiero pedir la cuenta',      prioridad:'importante'},
+];
+// Un toque, sin abrir el panel de reclamos ni escribir nada: el objetivo es
+// que pedir agua o cubiertos nunca dependa de que alguien vea que levantaste
+// la mano. Comparten servidor/validación con HELP_CATEGORIAS (mismo mapa
+// HELP_CATEGORIES del lado del servidor) pero se muestran aparte porque no
+// son un reclamo — son un pedido chico y esperable.
+const EXTRAS_RAPIDOS = [
+  {id:'agua',        label:'Agua'},
+  {id:'hielo',       label:'Hielo'},
+  {id:'servilletas', label:'Servilletas'},
+  {id:'cubiertos',   label:'Cubiertos'},
+  {id:'salsa',       label:'Salsa / aderezo'},
+  {id:'vaso',        label:'Vaso'},
+  {id:'retirar',     label:'Retirar algo de la mesa'},
 ];
 const KEYWORDS_URGENTE = ['no llegó','no llego','frío','fria','crudo','cruda','alerg','mal estado','equivocado','equivocada'];
 const KEYWORDS_IMPORTANTE = ['falta','cambiar','sin ','error','cuenta'];
@@ -128,6 +154,7 @@ function emptyAnalytics(){
     pagosConfirmados:0,ventasDemo:0,tiempoPagoTotalSec:0,itemsVendidos:0,
     itemsListos:0,itemsEntregados:0,tiempoPreparacionTotalSec:0,tiempoPaseTotalSec:0,
     destinos:{cocina:{itemsListos:0,tiempoPreparacionTotalSec:0},barra:{itemsListos:0,tiempoPreparacionTotalSec:0}},
+    autoservicio:{pedidosSinMozo:0,rondasAdicionalesSinMozo:0,consultasResueltas:0,cuentasSinMozo:0,pagosSinMozo:0,llamadosMozo:0,solicitudesFisicas:0,pagosConCaja:0},
     productos:{},resenas:[],crmContactos:[],actividad:[]
   };
 }
@@ -147,6 +174,11 @@ let state = {
   clienteResenaDraft:{puntuacion:null,comentario:'',crmConsentimiento:false,crmCanal:'whatsapp',crmContacto:'',crmNombre:''},
   mozoActivo:MOZOS[0], modal:null, mesaLinks:null, mesaLinksLoading:false, mesaLinksError:'', presentacionCargada:false,
   demoPasoActual:1, demoPasosVistos:new Set(),
+  // Dueño — costo/hora opcional para traducir horas-persona ahorradas a
+  // dinero; nunca un valor precargado, así nunca se inventa un salario.
+  costoHoraDemo:'',
+  simuladorAbierto:false,
+  simulador:{cubiertos:100, mesas:22, turnoHoras:5, mozosTradicional:6, mozosConRabieta:3, costoHora:''},
 };
 
 function money(n){ return n===null || n===undefined ? 'A confirmar' : '$'+n.toLocaleString('es-AR'); }
@@ -904,6 +936,10 @@ function registrarRespuestaAsistente(consulta, respuesta){
   state.clienteAsistenteConsulta = consulta;
   state.clienteAsistenteConsultaMostrada = consulta;
   state.clienteAsistenteRespuesta = respuesta;
+  // Cuenta para "consultas resueltas sin staff" en el panel de Dueño — no
+  // manda el texto de la consulta ni la respuesta, solo avisa que el
+  // asistente contestó algo sin que nadie de salón tuviera que intervenir.
+  if(state.role==='cliente' && state.clienteMesa) send({type:'consulta_registrar', mesa:state.clienteMesa});
 }
 function probarEjemploAsistente(query){
   state.clientePreferencia=null; state.clienteAsistenteAgregado=null;
@@ -1060,6 +1096,8 @@ function viewCliente(){
     <div class="dish-list">
       ${productos.length ? productos.map(p=>dishCardHtml(p, mesa.cuentaPedida)).join('') : '<div class="empty">Ningún producto de esta categoría es apto Sin TACC.</div>'}
     </div>
+    <div class="section-h">Pedí esto sin esperar al mozo</div>
+    <div class="extras-rapidos">${EXTRAS_RAPIDOS.map(e=>`<button ${state.clienteAyudaEnviando?'disabled':''} onclick="enviarAyuda('${e.id}')">${escapeHtml(e.label)}</button>`).join('')}</div>
     <div class="action-row">
       <button class="btn callout" onclick="llamarMozo()">${ic('bell')} Llamar al mozo</button>
       ${mesa.pago && mesa.pago.estado==='confirmado'
@@ -1396,7 +1434,7 @@ function actualizarAyudaDraft(value){
 }
 async function enviarAyuda(id,mensaje='',reintento=false){
   if(state.clienteAyudaEnviando) return;
-  const categoria=HELP_CATEGORIAS.find(item=>item.id===id);
+  const categoria=HELP_CATEGORIAS.find(item=>item.id===id) || EXTRAS_RAPIDOS.find(item=>item.id===id);
   if(!categoria && id!=='otro') return;
   const limpio=String(mensaje||'').trim();
   if(id==='otro' && !limpio) return;
@@ -1496,19 +1534,6 @@ function itemsListosParaEntregar(mozo){
   });
   return listos.sort((a,b)=>(a.item.estadoTs.listo||a.item.enviadoTs)-(b.item.estadoTs.listo||b.item.enviadoTs));
 }
-function colaEntregaHtml(mozo){
-  const listos=itemsListosParaEntregar(mozo);
-  return `<div class="section-h">${ic('plate')} Listo para llevar (${listos.length})</div>
-    <p class="handoff-help">Cocina y Barra ya terminaron estos ítems. Confirmá la entrega recién cuando lleguen a la mesa.</p>
-    <div class="handoff-grid">${listos.length?listos.map(({mesa,item})=>`<article class="handoff-card ${state.presentacionCargada && STAFF_ALLOWED_VIEWS.includes('encargado') && mesa.numero===1?'demo-target':''}">
-      <div class="handoff-top"><strong>Mesa ${mesa.numero}</strong><span class="pill normal">${DESTINO_LABELS[itemDestino(item)]}</span></div>
-      ${state.presentacionCargada && STAFF_ALLOWED_VIEWS.includes('encargado') && mesa.numero===1?'<span class="demo-target-badge">Paso 3 · entregá este ítem</span>':''}
-      <div class="handoff-item">${escapeHtml(item.nombre)}</div>
-      ${item.notas?`<div class="handoff-notes">“${escapeHtml(item.notas)}”</div>`:''}
-      <div class="handoff-meta">Listo hace ${fmtSec(timeAgoSec((item.estadoTs&&item.estadoTs.listo)||item.enviadoTs))}</div>
-      <button class="btn good sm block" onclick="confirmarEntrega(${mesa.numero},${item.id})">Confirmar entrega en mesa</button>
-    </article>`).join(''):'<div class="empty">No hay platos ni bebidas esperando retiro.</div>'}</div>`;
-}
 // Mozo se lee parado, con una mano, entre mesas — así que en vez del viejo
 // dashboard de tarjetas (tus alertas / cola de entrega / tus mesas, cada una
 // con su propio bloque) esto junta TODO lo que un mozo tiene que resolver
@@ -1517,10 +1542,11 @@ function colaEntregaHtml(mozo){
 // tranquilas (sin nada pendiente) ni aparecen — no hay nada que decidir ahí.
 function mozoEventos(mozo){
   const eventos=[];
-  todasAlertasAbiertas().filter(x=>x.mesa.mozo===mozo).forEach(({mesa,alerta})=>{
+  todasAlertasAbiertas().filter(x=>!mozo || x.mesa.mozo===mozo).forEach(({mesa,alerta})=>{
     const enDemo = state.presentacionCargada && STAFF_ALLOWED_VIEWS.includes('encargado');
     eventos.push({
       numero: mesa.numero,
+      mozo: mesa.mozo,
       label: alerta.label.toUpperCase(),
       mensaje: alerta.mensaje,
       tiempo: timeAgoSec(alerta.creadoTs),
@@ -1536,6 +1562,7 @@ function mozoEventos(mozo){
     const tiempo = timeAgoSec((item.estadoTs&&item.estadoTs.listo)||item.enviadoTs);
     eventos.push({
       numero: mesa.numero,
+      mozo: mesa.mozo,
       label: 'PEDIDO LISTO',
       mensaje: item.nombre,
       tiempo,
@@ -1549,11 +1576,11 @@ function mozoEventos(mozo){
   return eventos.sort((a,b)=>a.severidad-b.severidad || b.tiempo-a.tiempo);
 }
 const MOZO_SEV=['urgente','importante','normal'];
-function mozoEventoHtml(ev){
+function mozoEventoHtml(ev,mostrarMozo){
   return `<div class="mozo-event sev-${MOZO_SEV[ev.severidad]}">
     ${ev.demoBadge?`<span class="demo-target-badge">${ev.demoBadge}</span>`:''}
     <div class="mozo-event-row">
-      <div class="mozo-event-mesa">MESA<b>${String(ev.numero).padStart(2,'0')}</b></div>
+      <div class="mozo-event-mesa">MESA<b>${String(ev.numero).padStart(2,'0')}</b>${mostrarMozo?`<small>${escapeHtml(ev.mozo)}</small>`:''}</div>
       <div class="mozo-event-mid"><span class="mozo-event-label">${escapeHtml(ev.label)}</span>${ev.mensaje?`<span class="mozo-event-msg">${ev.accion==='ENTREGAR'?escapeHtml(ev.mensaje):'“'+escapeHtml(ev.mensaje)+'”'}</span>`:''}${ev.escalado?`<span class="mozo-event-esc">${ic('warning')} ESCALADO</span>`:''}</div>
       <div class="mozo-event-time">${fmtClock(ev.tiempo)}</div>
       <button class="mozo-event-btn" onclick="${ev.onclick}">${ev.accion}</button>
@@ -1568,6 +1595,31 @@ function viewMozo(){
     <div class="mozo-feed">${eventos.length ? eventos.map(mozoEventoHtml).join('') : `<div class="empty">${ic('checkring')} Todo tranquilo en tus mesas — nada pendiente ahora mismo.</div>`}</div>`;
 }
 function cambiarMozo(v){ state.mozoActivo=v; render(); }
+// FASE 1 — cola única: en vez de que el staff recorra mesa por mesa, todo lo
+// que hay para hacer físicamente en el salón (alertas, extras, pedidos
+// listos para llevar) vive en una sola lista priorizada. mozoEventos(null)
+// ya devuelve la cola completa (ver el fix del filtro más arriba); acá solo
+// se le agrega el encabezado, el estado vacío y, para la vista agregada, un
+// indicador de si la dotación actual está absorbiendo la demanda.
+function estadoSaturacionSalon(){
+  const eventos = mozoEventos(null);
+  if(!eventos.length) return {saturada:false, tareas:0, tareasPorMozo:0, peorEspera:0};
+  const tareasPorMozo = eventos.length / MOZOS.length;
+  const peorEspera = eventos.reduce((max,ev)=>Math.max(max,ev.tiempo),0);
+  // Umbral demo (DEMO_UMBRALES_ESPERA_SEG), no un SLA real de Rabieta: más
+  // de 2 tareas pendientes por mozo, o algo esperando más que el umbral
+  // "urgente" ya usado en el resto del panel, se lee como saturación real.
+  const saturada = tareasPorMozo>2 || peorEspera>DEMO_UMBRALES_ESPERA_SEG.urgenteSeg;
+  return {saturada, tareas:eventos.length, tareasPorMozo, peorEspera};
+}
+function colaTrabajoSalonHtml(mozoFiltro){
+  const eventos = mozoEventos(mozoFiltro);
+  const agregada = !mozoFiltro;
+  const {saturada} = agregada ? estadoSaturacionSalon() : {saturada:false};
+  return `<div class="section-h">${ic('plate')} Cola de trabajo del salón (${eventos.length})</div>
+    ${agregada && eventos.length ? `<div class="cola-estado ${saturada?'saturada':'ok'}">${saturada?ic('warning'):ic('checkring')} ${saturada?'Esta dotación ya está saturada: hay tareas esperando más de lo razonable.':'Con esta dotación todavía estamos absorbiendo la operación.'}</div>` : ''}
+    <div class="mozo-feed">${eventos.length ? eventos.map(ev=>mozoEventoHtml(ev,agregada)).join('') : `<div class="empty">${ic('checkring')} Nada pendiente para el salón ahora mismo.</div>`}</div>`;
+}
 function cuentaActionsHtml(m){
   if(!m.cuentaPedida) return '';
   if(m.pago && m.pago.estado==='confirmado'){
@@ -1608,7 +1660,7 @@ function viewEncargado(){
     ${escaladas.length ? `<div class="card" style="border-color:var(--critical);margin-bottom:16px;">
       <div style="font-weight:800;color:#ff9797;font-size:13px;margin-bottom:8px;">${ic('warning')} ${escaladas.length} alerta(s) escalada(s)</div>
       ${escaladas.map(({mesa,alerta})=>alertRowHtml(mesa,alerta,true)).join('')}</div>` : ''}
-    ${colaEntregaHtml(null)}
+    ${colaTrabajoSalonHtml(null)}
     <div class="section-h">Plano de salón</div>
     <div class="mesa-grid">${state.mesas.map(m=>{
       const prio=prioridadMax(alertasAbiertas(m));
@@ -1617,8 +1669,6 @@ function viewEncargado(){
         ${alertasAbiertas(m).length?`<span class="pill ${prio}">${alertasAbiertas(m).length} alerta(s)</span>`:`<span class="pill ${m.ocupada?'ocupada':'libre'}">${m.ocupada?'Ocupada':'Libre'}</span>`}
         ${cuentaActionsHtml(m)}</div>`;
     }).join('')}</div>
-    <div class="section-h">Cola de alertas</div>
-    ${todas.length ? todas.map(({mesa,alerta})=>alertRowHtml(mesa,alerta,true)).join('') : `<div class="empty">${ic('checkring')} No hay alertas abiertas.</div>`}
     <div class="section-h">Administración</div>
     <button class="btn primary sm" onclick="cargarEscenarioDemo()">${ic('clipboard')} Volver a cargar escenario de presentación</button>
     <button class="btn ghost sm" onclick="resetTodo()">${ic('refresh')} Reiniciar todo (afecta a todos los dispositivos conectados)</button>`;
@@ -1709,6 +1759,136 @@ function resetTodo(){
 // todo. Nada de compararlo contra ayer ni contra un objetivo — no hay datos
 // reales para eso todavía — así que son cifras planas, sin flechitas de
 // crecimiento ni color de más. El color se guarda para "qué mirar ahora".
+// FASE 4/5 — "Ahorro operativo": la tesis comercial pasó a ser reducir
+// horas-persona por el mismo volumen, no solo digitalizar. Todo lo que es un
+// conteo (pedidosSinMozo, llamadosMozo, etc.) sale de analytics.autoservicio,
+// instrumentado en cada acción real en server.js — nunca inventado acá. Lo
+// que sí es una estimación (minutos, horas-persona, costo) usa
+// DEMO_MINUTOS_SUPUESTOS y se muestra siempre rotulado como supuesto.
+function metricasAutoservicio(analytics){
+  const a = analytics.autoservicio || emptyAnalytics().autoservicio;
+  const interaccionesCliente = a.pedidosSinMozo + a.consultasResueltas + a.cuentasSinMozo + a.pagosSinMozo + a.llamadosMozo + a.solicitudesFisicas;
+  const intervencionesHumanas = a.llamadosMozo + a.solicitudesFisicas + a.pagosConCaja;
+  const autoservicioPct = interaccionesCliente ? Math.round((interaccionesCliente-intervencionesHumanas)/interaccionesCliente*100) : 0;
+  const primerPedido = Math.max(0, a.pedidosSinMozo - a.rondasAdicionalesSinMozo);
+  const minutosEvitados = primerPedido*DEMO_MINUTOS_SUPUESTOS.tomarPedido
+    + a.rondasAdicionalesSinMozo*DEMO_MINUTOS_SUPUESTOS.segundaRonda
+    + a.consultasResueltas*DEMO_MINUTOS_SUPUESTOS.responderConsulta
+    + a.cuentasSinMozo*DEMO_MINUTOS_SUPUESTOS.pedirCuenta
+    + a.pagosSinMozo*DEMO_MINUTOS_SUPUESTOS.cobrar;
+  const horasPersonaLiberadas = minutosEvitados/60;
+  const cubiertosAprox = analytics.itemsVendidos||0;
+  const horasPersonaPor100Cubiertos = cubiertosAprox ? (horasPersonaLiberadas/cubiertosAprox*100) : 0;
+  return {a, interaccionesCliente, intervencionesHumanas, autoservicioPct, minutosEvitados, horasPersonaLiberadas, cubiertosAprox, horasPersonaPor100Cubiertos};
+}
+function actualizarCostoHoraDemo(value){ state.costoHoraDemo=value; render(); }
+function toggleSimulador(){ state.simuladorAbierto=!state.simuladorAbierto; render(); }
+function actualizarSimulador(campo,valor){ state.simulador[campo]=valor; render(); }
+// Fórmulas deliberadamente simples y transparentes (no un modelo de
+// optimización): todo queda rotulado SIMULACIÓN y depende 100% de lo que el
+// dueño escriba, nunca de un supuesto de sueldo o capacidad inventado acá.
+function calcularSimulacionDotacion(input){
+  const cubiertos = Math.max(0, Number(input.cubiertos)||0);
+  const mesas = Math.max(0, Number(input.mesas)||0);
+  const turnoHoras = Math.max(0, Number(input.turnoHoras)||0);
+  const mozosTradicional = Math.max(0, Number(input.mozosTradicional)||0);
+  const mozosConRabieta = Math.max(0, Number(input.mozosConRabieta)||0);
+  const costoHora = Number(input.costoHora);
+  const tieneCosto = Number.isFinite(costoHora) && costoHora>0;
+  const horasPersonaTradicional = mozosTradicional*turnoHoras;
+  const horasPersonaConRabieta = mozosConRabieta*turnoHoras;
+  const mesasPorMozoTradicional = mozosTradicional?mesas/mozosTradicional:0;
+  const mesasPorMozoConRabieta = mozosConRabieta?mesas/mozosConRabieta:0;
+  const cubiertosPorHoraPersonaTradicional = horasPersonaTradicional?cubiertos/horasPersonaTradicional:0;
+  const cubiertosPorHoraPersonaConRabieta = horasPersonaConRabieta?cubiertos/horasPersonaConRabieta:0;
+  const costoLaboralTradicional = tieneCosto?horasPersonaTradicional*costoHora:null;
+  const costoLaboralConRabieta = tieneCosto?horasPersonaConRabieta*costoHora:null;
+  const costoPorCubiertoTradicional = tieneCosto&&cubiertos?costoLaboralTradicional/cubiertos:null;
+  const costoPorCubiertoConRabieta = tieneCosto&&cubiertos?costoLaboralConRabieta/cubiertos:null;
+  const ahorroEstimado = tieneCosto?costoLaboralTradicional-costoLaboralConRabieta:null;
+  // Capacidad estimada: con la MISMA dotación reducida, cuántos cubiertos
+  // podría absorber si escala en la misma proporción mesas/mozo que la
+  // dotación tradicional de referencia. Proyección simple, no una promesa.
+  const capacidadEstimada = mozosConRabieta?Math.round(cubiertos*(mozosTradicional/mozosConRabieta)):0;
+  return {cubiertos,mesas,turnoHoras,mozosTradicional,mozosConRabieta,tieneCosto,
+    horasPersonaTradicional,horasPersonaConRabieta,mesasPorMozoTradicional,mesasPorMozoConRabieta,
+    cubiertosPorHoraPersonaTradicional,cubiertosPorHoraPersonaConRabieta,
+    costoLaboralTradicional,costoLaboralConRabieta,costoPorCubiertoTradicional,costoPorCubiertoConRabieta,
+    ahorroEstimado,capacidadEstimada};
+}
+function simuladorDotacionHtml(){
+  const s = state.simulador;
+  const r = calcularSimulacionDotacion(s);
+  const campo = (label,key) => `<label class="simulador-campo"><span>${label}</span><input type="text" inputmode="decimal" class="nota" value="${escapeHtml(String(s[key]))}" oninput="actualizarSimulador('${key}',this.value)"></label>`;
+  return `<div class="card simulador-card">
+    <div class="simulador-kicker">${ic('warning')} SIMULACIÓN — hasta tener un piloto real, esto es una proyección, no un compromiso de capacidad ni de ahorro.</div>
+    <div class="simulador-inputs">
+      ${campo('Cubiertos estimados del turno','cubiertos')}
+      ${campo('Mesas','mesas')}
+      ${campo('Duración del turno (horas)','turnoHoras')}
+      ${campo('Mozos — operación tradicional','mozosTradicional')}
+      ${campo('Mozos — con Rabieta','mozosConRabieta')}
+      ${campo('Costo por hora-persona (opcional)','costoHora')}
+    </div>
+    <div class="simulador-tabla">
+      <div class="simulador-fila simulador-head"><span></span><b>Tradicional</b><b>Con Rabieta</b></div>
+      <div class="simulador-fila"><span>Horas-persona</span><b>${r.horasPersonaTradicional.toFixed(1)}</b><b>${r.horasPersonaConRabieta.toFixed(1)}</b></div>
+      <div class="simulador-fila"><span>Mesas por mozo</span><b>${r.mesasPorMozoTradicional.toFixed(1)}</b><b>${r.mesasPorMozoConRabieta.toFixed(1)}</b></div>
+      <div class="simulador-fila"><span>Cubiertos por hora-persona</span><b>${r.cubiertosPorHoraPersonaTradicional.toFixed(1)}</b><b>${r.cubiertosPorHoraPersonaConRabieta.toFixed(1)}</b></div>
+      ${r.tieneCosto?`<div class="simulador-fila"><span>Costo laboral del turno</span><b>${money(Math.round(r.costoLaboralTradicional))}</b><b>${money(Math.round(r.costoLaboralConRabieta))}</b></div>
+      <div class="simulador-fila"><span>Costo laboral por cubierto</span><b>${money(Math.round(r.costoPorCubiertoTradicional))}</b><b>${money(Math.round(r.costoPorCubiertoConRabieta))}</b></div>`:''}
+    </div>
+    ${r.tieneCosto?`<div class="simulador-resultado">${ic('checkring')} Ahorro estimado del turno: <b>${money(Math.round(r.ahorroEstimado))}</b></div>`:'<div class="empty">Ingresá un costo por hora-persona para ver el ahorro estimado en pesos.</div>'}
+    <div class="simulador-resultado">${ic('chart')} Capacidad estimada con la dotación reducida: <b>${r.capacidadEstimada} cubiertos</b>, manteniendo la misma proporción mesas/mozo de hoy.</div>
+  </div>`;
+}
+function ahorroOperativoHtml(analytics, mesasOcupadas){
+  const m = metricasAutoservicio(analytics);
+  const costoHora = Number(state.costoHoraDemo);
+  const costoEvitado = Number.isFinite(costoHora) && costoHora>0 ? m.horasPersonaLiberadas*costoHora : null;
+  const mesasPorMozo = MOZOS.length ? (mesasOcupadas/MOZOS.length) : 0;
+  const intervencionesPorMesa = mesasOcupadas ? (m.intervencionesHumanas/mesasOcupadas) : 0;
+  const horasTurno = Math.max(state.clockMs,60)/3600;
+  const pedidosPorHoraSistema = m.a.pedidosSinMozo/horasTurno;
+  const {saturada} = estadoSaturacionSalon();
+  return `<span class="dueno-hero-kicker">Ahorro operativo</span>
+    <p class="ahorro-tesis">Mismo volumen o más, con menos carga humana. Esto es lo que el cliente resolvió solo en esta sesión, y lo que todavía necesitó una persona.</p>
+    <div class="ahorro-norte">
+      <span class="ahorro-norte-value">${m.horasPersonaPor100Cubiertos.toFixed(2)}<small>h</small></span>
+      <span class="ahorro-norte-label">Horas-persona ahorradas por 100 cubiertos<small>estimado — ver supuestos abajo</small></span>
+    </div>
+    <div class="grid cols-4 ahorro-grid">
+      ${statTile('Pedidos sin mozo', String(m.a.pedidosSinMozo), 'incluye rondas adicionales', null)}
+      ${statTile('Rondas adicionales sin mozo', String(m.a.rondasAdicionalesSinMozo), null, null)}
+      ${statTile('Consultas resueltas', String(m.a.consultasResueltas), 'sin staff', null)}
+      ${statTile('Cuentas pedidas sin mozo', String(m.a.cuentasSinMozo), null, null)}
+    </div>
+    <div class="grid cols-4 ahorro-grid" style="margin-top:10px;">
+      ${statTile('Pagos sin mozo/caja', String(m.a.pagosSinMozo), null, null)}
+      ${statTile('Interacciones cliente', String(m.interaccionesCliente), 'total esta sesión', null)}
+      ${statTile('Intervenciones humanas', String(m.intervencionesHumanas), 'llamados + reclamos/extras + cobro con caja', null)}
+      ${statTile('% autoservicio', m.interaccionesCliente?m.autoservicioPct+'%':'—', null, null)}
+    </div>
+    <div class="grid cols-3 ahorro-grid" style="margin-top:10px;">
+      ${statTile('Intervenciones por mesa', mesasOcupadas?intervencionesPorMesa.toFixed(1):'—', null, null)}
+      ${statTile('Mesas activas por mozo', mesasPorMozo.toFixed(1), MOZOS.length+' mozo(s) en el turno', null)}
+      ${statTile('Pedidos/hora sin mozo', pedidosPorHoraSistema.toFixed(1), 'absorbidos por el sistema', null)}
+    </div>
+    <div class="ahorro-tiempo">
+      <div class="ahorro-tiempo-kicker">${ic('clipboard')} SUPUESTO DE SIMULACIÓN — minutos tradicionales por acción, no datos reales de Rabieta</div>
+      <div class="ahorro-tiempo-grid">
+        <div><b>${Math.round(m.minutosEvitados)}</b><span>minutos de trabajo evitados</span></div>
+        <div><b>${m.horasPersonaLiberadas.toFixed(1)}</b><span>horas-persona liberadas</span></div>
+        <div class="ahorro-costo">
+          <label>Costo/hora <input type="text" inputmode="decimal" class="nota" placeholder="opcional" value="${escapeHtml(state.costoHoraDemo)}" oninput="actualizarCostoHoraDemo(this.value)"></label>
+          <b>${costoEvitado!==null?money(Math.round(costoEvitado))+' evitados':'Ingresá tu costo/hora'}</b>
+        </div>
+      </div>
+    </div>
+    <div class="cola-estado ${saturada?'saturada':'ok'}" style="margin-top:10px;">${saturada?ic('warning'):ic('checkring')} ${saturada?'Con la dotación actual, el salón ya está saturado.':'Con la dotación actual, el salón todavía absorbe la operación.'}</div>
+    <button class="btn dark sm" style="margin-top:10px;" onclick="toggleSimulador()">${ic('chart')} ${state.simuladorAbierto?'Cerrar simulador de dotación':'Simular operación con otra dotación'}</button>
+    ${state.simuladorAbierto?simuladorDotacionHtml():''}`;
+}
 function duenoAhoraHtml(analytics, mesasOcupadas, preparacionPromedio, ticketPromedio){
   return `<span class="dueno-hero-kicker">Ahora en Lomitas</span>
     <div class="dueno-hero">
@@ -1755,6 +1935,7 @@ function viewDueno(){
     <p class="view-sub">Panel de negocio de esta sesión. ${productosPendientes} productos todavía sin precio confirmado.</p>
     ${state.presentacionCargada?`<div class="mock-banner">${ic('checkring')} Escenario sintético de presentación activo. Estas métricas no corresponden a clientes ni ventas reales.</div>`:''}
     <div class="mock-banner">${ic('clipboard')} Los cobros son confirmaciones de demostración acumuladas por este sistema. No hay caja, POS ni dinero real conectado.</div>
+    ${ahorroOperativoHtml(analytics, mesasOcupadas)}
     ${duenoAhoraHtml(analytics, mesasOcupadas, preparacionPromedio, ticketPromedio)}
     ${mesasAtencionHtml()}
     <div class="section-h">Embudo operativo ahora</div>
