@@ -31,17 +31,47 @@ const ICONS = {
   refresh:   '<path d="M4 12a8 8 0 0 1 14-5"/><polyline points="18 3 18 8 13 8"/><path d="M20 12a8 8 0 0 1-14 5"/><polyline points="6 21 6 16 11 16"/>',
   warning:   '<path d="M12 4 21 19H3Z"/><line x1="12" y1="9.5" x2="12" y2="14"/><circle cx="12" cy="16.6" r="0.9" fill="currentColor" stroke="none"/>',
   checkring: '<circle cx="12" cy="12" r="8"/><polyline points="8.3 12.2 10.8 14.7 15.8 9.2"/>',
+  target:    '<path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8"/><path d="M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8"/><path d="M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16"/><path d="M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none"/>',
+  zoom:      '<circle cx="10.5" cy="10.5" r="6.5"/><line x1="15.3" y1="15.3" x2="20" y2="20"/><line x1="7.7" y1="10.5" x2="13.3" y2="10.5"/><line x1="10.5" y1="7.7" x2="10.5" y2="13.3"/>',
+  close:     '<line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/>',
 };
 function ic(name, cls){ return `<svg class="i-ic${cls?' '+cls:''}" viewBox="0 0 24 24">${ICONS[name]||''}</svg>`; }
+// La mascota de Rabieta: una copa con dos ojos y una sonrisa mínima, mismo
+// trazo fino que el resto de los íconos — el "personaje" que ayuda a elegir,
+// no un ícono de IA. Vive donde está el concierge, siempre el mismo.
+function mascotHtml(cls){
+  return `<svg class="mascot${cls?' '+cls:''}" viewBox="0 0 24 28" aria-hidden="true">
+    <path d="M7.5 3 C7.5 9.5 9.3 13 12 13 C14.7 13 16.5 9.5 16.5 3 Z"/>
+    <line x1="12" y1="13" x2="12" y2="20"/>
+    <line x1="8.3" y1="24" x2="15.7" y2="24"/>
+    <line x1="12" y1="20" x2="12" y2="24"/>
+    <circle class="mascot-eye" cx="10.1" cy="6.6" r="0.75" fill="currentColor" stroke="none"/>
+    <circle class="mascot-eye" cx="13.9" cy="6.6" r="0.75" fill="currentColor" stroke="none"/>
+    <path class="mascot-mouth" d="M10.3 9 Q12 10.1 13.7 9" stroke-width="1.3"/>
+    <circle class="mascot-bubble b1" cx="10.6" cy="10.8" r="0.55" fill="currentColor" stroke="none"/>
+    <circle class="mascot-bubble b2" cx="13.2" cy="11.6" r="0.4" fill="currentColor" stroke="none"/>
+  </svg>`;
+}
+// Flecha de marcador dibujada a mano — no una flecha vectorial prolija —
+// para las llamadas de atención tipo "che, mirá esto" (3D, concierge).
+function markerArrowHtml(cls){
+  return `<svg class="marker-arrow${cls?' '+cls:''}" viewBox="0 0 60 40" aria-hidden="true">
+    <path d="M3 8 C 20 4, 38 14, 47 26" stroke-width="3.4" fill="none" stroke-linecap="round"/>
+    <path d="M35 22 C 40 24, 45 26, 48 27 C 47 24, 46 19, 45 15" stroke-width="3.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>`;
+}
 
 const PEDIDO_ESTADOS = ['enviado','preparando','listo','entregado'];
 const DESTINO_LABELS = {cocina:'Cocina', barra:'Barra'};
 const PEDIDO_LABELS = {enviado:'Recibido', preparando:'En preparación', listo:'Listo', entregado:'Entregado'};
 const MOZOS = ['Martín','Sofía','Lucas'];
+// Las mismas opciones que un mozo te tira de memoria en la barra, no un
+// formulario de filtros — "Sin TACC" ya vive como chip aparte en la carta y
+// se sigue pudiendo escribir cualquier cosa en el buscador libre.
 const ASISTENTE_OPCIONES = [
-  {id:'compartir',label:'Para compartir'}, {id:'contundente',label:'Algo contundente'},
-  {id:'liviano',label:'Algo más liviano'}, {id:'sin_tacc',label:'Sin TACC'},
-  {id:'dulce',label:'Un postre'},
+  {id:'compartir',label:'Para compartir'}, {id:'trago',label:'Un trago'},
+  {id:'contundente',label:'Algo potente'}, {id:'liviano',label:'Algo liviano'},
+  {id:'barato',label:'Sin romperla'}, {id:'sorpresa',label:'Elegí por mí'},
 ];
 const HELP_CATEGORIAS = [
   {id:'no_llego',  label:'No llegó mi pedido',        prioridad:'urgente'},
@@ -116,6 +146,18 @@ function escapeHtml(value){
 }
 function timeAgoSec(ts){ return Math.max(0, Math.floor(state.clockMs - ts)); }
 function fmtSec(s){ const m=Math.floor(s/60), r=s%60; return (m>0? m+'m ':'')+r+'s'; }
+// Reloj MM:SS para la comanda de Cocina: ahí el tiempo es lo primero que hay
+// que ver, en formato cronómetro (04:32), no la forma conversacional "hace
+// 4m 32s" que usa el resto del sistema.
+function fmtClock(s){ const m=Math.floor(s/60), r=s%60; return String(m).padStart(2,'0')+':'+String(r).padStart(2,'0'); }
+// Verde/amarillo/rojo según cuánto hace que el ítem más viejo de la comanda
+// está esperando — el color tiene que señalar el problema con precisión, no
+// pintar toda la tarjeta apenas algo tarda un poco.
+function ticketTimeState(edadSeg){
+  if(edadSeg>=360) return {cls:'crit', label:'Rojo'};
+  if(edadSeg>=180) return {cls:'warn', label:'Amarillo'};
+  return {cls:'ok', label:'Verde'};
+}
 function findMesa(n){ return state.mesas.find(m=>m.numero===n); }
 function findProducto(id){ for(const c of MENU_DATA.categorias) for(const p of c.productos) if(p.id===id) return p; }
 function todosLosProductos(){ const out=[]; MENU_DATA.categorias.forEach(c=>c.productos.forEach(p=>out.push({...p,categoriaId:c.id}))); return out; }
@@ -410,6 +452,9 @@ function render(){
   // posición para que el swipe no se corte.
   const scrollPos = [];
   app.querySelectorAll('.cat-tabs, .tiles3d').forEach(el=>{ scrollPos.push([el.className, el.scrollLeft]); });
+  // Cocina es una herramienta de laburo, no una vidriera del bar: fondo negro
+  // real en vez de la foto del local de fondo en el resto de las pantallas.
+  document.body.classList.toggle('role-cocina', state.role==='cocina');
   if(state.role==='cliente') app.innerHTML = viewCliente();
   else if(state.role==='cocina') app.innerHTML = viewCocina();
   else if(state.role==='mozo') app.innerHTML = viewMozo();
@@ -614,32 +659,42 @@ function renderModal(){
     const modelo = modeloParaPlato(state.modal.id);
     const producto = findProducto(state.modal.id);
     const poster = producto && producto.imagen ? producto.imagen : '/img/hero-barra.jpg';
-    root.innerHTML = `<div class="modal-bg" onclick="closeModal(event)">
-      <div class="modal modal-3d" onclick="event.stopPropagation()">
-        <div class="stage3d-real">
+    // Esta pantalla no comparte el modal-bg genérico del resto del sistema:
+    // es su propia escena a pantalla completa, como si te llevaran la mesa
+    // de madera hasta el celular — nada de párrafos técnicos, tres gestos
+    // cortos (girá / acercá / ponelo acá) y listo.
+    root.innerHTML = `<div class="stage3d-bg" onclick="closeModal(event)">
+      <div class="stage3d-scene" onclick="event.stopPropagation()">
+        <header class="stage3d-top">
+          <span class="mesa-stub sm">MESA<b>${String(state.clienteMesa||'').padStart(2,'0')}</b></span>
+          <button class="stage3d-close" onclick="closeModal()" aria-label="Cerrar">${ic('close')}</button>
+        </header>
+        <div class="stage3d-viewport">
           <model-viewer id="mv3d" src="${modelo.url}" camera-controls auto-rotate auto-rotate-delay="300"
             ar ar-modes="scene-viewer webxr quick-look" shadow-intensity="1" exposure="1"
             ${modelo.usdz?`ios-src="${modelo.usdz}"`:''}
             poster="${poster}" alt="Vista 3D ${modelo.esReal?'real':'genérica'} para ${escapeHtml(state.modal.nombre)}" loading="eager" reveal="auto"
             onload="modelo3dListo()" onerror="modelo3dError()"
-            style="width:100%;height:100%;background:transparent;"></model-viewer>
+            style="width:100%;height:100%;background:transparent;">
+            <button slot="ar-button" style="display:none"></button>
+          </model-viewer>
           <div id="fallback3d" class="fallback3d" hidden>
             <img src="${poster}" alt="Foto de ${escapeHtml(state.modal.nombre)}">
             <span>La foto real queda disponible aunque el modelo 3D no cargue.</span>
           </div>
+          <div class="stage3d-table"></div>
+          <h3 class="stage3d-name">${escapeHtml(state.modal.nombre)}</h3>
         </div>
-        <div class="body3d">
-          <span class="badge-preview ${modelo.esReal?'real':''}">${modelo.esReal?'Modelo 3D específico de este plato · demostración':'Prototipo técnico · modelo genérico, no representa este plato'}</span>
-          <h3>${escapeHtml(state.modal.nombre)}</h3>
-          ${modelo.esReal
-            ? `<p class="ar-steps">Giralo. Acercalo. <b>Ponelo en tu mesa.</b></p>`
-            : `<p>Activá la cámara, enfocá tu mesa, y el plato aparece ahí arriba en tamaño real — como si ya te lo hubieran servido. También podés arrastrar acá abajo para girarlo sin cámara.</p>`}
-          <button class="btn callout block" onclick="activarAR()">${ic('cube')} ${modelo.esReal?'Ponelo en tu mesa':'Ver en mi mesa con la cámara'}</button>
-          <div id="arStatus" class="ar-status" aria-live="polite">Cargando la experiencia 3D…</div>
+        <div class="stage3d-hints">
+          <span>${ic('refresh')} Giralo</span><span>${ic('zoom')} Acercalo</span><span>${ic('target')} Ponelo acá</span>
+        </div>
+        <div class="stage3d-footer">
+          <span class="badge-preview ${modelo.esReal?'real':''}">${modelo.esReal?'Modelo 3D específico de este plato · demostración':'Prototipo técnico, no es el plato real todavía'}</span>
+          <button class="btn callout block" onclick="activarAR()">${ic('target')} Ponelo en tu mesa</button>
+          <div id="arStatus" class="ar-status" aria-live="polite">Cargando…</div>
           <p class="ar-fineprint">${modelo.esReal
             ? `Modelo 3D específico de demostración, creado para validar esta experiencia — todavía no es un escaneo del plato real de Rabieta.${modelo.usdz?'':' Falta el archivo USDZ para que abra la cámara AR directamente en iPhone.'}`
             : `Esta prueba valida interacción y cámara, no la apariencia del plato. Para publicar <b>${state.modal.nombre}</b> faltan su modelo GLB real, su USDZ real y una medida de escala verificada. El modelo visible ahora es ${modelo.nombre}.`}</p>
-          <button class="btn dark block" onclick="closeModal()">Cerrar</button>
         </div>
       </div></div>`;
   } else if(state.modal.type==='cart'){
@@ -848,6 +903,15 @@ function abrirAsistenteDesdeSplash(){
   const anchor=document.getElementById('ai-assistant-anchor');
   if(anchor) anchor.scrollIntoView({behavior:'smooth',block:'start'});
 }
+// El concierge de la portada ("¿Qué pinta?") ofrece las mismas opciones
+// rápidas de una — sin el paso extra de abrir el panel y recién ahí elegir.
+function elegirDesdeConcierge(perfil){
+  state.clienteSplashDismissed=true;
+  state.clienteAsistenteOpen=true;
+  setPreferenciaAsistente(perfil);
+  const anchor=document.getElementById('ai-assistant-anchor');
+  if(anchor) anchor.scrollIntoView({behavior:'smooth',block:'start'});
+}
 function consultarAsistente(event){
   if(event) event.preventDefault();
   state.clientePreferencia=null; state.clienteAsistenteAgregado=null;
@@ -875,28 +939,34 @@ function splashHtml(mesa){
   // Si todavía no cargó el menú (o ningún destacado tiene foto todavía) no mostramos
   // un splash vacío ni marcamos como "visto" — probamos de nuevo en el próximo render.
   if(!destacado) return '';
+  const mesaStub = String(mesa.numero).padStart(2,'0');
   return `<div class="splash">
-    <div class="splash-top">
-      <span class="badge-mesa">MESA ${mesa.numero}</span>
-      <button class="splash-bell" onclick="llamarMozo()" title="Llamar al mozo">${ic('bell')}</button>
+    <div class="hero-shot">
+      ${destacado.imagen ? `<img class="hero-shot-img" src="${destacado.imagen}" alt="${destacado.nombre}">` : ''}
+      <div class="hero-shot-scrim"></div>
+      <div class="hero-shot-top">
+        <span class="mesa-stub">MESA<b>${mesaStub}</b></span>
+        <button class="hero-bell" onclick="llamarMozo()" title="Llamar al mozo">${ic('bell')}</button>
+      </div>
+      <button class="hero-3d-tag" onclick="openModal3d('${destacado.id}','${destacado.nombre.replace(/'/g,"\\'")}')" aria-label="Ver ${destacado.nombre.replace(/"/g,'&quot;')} en 3D sobre tu mesa">
+        ${markerArrowHtml()}<span>Ponelo en tu mesa</span>
+      </button>
+      <div class="hero-shot-bottom">
+        <span class="hero-kicker">RABIETA LOMITAS</span>
+        <h1 class="hero-title">LA POSTA<br>DEL DÍA</h1>
+        <div class="hero-dish">${destacado.nombre}</div>
+      </div>
     </div>
-    <div class="splash-copy">
-      <div class="splash-eyebrow">Antes de pedir</div>
-      <h1 class="splash-h1">Se come primero<br>con los ojos.</h1>
-      <p class="splash-sub">Mirá la foto real del plato y probá cómo funcionará la experiencia 3D, o pasá directo a la carta.</p>
+    <div class="concierge-block">
+      <button class="concierge-head" onclick="abrirAsistenteDesdeSplash()" aria-label="Preguntale a la IA de Rabieta qué pedir">
+        <span class="concierge-avatar">${mascotHtml()}</span>
+        <span class="concierge-q"><em>¿Qué pinta?</em><small>El vaso te tira una idea</small></span>
+      </button>
+      <div class="concierge-tags">
+        ${ASISTENTE_OPCIONES.map(op=>`<button class="tag-chip" onclick="elegirDesdeConcierge('${op.id}')">${op.label}</button>`).join('')}
+      </div>
     </div>
-    <div class="splash-arrow">
-      <svg viewBox="0 0 56 64"><path d="M28 4 C 16 18, 40 30, 26 44"/><path d="M16 40 L 26 52 L 36 41"/></svg>
-    </div>
-    <div class="splash-stage">
-      ${destacado.imagen ? `<img class="splash-stage-img" src="${destacado.imagen}" alt="${destacado.nombre}">` : ''}
-      <div class="splash-stage-scrim"></div>
-      <div class="splash-stage-tag">Plato destacado de hoy</div>
-      <div class="splash-stage-name">${destacado.nombre}</div>
-      <button class="btn callout splash-3d-btn" onclick="openModal3d('${destacado.id}','${destacado.nombre.replace(/'/g,"\\'")}')">${ic('cube')} Probar demo técnica 3D</button>
-    </div>
-    <button class="btn ghost splash-ai-btn" onclick="abrirAsistenteDesdeSplash()">${ic('help')} Preguntale a la IA de Rabieta qué pedir</button>
-    <button class="splash-skip" onclick="dismissSplash()">Ver toda la carta →</button>
+    <button class="splash-skip" onclick="dismissSplash()">Ver la carta completa ↓</button>
   </div>`;
 }
 function dismissSplash(){ state.clienteSplashDismissed = true; render(); }
@@ -1382,20 +1452,22 @@ function ticketHtml(m,destino){
   const itemsActivos = m.pedido.items.filter(it=>it.estado!=='entregado' && (!destino || itemDestino(it)===destino));
   const oldestTs = itemsActivos.reduce((oldest,it)=>Math.min(oldest,it.enviadoTs), state.clockMs);
   const edad = timeAgoSec(oldestTs);
-  const late = itemsActivos.some(it=>it.estado==='preparando') && edad>240;
+  const tiempo = ticketTimeState(edad);
   const demoTarget = state.presentacionCargada && STAFF_ALLOWED_VIEWS.includes('encargado') && m.numero===1;
-  return `<div class="ticket ${late?'late':''}${demoTarget?' demo-target':''}">
-    <div class="head"><span class="mesa">MESA ${m.numero}</span>
-      <span class="pill ${itemEstadoClass(m.pedido.estado)}">${estadoPedidoLabel(m)}</span></div>
+  // Herramienta de laburo, no una tarjeta de juego: el tiempo grande manda,
+  // el color marca solo el problema (verde/amarillo/rojo en el reloj), y el
+  // resto de la ficha se queda en blanco sobre negro, sin bordes de más.
+  return `<div class="ticket${demoTarget?' demo-target':''}">
+    <div class="ticket-head"><span class="ticket-mesa">MESA ${m.numero}</span>
+      <span class="ticket-clock ${tiempo.cls}">${fmtClock(edad)}</span></div>
     ${demoTarget?`<span class="demo-target-badge">Paso 2 · tocá esta tarjeta</span>`:''}
-    <div class="timer">hace ${fmtSec(edad)}</div>
     <ul>${itemsActivos.map(it=>`<li style="margin-bottom:10px;">
-      <div>${escapeHtml(it.nombre)} <span class="item-mod">${DESTINO_LABELS[itemDestino(it)]}</span>${it.notas?` <span class="item-mod">— "${escapeHtml(it.notas)}"</span>`:''}</div>
+      <div class="ticket-item-name">${escapeHtml(it.nombre)} <span class="item-mod">${DESTINO_LABELS[itemDestino(it)]}</span>${it.notas?` <span class="item-mod">— "${escapeHtml(it.notas)}"</span>`:''}</div>
       <div style="display:flex;align-items:center;gap:6px;margin-top:5px;">
         <span class="pill ${itemEstadoClass(it.estado)}">${PEDIDO_LABELS[it.estado]}</span>
         <span class="item-mod">${itemElapsedLabel(it)}</span>
-        ${it.estado==='enviado'?`<button class="btn primary sm" onclick="avanzarItem(${m.numero},${it.id})">Empezar a preparar</button>`:''}
-        ${it.estado==='preparando'?`<button class="btn good sm" onclick="avanzarItem(${m.numero},${it.id})">Marcar listo</button>`:''}
+        ${it.estado==='enviado'?`<button class="btn primary sm" onclick="avanzarItem(${m.numero},${it.id})">ARRANCAR</button>`:''}
+        ${it.estado==='preparando'?`<button class="btn good sm" onclick="avanzarItem(${m.numero},${it.id})">LISTO</button>`:''}
         ${it.estado==='listo'?`<span class="handoff-waiting">Esperando retiro de salón</span>`:''}
       </div></li>`).join('')}</ul></div>`;
 }
