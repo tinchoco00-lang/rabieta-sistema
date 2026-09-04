@@ -365,6 +365,26 @@
   .mesa-tile .estado{font-size:11.5px;color:var(--ink-2);margin:2px 0 8px;}
   .mesa-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;}
 
+  /* Mozo: feed en vivo, no dashboard de tarjetas. Mobile-first, una mano:
+     mesa + qué necesita + hace cuánto arriba, botón grande de acción abajo. */
+  .mozo-feed{display:flex;flex-direction:column;gap:10px;}
+  .mozo-event{border:1px solid var(--line-strong);border-left:4px solid var(--line-strong);border-radius:var(--radius);background:var(--bg-panel);padding:12px 14px;}
+  .mozo-event.sev-urgente{border-left-color:var(--critical);background:rgba(184,67,63,.08);}
+  .mozo-event.sev-importante{border-left-color:var(--gold);background:rgba(238,143,63,.05);}
+  .mozo-event-row{display:flex;flex-wrap:wrap;align-items:center;gap:10px 12px;}
+  .mozo-event-mesa{flex:0 0 auto;font-family:'IBM Plex Mono',monospace;font-size:10.5px;font-weight:700;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.1em;}
+  .mozo-event-mesa b{display:block;margin-top:1px;font-size:22px;font-weight:600;color:var(--ink-1);letter-spacing:.01em;}
+  .mozo-event-mid{flex:1 1 170px;min-width:0;display:flex;flex-direction:column;gap:2px;}
+  .mozo-event-label{font-family:'Fredoka',sans-serif;font-weight:700;font-size:16px;color:var(--ink-1);line-height:1.2;}
+  .mozo-event-msg{font-size:12px;color:var(--ink-2);}
+  .mozo-event-esc{display:flex;align-items:center;gap:4px;margin-top:2px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#ff9797;}
+  .mozo-event-time{flex:0 0 auto;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:16px;color:var(--ink-muted);}
+  .mozo-event.sev-urgente .mozo-event-time{color:#ff9797;}
+  .mozo-event-btn{flex:1 1 100%;margin-top:2px;min-height:46px;border:0;border-radius:9px;background:var(--bg-elevated-2);color:var(--ink-1);border:1px solid var(--line-strong);font-family:'Nunito';font-weight:800;font-size:13.5px;text-transform:uppercase;letter-spacing:.04em;cursor:pointer;}
+  .mozo-event.sev-urgente .mozo-event-btn{background:var(--critical);border-color:var(--critical);color:#fff;}
+  .mozo-event.sev-importante .mozo-event-btn{background:var(--gold);border-color:var(--gold);color:var(--ink-on-gold);}
+  @media(min-width:640px){.mozo-event-btn{flex:0 0 auto;min-width:120px;}}
+
   .alert-row{display:flex;justify-content:space-between;align-items:center;gap:10px;border:1px solid var(--line-strong);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg-panel);}
   .alert-row.escalado{background:rgba(224,85,85,0.08);}
   .alert-row .msg{font-size:13.5px;font-weight:700;}
@@ -594,6 +614,16 @@
   .attention-motivo small{display:block;margin-top:1px;font-size:10px;font-weight:700;color:var(--ink-muted);text-transform:none;}
   .attention-accion{flex:0 0 auto;font-size:10.5px;font-weight:800;color:var(--gold);text-align:right;white-space:nowrap;}
   @media(max-width:560px){.attention-row{flex-wrap:wrap;}.attention-accion{width:100%;text-align:left;padding-left:2px;}}
+
+  /* Dueño: el pulso del turno en 3 segundos, arriba de todo — sobrio, sin
+     humor ni color de más; el color se reserva para "qué mirar ahora". */
+  .dueno-hero-kicker,.dueno-watch-kicker{display:block;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-muted);margin:0 0 8px;}
+  .dueno-hero{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:22px;}
+  .dueno-hero-tile{background:var(--bg-panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;}
+  .dueno-hero-value{display:block;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:23px;color:var(--ink-1);}
+  .dueno-hero-value small{font-family:'Nunito';font-size:13px;font-weight:700;color:var(--ink-muted);}
+  .dueno-hero-label{display:block;margin-top:3px;font-size:11px;font-weight:700;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.03em;}
+  @media(max-width:820px){.dueno-hero{grid-template-columns:1fr 1fr}}
   .fallback3d{width:100%;height:100%;position:absolute;inset:0;display:flex;align-items:flex-end;justify-content:center;overflow:hidden;}
   .fallback3d[hidden]{display:none;}
   .fallback3d img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.72;}

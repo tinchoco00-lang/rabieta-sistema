@@ -65,6 +65,17 @@ const PEDIDO_ESTADOS = ['enviado','preparando','listo','entregado'];
 const DESTINO_LABELS = {cocina:'Cocina', barra:'Barra'};
 const PEDIDO_LABELS = {enviado:'Recibido', preparando:'En preparación', listo:'Listo', entregado:'Entregado'};
 const MOZOS = ['Martín','Sofía','Lucas'];
+// Umbrales de espera para priorizar Mozo/Dueño (cuándo algo pasa de "normal"
+// a "importante" a "urgente/rojo"). Son valores de demo elegidos para que la
+// priorización se vea razonable con datos sintéticos — NO son un SLA
+// confirmado por Rabieta. Antes de usarlos como objetivo operativo real hay
+// que validarlos con el local; mientras tanto viven acá, centralizados, en
+// vez de repetidos como números sueltos por el código.
+const DEMO_UMBRALES_ESPERA_SEG = {
+  atencionSeg: 60,     // por debajo de esto, ni figura como pendiente
+  urgenteSeg: 180,      // 3min+ sin resolver pasa a la prioridad más alta
+  cocinaLentaSeg: 480,  // 8min+ "preparando" se marca como cocina/barra lenta
+};
 // Las mismas opciones que un mozo te tira de memoria en la barra, no un
 // formulario de filtros — "Sin TACC" ya vive como chip aparte en la carta y
 // se sigue pudiendo escribir cualquier cosa en el buscador libre.
@@ -146,13 +157,16 @@ function escapeHtml(value){
 }
 function timeAgoSec(ts){ return Math.max(0, Math.floor(state.clockMs - ts)); }
 function fmtSec(s){ const m=Math.floor(s/60), r=s%60; return (m>0? m+'m ':'')+r+'s'; }
-// Reloj MM:SS para la comanda de Cocina: ahí el tiempo es lo primero que hay
-// que ver, en formato cronómetro (04:32), no la forma conversacional "hace
-// 4m 32s" que usa el resto del sistema.
+// Reloj MM:SS para vistas donde el tiempo tiene que leerse de un vistazo
+// como un cronómetro (00:42), no en la forma conversacional "hace 42s" que
+// usa el resto del sistema — la lista viva de Mozo y la comanda de Cocina.
 function fmtClock(s){ const m=Math.floor(s/60), r=s%60; return String(m).padStart(2,'0')+':'+String(r).padStart(2,'0'); }
 // Verde/amarillo/rojo según cuánto hace que el ítem más viejo de la comanda
 // está esperando — el color tiene que señalar el problema con precisión, no
-// pintar toda la tarjeta apenas algo tarda un poco.
+// pintar toda la tarjeta apenas algo tarda un poco. Mismo espíritu que
+// DEMO_UMBRALES_ESPERA_SEG (valores de demo, no un SLA confirmado por
+// Rabieta), con sus propios cortes porque miran la comanda completa, no un
+// ítem/alerta individual.
 function ticketTimeState(edadSeg){
   if(edadSeg>=360) return {cls:'crit', label:'Rojo'};
   if(edadSeg>=180) return {cls:'warn', label:'Amarillo'};
@@ -1495,16 +1509,63 @@ function colaEntregaHtml(mozo){
       <button class="btn good sm block" onclick="confirmarEntrega(${mesa.numero},${item.id})">Confirmar entrega en mesa</button>
     </article>`).join(''):'<div class="empty">No hay platos ni bebidas esperando retiro.</div>'}</div>`;
 }
+// Mozo se lee parado, con una mano, entre mesas — así que en vez del viejo
+// dashboard de tarjetas (tus alertas / cola de entrega / tus mesas, cada una
+// con su propio bloque) esto junta TODO lo que un mozo tiene que resolver
+// ahora en una sola lista viva, ordenada por urgencia y después por espera:
+// MESA + qué necesita + hace cuánto + un solo botón de acción. Las mesas
+// tranquilas (sin nada pendiente) ni aparecen — no hay nada que decidir ahí.
+function mozoEventos(mozo){
+  const eventos=[];
+  todasAlertasAbiertas().filter(x=>x.mesa.mozo===mozo).forEach(({mesa,alerta})=>{
+    const enDemo = state.presentacionCargada && STAFF_ALLOWED_VIEWS.includes('encargado');
+    eventos.push({
+      numero: mesa.numero,
+      label: alerta.label.toUpperCase(),
+      mensaje: alerta.mensaje,
+      tiempo: timeAgoSec(alerta.creadoTs),
+      severidad: alerta.prioridad==='urgente'?0:alerta.prioridad==='importante'?1:2,
+      escalado: alerta.escalado,
+      accion: alerta.estado==='recibido'?'ATENDER':'RESOLVER',
+      onclick: alerta.estado==='recibido'?`marcarAtencion(${alerta.id})`:`resolverAlerta(${alerta.id})`,
+      demoBadge: enDemo && mesa.numero===4 ? 'Paso 3 · resolvé este reclamo' : enDemo && mesa.numero===7 ? 'Paso 3 · atendé este llamado' : null,
+    });
+  });
+  itemsListosParaEntregar(mozo).forEach(({mesa,item})=>{
+    const enDemo = state.presentacionCargada && STAFF_ALLOWED_VIEWS.includes('encargado');
+    const tiempo = timeAgoSec((item.estadoTs&&item.estadoTs.listo)||item.enviadoTs);
+    eventos.push({
+      numero: mesa.numero,
+      label: 'PEDIDO LISTO',
+      mensaje: item.nombre,
+      tiempo,
+      severidad: tiempo>DEMO_UMBRALES_ESPERA_SEG.urgenteSeg?0:tiempo>DEMO_UMBRALES_ESPERA_SEG.atencionSeg?1:2,
+      escalado:false,
+      accion:'ENTREGAR',
+      onclick:`confirmarEntrega(${mesa.numero},${item.id})`,
+      demoBadge: enDemo && mesa.numero===1 ? 'Paso 3 · entregá este ítem' : null,
+    });
+  });
+  return eventos.sort((a,b)=>a.severidad-b.severidad || b.tiempo-a.tiempo);
+}
+const MOZO_SEV=['urgente','importante','normal'];
+function mozoEventoHtml(ev){
+  return `<div class="mozo-event sev-${MOZO_SEV[ev.severidad]}">
+    ${ev.demoBadge?`<span class="demo-target-badge">${ev.demoBadge}</span>`:''}
+    <div class="mozo-event-row">
+      <div class="mozo-event-mesa">MESA<b>${String(ev.numero).padStart(2,'0')}</b></div>
+      <div class="mozo-event-mid"><span class="mozo-event-label">${escapeHtml(ev.label)}</span>${ev.mensaje?`<span class="mozo-event-msg">${ev.accion==='ENTREGAR'?escapeHtml(ev.mensaje):'“'+escapeHtml(ev.mensaje)+'”'}</span>`:''}${ev.escalado?`<span class="mozo-event-esc">${ic('warning')} ESCALADO</span>`:''}</div>
+      <div class="mozo-event-time">${fmtClock(ev.tiempo)}</div>
+      <button class="mozo-event-btn" onclick="${ev.onclick}">${ev.accion}</button>
+    </div>
+  </div>`;
+}
 function viewMozo(){
-  const misMesas = state.mesas.filter(m=>m.mozo===state.mozoActivo && (m.ocupada || alertasAbiertas(m).length));
-  const misAlertas = todasAlertasAbiertas().filter(x=>x.mesa.mozo===state.mozoActivo);
+  const eventos = mozoEventos(state.mozoActivo);
+  const mesasActivas = state.mesas.filter(m=>m.mozo===state.mozoActivo && m.ocupada).length;
   return `<h1 class="view-title">MOZO</h1>
-    <p class="view-sub">Sos: <select onchange="cambiarMozo(this.value)">${MOZOS.map(m=>`<option ${m===state.mozoActivo?'selected':''}>${m}</option>`).join('')}</select></p>
-    <div class="section-h">${ic('bell')} Tus alertas (${misAlertas.length})</div>
-    ${misAlertas.length ? misAlertas.map(({mesa,alerta})=>alertRowHtml(mesa,alerta,true)).join('') : '<div class="empty">Sin alertas pendientes.</div>'}
-    ${colaEntregaHtml(state.mozoActivo)}
-    <div class="section-h">Tus mesas</div>
-    <div class="mesa-grid">${misMesas.length ? misMesas.map(m=>mesaTileHtml(m)).join('') : '<div class="empty">Sin mesas activas.</div>'}</div>`;
+    <p class="view-sub">Sos: <select onchange="cambiarMozo(this.value)">${MOZOS.map(m=>`<option ${m===state.mozoActivo?'selected':''}>${m}</option>`).join('')}</select> · ${mesasActivas} mesa(s) activa(s)</p>
+    <div class="mozo-feed">${eventos.length ? eventos.map(mozoEventoHtml).join('') : `<div class="empty">${ic('checkring')} Todo tranquilo en tus mesas — nada pendiente ahora mismo.</div>`}</div>`;
 }
 function cambiarMozo(v){ state.mozoActivo=v; render(); }
 function cuentaActionsHtml(m){
@@ -1519,13 +1580,6 @@ function cuentaActionsHtml(m){
 function confirmarPagoDemo(n){ send({type:'pago_demo_confirmar', mesa:n}); }
 function liberarMesa(n){
   if(confirm(`Esto cierra la cuenta demo y libera la Mesa ${n}. ¿Confirmás?`)) send({type:'mesa_liberar', mesa:n});
-}
-function mesaTileHtml(m){
-  const prio = prioridadMax(alertasAbiertas(m));
-  return `<div class="mesa-tile ${prio?'alerta-'+prio:''}"><div class="num">Mesa ${m.numero}</div>
-    <div class="estado">${m.pedido?estadoPedidoLabel(m):'Sentados'}${m.cuentaPedida?' · cuenta':''}</div>
-    ${alertasAbiertas(m).length?`<span class="pill ${prio}">${alertasAbiertas(m).length} alerta(s)</span>`:`<span class="pill ocupada">OK</span>`}
-    ${cuentaActionsHtml(m)}</div>`;
 }
 function alertRowHtml(mesa,a,acciones){
   const edad = timeAgoSec(a.creadoTs);
@@ -1651,6 +1705,19 @@ function resetTodo(){
 }
 
 /* ---------------- DUEÑO ---------------- */
+// "Ahora en Lomitas": el pulso del turno en 4 números grandes, arriba de
+// todo. Nada de compararlo contra ayer ni contra un objetivo — no hay datos
+// reales para eso todavía — así que son cifras planas, sin flechitas de
+// crecimiento ni color de más. El color se guarda para "qué mirar ahora".
+function duenoAhoraHtml(analytics, mesasOcupadas, preparacionPromedio, ticketPromedio){
+  return `<span class="dueno-hero-kicker">Ahora en Lomitas</span>
+    <div class="dueno-hero">
+      <div class="dueno-hero-tile"><span class="dueno-hero-value">${money(analytics.ventasDemo)}</span><span class="dueno-hero-label">Vendido</span></div>
+      <div class="dueno-hero-tile"><span class="dueno-hero-value">${mesasOcupadas}<small> / ${MESAS_TOTAL}</small></span><span class="dueno-hero-label">Mesas activas</span></div>
+      <div class="dueno-hero-tile"><span class="dueno-hero-value">${money(ticketPromedio)}</span><span class="dueno-hero-label">Ticket promedio</span></div>
+      <div class="dueno-hero-tile"><span class="dueno-hero-value">${fmtSec(preparacionPromedio)}</span><span class="dueno-hero-label">Tiempo promedio de cocina</span></div>
+    </div>`;
+}
 function viewDueno(){
   const mesasOcupadas = state.mesas.filter(m=>m.ocupada).length;
   const alertasN = todasAlertasAbiertas().length;
@@ -1680,17 +1747,23 @@ function viewDueno(){
     {label:'Pagadas',value:state.mesas.filter(m=>m.pago&&m.pago.estado==='confirmado').length,hint:'listas para liberar'},
   ];
   const cuello = flujo.reduce((mayor,paso)=>paso.value>mayor.value?paso:mayor,flujo[0]);
+  // "En 3 segundos": primero el pulso del turno (ahora en Lomitas), después
+  // qué requiere una decisión (qué mirar ahora) — recién debajo de eso viene
+  // el detalle/analytics acumulado, que ya estaba armado y sigue igual, solo
+  // que deja de ser lo primero que se ve al entrar.
   return `<h1 class="view-title">DUEÑO</h1>
     <p class="view-sub">Panel de negocio de esta sesión. ${productosPendientes} productos todavía sin precio confirmado.</p>
     ${state.presentacionCargada?`<div class="mock-banner">${ic('checkring')} Escenario sintético de presentación activo. Estas métricas no corresponden a clientes ni ventas reales.</div>`:''}
     <div class="mock-banner">${ic('clipboard')} Los cobros son confirmaciones de demostración acumuladas por este sistema. No hay caja, POS ni dinero real conectado.</div>
+    ${duenoAhoraHtml(analytics, mesasOcupadas, preparacionPromedio, ticketPromedio)}
+    ${mesasAtencionHtml()}
     <div class="section-h">Embudo operativo ahora</div>
     <div class="owner-funnel">
       ${flujo.map((paso,index)=>`<div class="funnel-step ${paso.value?'active':''}"><span class="funnel-index">${index+1}</span><div><b>${paso.label}</b><small>${paso.hint}</small></div><strong>${paso.value}</strong></div>`).join('')}
     </div>
-    ${mesasAtencionHtml()}
     <div class="owner-focus ${cuello.value?'attention':''}">${cuello.value?`${ic('warning')} Foco sugerido: <b>${cuello.label}</b> concentra ${cuello.value} unidad(es) ahora.`:`${ic('checkring')} No hay cuellos de botella activos en este momento.`}</div>
     ${actividadRecienteHtml(analytics)}
+    <div class="section-h">Detalle de la sesión</div>
     <div class="grid cols-4">
       ${statTile('Cobrado demo', money(analytics.ventasDemo), analytics.pagosConfirmados+' cuenta(s)', null)}
       ${statTile('Ticket promedio', money(ticketPromedio), 'cuentas confirmadas', null)}
@@ -1787,6 +1860,13 @@ function statTile(label,value,delta,deltaClass){
 // activas" en cuáles mesas son. Si una mesa tiene más de un problema, se
 // muestra solo el más grave para no saturar la lista.
 function mesasQueNecesitanAtencion(){
+  // Umbrales locales (duplicados a propósito de DEMO_UMBRALES_ESPERA_SEG,
+  // más arriba en este archivo): esta función corre aislada en un test que
+  // la extrae y la ejecuta en un contexto mínimo sin el resto del módulo, así
+  // que no puede depender de esa constante compartida. Mismos valores, misma
+  // advertencia — son un umbral de demo razonable, no un SLA confirmado por
+  // Rabieta.
+  const ATENCION_SEG=60, URGENTE_SEG=180, COCINA_LENTA_SEG=480;
   const candidatos = [];
   todasAlertasAbiertas().forEach(({mesa,alerta})=>{
     candidatos.push({
@@ -1799,10 +1879,10 @@ function mesasQueNecesitanAtencion(){
   });
   itemsListosParaEntregar(null).forEach(({mesa,item})=>{
     const espera = timeAgoSec(item.estadoTs.listo||item.enviadoTs);
-    if(espera<60) return;
+    if(espera<ATENCION_SEG) return;
     candidatos.push({
       numero: mesa.numero,
-      severidad: espera>180?0:1,
+      severidad: espera>URGENTE_SEG?0:1,
       espera,
       motivo: `${item.nombre} esperando en ${DESTINO_LABELS[itemDestino(item)]}`,
       accion: 'Retirar y llevar a la mesa',
@@ -1811,13 +1891,34 @@ function mesasQueNecesitanAtencion(){
   state.mesas.forEach(mesa=>{
     if(!mesa.cuentaPedida || mesa.pago) return;
     const espera = timeAgoSec(mesa.cuentaPedidaTs);
-    if(espera<60) return;
+    if(espera<ATENCION_SEG) return;
     candidatos.push({
       numero: mesa.numero,
-      severidad: espera>180?0:1,
+      severidad: espera>URGENTE_SEG?0:1,
       espera,
       motivo: 'Pidió la cuenta y todavía no se cobró',
       accion: 'Cobrar o confirmar el pago',
+    });
+  });
+  // Cocina/barra lenta: un ítem que sigue "preparando" mucho más de lo normal
+  // es exactamente el tipo de cosa que el dueño quiere ver sin tener que
+  // preguntarle a nadie. estadoTs.preparando no existe en mesas sin pedido
+  // real (p.ej. las que arma el test con datos mínimos), así que esto no
+  // agrega nada cuando no hay de dónde sacar la fecha.
+  state.mesas.forEach(mesa=>{
+    if(!mesa.pedido) return;
+    mesa.pedido.items.forEach(item=>{
+      if(item.estado!=='preparando') return;
+      const desde = item.estadoTs && Number.isFinite(item.estadoTs.preparando) ? item.estadoTs.preparando : item.enviadoTs;
+      const espera = timeAgoSec(desde);
+      if(espera<COCINA_LENTA_SEG) return;
+      candidatos.push({
+        numero: mesa.numero,
+        severidad: 0,
+        espera,
+        motivo: `${DESTINO_LABELS[itemDestino(item)]} lleva ${fmtSec(espera)} con ${item.nombre}`,
+        accion: 'Revisar con cocina/barra',
+      });
     });
   });
   const peorPorMesa = new Map();
@@ -1827,15 +1928,38 @@ function mesasQueNecesitanAtencion(){
   });
   return [...peorPorMesa.values()].sort((a,b)=>a.severidad-b.severidad || b.espera-a.espera).slice(0,6);
 }
+// Además de lo puntual por mesa, un sector entero acumulando pendientes es
+// otra cosa que el dueño quiere ver de entrada aunque ninguna mesa individual
+// esté todavía "urgente" — 3+ ítems sin salir de cocina o barra ya es una
+// señal de que ese sector se está quedando atrás.
+function sectoresConCola(){
+  const counts = {cocina:0, barra:0};
+  state.mesas.forEach(mesa=>{
+    if(!mesa.pedido) return;
+    mesa.pedido.items.forEach(item=>{
+      if(item.estado==='enviado' || item.estado==='preparando') counts[itemDestino(item)]++;
+    });
+  });
+  return ['cocina','barra'].filter(d=>counts[d]>=3).map(d=>({destino:d, label:DESTINO_LABELS[d], cantidad:counts[d]}));
+}
 function mesasAtencionHtml(){
   const items = mesasQueNecesitanAtencion();
+  const sectores = sectoresConCola();
   const SEVERIDAD_LABEL = ['urgente','importante','normal'];
-  return `<div class="section-h">${ic('warning')} Mesas que necesitan atención</div>
-    ${items.length ? `<div class="attention-list">${items.map(it=>`<div class="attention-row sev-${SEVERIDAD_LABEL[it.severidad]}">
-      <span class="pill ${SEVERIDAD_LABEL[it.severidad]}">Mesa ${it.numero}</span>
-      <span class="attention-motivo">${escapeHtml(it.motivo)}<small>hace ${fmtSec(it.espera)}</small></span>
-      <span class="attention-accion">${escapeHtml(it.accion)}</span>
-    </div>`).join('')}</div>`
+  return `<span class="dueno-watch-kicker">Qué mirar ahora</span>
+    <div class="section-h">${ic('warning')} Mesas que necesitan atención</div>
+    ${items.length || sectores.length ? `<div class="attention-list">
+      ${items.map(it=>`<div class="attention-row sev-${SEVERIDAD_LABEL[it.severidad]}">
+        <span class="pill ${SEVERIDAD_LABEL[it.severidad]}">Mesa ${it.numero}</span>
+        <span class="attention-motivo">${escapeHtml(it.motivo)}<small>hace ${fmtSec(it.espera)}</small></span>
+        <span class="attention-accion">${escapeHtml(it.accion)}</span>
+      </div>`).join('')}
+      ${sectores.map(s=>`<div class="attention-row sev-importante">
+        <span class="pill importante">${escapeHtml(s.label)}</span>
+        <span class="attention-motivo">${s.cantidad} ítem(s) pendientes en el sector<small>sin salir todavía</small></span>
+        <span class="attention-accion">Reforzar el sector</span>
+      </div>`).join('')}
+    </div>`
       : `<div class="empty">${ic('checkring')} Ninguna mesa necesita atención ahora mismo.</div>`}`;
 }
 const ACTIVIDAD_ICONOS = {pedido:'plate', alerta:'bell', cuenta:'receipt', pago:'checkring', resena:'chart', mesa:'refresh'};

@@ -611,11 +611,26 @@ async function seedPresentationScenario() {
   state.clockMs = 125;
   result = await run({ type: 'pedido_nuevo', mesa: 2, items: [{ productoId: 'burger-rabieta' }, { productoId: 'papas-rabieta' }] });
   if (!result.ok) return result;
+  const mesaDos = findMesa(2);
   state.clockMs = 130;
   // Mesa 7 (asignada a Sofía, igual que Mesa 1 y Mesa 4) llama al mozo y queda
   // sin resolver a propósito: el recorrido de presentación la atiende en vivo
   // en la estación de Salón, mostrando el paso "llamado al mozo" del flujo completo.
   result = await run({ type: 'llamar_mozo', mesa: 7 });
+  if (!result.ok) return result;
+  // Mesa 6 (Martín) manda un reclamo de prioridad "normal" que no es un
+  // llamado al mozo — una categoría de ayuda distinta, para que el turno
+  // sintético muestre las tres severidades de reclamo (urgente en Mesa 4,
+  // importante al pedir la cuenta, normal acá) al mismo tiempo.
+  state.clockMs = 150;
+  result = await run({ type: 'ayuda', mesa: 6, categoria: 'mozo', mensaje: 'Escenario: quieren pedir una ronda extra de pan' });
+  if (!result.ok) return result;
+  // Las papas de Mesa 2 arrancan a preparar y se quedan ahí a propósito: más
+  // abajo les corremos el reloj hacia atrás para simular una cocina lenta de
+  // verdad (11 min), algo que hoy Dueño no podía mostrar en el turno de
+  // demostración.
+  const papasMesaDosId = mesaDos.pedido.items.find(item => item.productoId === 'papas-rabieta').id;
+  result = await advance(2, papasMesaDosId, 'preparando');
   if (!result.ok) return result;
 
   state.clockMs = 145;
@@ -651,7 +666,30 @@ async function seedPresentationScenario() {
   });
   if (!result.ok) return result;
 
+  // Mesa 8: primera ronda servida y, más tarde, una segunda ronda recién
+  // llegada — el caso real que separa "un pedido" de "una mesa que sigue
+  // consumiendo". Va en una mesa aparte (no Mesa 1) para no tocar el
+  // recorrido guiado ni los conteos exactos que ya dependen de Mesa 1/2.
+  state.clockMs = 200;
+  result = await run({ type: 'pedido_nuevo', mesa: 8, items: [{ productoId: 'papas-rabieta' }] });
+  if (!result.ok) return result;
+  const mesaOchoItem = findMesa(8).pedido.items[0].id;
+  result = await advance(8, mesaOchoItem, 'preparando'); if (!result.ok) return result;
+  result = await advance(8, mesaOchoItem, 'listo'); if (!result.ok) return result;
+  result = await advance(8, mesaOchoItem, 'entregado'); if (!result.ok) return result;
+
+  state.clockMs = 290;
+  result = await run({ type: 'pedido_nuevo', mesa: 8, items: [{ productoId: 'burger-rabieta' }] });
+  if (!result.ok) return result;
+
   state.clockMs = 300;
+  // Cocina lenta de verdad: las papas de Mesa 2 llevan bastante más que el
+  // resto — les corremos el reloj de "empezó a preparar" para atrás en vez
+  // de esperar 11 minutos reales. Es un ajuste directo del estado sintético
+  // (no pasa por handleAction) porque no representa una acción real de
+  // cocina, sino la antigüedad que ya tendría a esta altura del turno.
+  const papasMesaDos = mesaDos.pedido.items.find(item => item.productoId === 'papas-rabieta');
+  if (papasMesaDos && papasMesaDos.estadoTs) papasMesaDos.estadoTs.preparando = -400;
   state.presentacionCargada = true;
   return actionOk();
 }
