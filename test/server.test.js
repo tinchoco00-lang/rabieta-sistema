@@ -1311,7 +1311,11 @@ test('el traspaso de ítems listos se confirma desde salón y no desde Cocina o 
   const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
   assert.match(source, /function itemsListosParaEntregar\(mozo\)/);
   assert.match(source, /item\.estado==='listo'/);
-  assert.match(source, /Confirmar entrega en mesa/);
+  // La cola unificada de salón (FASE 1) reemplazó la tarjeta propia "Listo
+  // para llevar" — el botón de entregar ahora vive en mozoEventos/mozoEventoHtml
+  // con la acción 'ENTREGAR', pero sigue siendo la única forma de marcar un
+  // ítem como entregado.
+  assert.match(source, /accion:'ENTREGAR'/);
   assert.match(source, /confirmarEntrega\(\$\{mesa\.numero\},\$\{item\.id\}\)/);
   assert.match(source, /Esperando retiro de salón/);
   assert.match(source, /statTile\('Esperando salón'/);
