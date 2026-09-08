@@ -154,7 +154,8 @@ function emptyAnalytics(){
     pagosConfirmados:0,ventasDemo:0,tiempoPagoTotalSec:0,itemsVendidos:0,
     itemsListos:0,itemsEntregados:0,tiempoPreparacionTotalSec:0,tiempoPaseTotalSec:0,
     destinos:{cocina:{itemsListos:0,tiempoPreparacionTotalSec:0},barra:{itemsListos:0,tiempoPreparacionTotalSec:0}},
-    autoservicio:{pedidosSinMozo:0,rondasAdicionalesSinMozo:0,consultasResueltas:0,cuentasSinMozo:0,pagosSinMozo:0,llamadosMozo:0,solicitudesFisicas:0,pagosConCaja:0},
+    autoservicio:{pedidosSinMozo:0,rondasAdicionalesSinMozo:0,consultasResueltas:0,cuentasSinMozo:0,pagosSinMozo:0,pagosConCaja:0,llamadosMozo:0,extrasFisicos:0,excepcionesReclamos:0},
+    cubiertosAcumulados:0,mesasLiberadas:0,mesasLiberadasSinCubiertos:0,
     productos:{},resenas:[],crmContactos:[],actividad:[]
   };
 }
@@ -165,7 +166,7 @@ let state = {
   role:null, clienteMesa:null, clienteCat:null, clienteFiltroSinTacc:false, clienteAccesoInvalido:false,
   clienteCart:[], clienteCartRecuperado:'', clienteExpand:null, clienteProductoDrafts:{}, clienteHelpOpen:false, clienteSplashDismissed:false,
   clienteAsistenteOpen:false, clientePreferencia:null, clienteAsistenteConsulta:'', clienteAsistenteRespuesta:null,
-  clienteAsistenteHistorial:[], clienteAsistenteConsultaMostrada:'',
+  clienteAsistenteHistorial:[], clienteAsistenteConsultaMostrada:'', clienteAsistenteConsultaPendiente:null,
   clienteAsistenteAgregado:null, clienteResenaError:'', clienteResenaEnviando:false,
   clienteRepetirAviso:'', clientePedidoEnviando:false, clientePedidoError:'',
   clienteServicioEnviando:false, clienteServicioError:'',
@@ -178,6 +179,7 @@ let state = {
   // dinero; nunca un valor precargado, así nunca se inventa un salario.
   costoHoraDemo:'',
   simuladorAbierto:false,
+  detalleAuditableAbierto:false,
   simulador:{cubiertos:100, mesas:22, turnoHoras:5, mozosTradicional:6, mozosConRabieta:3, costoHora:''},
 };
 
@@ -939,7 +941,28 @@ function registrarRespuestaAsistente(consulta, respuesta){
   // Cuenta para "consultas resueltas sin staff" en el panel de Dueño — no
   // manda el texto de la consulta ni la respuesta, solo avisa que el
   // asistente contestó algo sin que nadie de salón tuviera que intervenir.
-  if(state.role==='cliente' && state.clienteMesa) send({type:'consulta_registrar', mesa:state.clienteMesa});
+  // Una consulta lógica = un interactionId: nace acá, al iniciar esta
+  // consulta real, y se guarda como "pendiente" — enviarConsultaPendiente()
+  // lo reutiliza para ESTA misma consulta hasta que el servidor la confirme,
+  // en vez de generar uno nuevo por cada intento de envío (ver
+  // consulta_registrar en server.js, mismo criterio que solicitudId en ayuda).
+  if(state.role==='cliente' && state.clienteMesa){
+    state.clienteAsistenteConsultaPendiente = {interactionId: nuevoIdInteraccion()};
+    enviarConsultaPendiente();
+  }
+}
+// Envía (o reintenta) la consulta pendiente actual. Nunca mintea un id
+// nuevo acá: solo usa el que ya está guardado en clienteAsistenteConsultaPendiente.
+// Si mientras esperaba la respuesta el cliente ya hizo una consulta distinta
+// (pendiente cambió u otro interactionId quedó activo), esta respuesta llegó
+// tarde y no debe pisar el estado de la consulta nueva.
+async function enviarConsultaPendiente(){
+  const pendiente = state.clienteAsistenteConsultaPendiente;
+  if(!pendiente) return;
+  const response = await send({type:'consulta_registrar', mesa:state.clienteMesa, interactionId:pendiente.interactionId});
+  if(state.clienteAsistenteConsultaPendiente!==pendiente) return;
+  if(response && response.ok) state.clienteAsistenteConsultaPendiente = null;
+  // si falla, queda pendiente con el mismo interactionId para un reintento futuro
 }
 function probarEjemploAsistente(query){
   state.clientePreferencia=null; state.clienteAsistenteAgregado=null;
@@ -1423,6 +1446,14 @@ async function enviarResena(){
     render();
   }
 }
+// Identificador aleatorio genérico, compartido por solicitudes de ayuda y
+// consultas al asistente: cada envío real recibe uno nuevo, y si ese mismo
+// envío se reintenta (recarga, retry de red, doble tap), reusar el id hace
+// que el servidor lo cuente una sola vez en vez de inflar el contador.
+function nuevoIdInteraccion(){
+  if(globalThis.crypto && typeof globalThis.crypto.randomUUID==='function') return globalThis.crypto.randomUUID();
+  return 'interaccion-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);
+}
 function nuevaSolicitudAyudaId(){
   if(globalThis.crypto && typeof globalThis.crypto.randomUUID==='function') return globalThis.crypto.randomUUID();
   return 'ayuda-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);
@@ -1612,12 +1643,19 @@ function estadoSaturacionSalon(){
   const saturada = tareasPorMozo>2 || peorEspera>DEMO_UMBRALES_ESPERA_SEG.urgenteSeg;
   return {saturada, tareas:eventos.length, tareasPorMozo, peorEspera};
 }
+// Texto honesto para el aviso de saturación: nunca "está saturada"/"absorbe
+// la operación" a secas, como si fuera una medición real de capacidad. Es un
+// umbral de demo (DEMO_UMBRALES_ESPERA_SEG) configurable, no un SLA — hasta
+// no medirlo en un piloto real, siempre queda rotulado como señal/simulación.
+function senalCargaSalonHtml(saturada){
+  return `${saturada?ic('warning'):ic('checkring')} <b>SEÑAL DE CARGA — SIMULACIÓN:</b> ${saturada?'Carga alta según criterio demo':'Carga controlada según criterio demo'} (${saturada?'hay tareas esperando más de lo razonable':'con esta dotación todavía estamos absorbiendo la operación'}).`;
+}
 function colaTrabajoSalonHtml(mozoFiltro){
   const eventos = mozoEventos(mozoFiltro);
   const agregada = !mozoFiltro;
   const {saturada} = agregada ? estadoSaturacionSalon() : {saturada:false};
   return `<div class="section-h">${ic('plate')} Cola de trabajo del salón (${eventos.length})</div>
-    ${agregada && eventos.length ? `<div class="cola-estado ${saturada?'saturada':'ok'}">${saturada?ic('warning'):ic('checkring')} ${saturada?'Esta dotación ya está saturada: hay tareas esperando más de lo razonable.':'Con esta dotación todavía estamos absorbiendo la operación.'}</div>` : ''}
+    ${agregada && eventos.length ? `<div class="cola-estado ${saturada?'saturada':'ok'}">${senalCargaSalonHtml(saturada)}</div>` : ''}
     <div class="mozo-feed">${eventos.length ? eventos.map(ev=>mozoEventoHtml(ev,agregada)).join('') : `<div class="empty">${ic('checkring')} Nada pendiente para el salón ahora mismo.</div>`}</div>`;
 }
 function cuentaActionsHtml(m){
@@ -1646,6 +1684,19 @@ function alertRowHtml(mesa,a,acciones){
 }
 function marcarAtencion(ai){ send({type:'alerta_atender', alertaId:ai}); }
 function resolverAlerta(ai){ send({type:'alerta_resolver', alertaId:ai}); }
+// Cubiertos reales (personas sentadas), cargados por Encargado al sentar la
+// mesa — nunca calculados a partir de ítems pedidos. onchange (no oninput):
+// el panel se vuelve a pintar entero con cada tick del reloj (cada 1s), así
+// que confirmar recién al salir del campo evita perder el foco a mitad de tecla.
+function actualizarCubiertosMesa(numero,valor){
+  const texto=String(valor==null?'':valor).trim();
+  if(texto===''){ send({type:'mesa_cubiertos_actualizar', mesa:numero, cubiertos:null}); return; }
+  const n=Number(texto);
+  // 1-50: 0 no es un valor real de cubiertos cargados — "sin cargar" ya es
+  // null (campo vacío). Ver mesa_cubiertos_actualizar en server.js.
+  if(!Number.isInteger(n) || n<1 || n>50) return;
+  send({type:'mesa_cubiertos_actualizar', mesa:numero, cubiertos:n});
+}
 
 /* ---------------- ENCARGADO ---------------- */
 function viewEncargado(){
@@ -1667,6 +1718,7 @@ function viewEncargado(){
       return `<div class="mesa-tile ${prio?'alerta-'+prio:''}"><div class="num">Mesa ${m.numero}</div>
         <div class="estado">${m.ocupada?(m.pedido?estadoPedidoLabel(m):'Sentados'):'Libre'} · ${m.mozo}</div>
         ${alertasAbiertas(m).length?`<span class="pill ${prio}">${alertasAbiertas(m).length} alerta(s)</span>`:`<span class="pill ${m.ocupada?'ocupada':'libre'}">${m.ocupada?'Ocupada':'Libre'}</span>`}
+        <label class="mesa-cubiertos"><span>Cubiertos reales</span><input type="number" inputmode="numeric" min="1" max="50" placeholder="Sin cargar" value="${Number.isInteger(m.cubiertos)?m.cubiertos:''}" onchange="actualizarCubiertosMesa(${m.numero},this.value)"></label>
         ${cuentaActionsHtml(m)}</div>`;
     }).join('')}</div>
     <div class="section-h">Administración</div>
@@ -1765,11 +1817,33 @@ function resetTodo(){
 // instrumentado en cada acción real en server.js — nunca inventado acá. Lo
 // que sí es una estimación (minutos, horas-persona, costo) usa
 // DEMO_MINUTOS_SUPUESTOS y se muestra siempre rotulado como supuesto.
+// Cubiertos REALES de la sesión — nunca un proxy de itemsVendidos (ítems
+// vendidos != personas). Es la suma de: cubiertos ya acumulados de mesas que
+// se liberaron (analytics.cubiertosAcumulados, cargado por Encargado al
+// sentarlas) MÁS los cubiertos cargados en las mesas todavía ocupadas ahora
+// mismo, para que el número sea correcto en vivo y no solo al cerrar mesas.
+function cubiertosTotalesSesion(analytics){
+  const acumulados = (analytics && Number.isFinite(analytics.cubiertosAcumulados)) ? analytics.cubiertosAcumulados : 0;
+  // Solo mesas REALMENTE ocupadas suman como "activas": un cubiertos cargado
+  // por error (o que quedó pegado) en una mesa libre no es gente sentada
+  // ahora mismo y no debe inflar el número comercial en vivo.
+  const enMesasActivas = state.mesas.reduce((suma,m)=>suma+(m.ocupada && Number.isInteger(m.cubiertos)?m.cubiertos:0),0);
+  return acumulados+enMesasActivas;
+}
+// TAXONOMÍA ÚNICA de "momentos de servicio" (ver la misma partición en
+// server.js, autoservicio de seedAnalytics): estos 8 contadores sin
+// superposición son el universo completo. resueltosPorRabieta+tareasFisicas+
+// intervencionesHumanas === momentosTotales siempre, por construcción — así
+// el % de autoservicio se calcula sobre un solo universo consistente, nunca
+// mezclando conjuntos distintos como pasaba antes (pagosConCaja entraba en
+// intervencionesHumanas pero no en el total contra el que se dividía).
 function metricasAutoservicio(analytics){
   const a = analytics.autoservicio || emptyAnalytics().autoservicio;
-  const interaccionesCliente = a.pedidosSinMozo + a.consultasResueltas + a.cuentasSinMozo + a.pagosSinMozo + a.llamadosMozo + a.solicitudesFisicas;
-  const intervencionesHumanas = a.llamadosMozo + a.solicitudesFisicas + a.pagosConCaja;
-  const autoservicioPct = interaccionesCliente ? Math.round((interaccionesCliente-intervencionesHumanas)/interaccionesCliente*100) : 0;
+  const momentosTotales = a.pedidosSinMozo + a.consultasResueltas + a.cuentasSinMozo + a.pagosSinMozo + a.pagosConCaja + a.llamadosMozo + a.extrasFisicos + a.excepcionesReclamos;
+  const resueltosPorRabieta = a.pedidosSinMozo + a.consultasResueltas + a.cuentasSinMozo + a.pagosSinMozo;
+  const tareasFisicas = a.extrasFisicos;
+  const intervencionesHumanas = a.llamadosMozo + a.excepcionesReclamos + a.pagosConCaja;
+  const autoservicioPct = momentosTotales ? Math.round(resueltosPorRabieta/momentosTotales*100) : 0;
   const primerPedido = Math.max(0, a.pedidosSinMozo - a.rondasAdicionalesSinMozo);
   const minutosEvitados = primerPedido*DEMO_MINUTOS_SUPUESTOS.tomarPedido
     + a.rondasAdicionalesSinMozo*DEMO_MINUTOS_SUPUESTOS.segundaRonda
@@ -1777,9 +1851,9 @@ function metricasAutoservicio(analytics){
     + a.cuentasSinMozo*DEMO_MINUTOS_SUPUESTOS.pedirCuenta
     + a.pagosSinMozo*DEMO_MINUTOS_SUPUESTOS.cobrar;
   const horasPersonaLiberadas = minutosEvitados/60;
-  const cubiertosAprox = analytics.itemsVendidos||0;
-  const horasPersonaPor100Cubiertos = cubiertosAprox ? (horasPersonaLiberadas/cubiertosAprox*100) : 0;
-  return {a, interaccionesCliente, intervencionesHumanas, autoservicioPct, minutosEvitados, horasPersonaLiberadas, cubiertosAprox, horasPersonaPor100Cubiertos};
+  const cubiertosReales = cubiertosTotalesSesion(analytics);
+  const horasPersonaPor100Cubiertos = cubiertosReales ? (horasPersonaLiberadas/cubiertosReales*100) : 0;
+  return {a, momentosTotales, resueltosPorRabieta, tareasFisicas, intervencionesHumanas, autoservicioPct, minutosEvitados, horasPersonaLiberadas, cubiertosReales, horasPersonaPor100Cubiertos};
 }
 function actualizarCostoHoraDemo(value){ state.costoHoraDemo=value; render(); }
 function toggleSimulador(){ state.simuladorAbierto=!state.simuladorAbierto; render(); }
@@ -1842,6 +1916,51 @@ function simuladorDotacionHtml(){
     <div class="simulador-resultado">${ic('chart')} Capacidad estimada con la dotación reducida: <b>${r.capacidadEstimada} cubiertos</b>, manteniendo la misma proporción mesas/mozo de hoy.</div>
   </div>`;
 }
+// FASE 9 — vista ejecutiva: lo primero que ve Dueño, pensado para
+// entenderse en 10 segundos. Cada número sale 1:1 de metricasAutoservicio
+// (ningún cálculo nuevo acá) — ver detalleAuditableHtml para el desglose
+// completo por evento, y la nota de "potencialmente" porque el ahorro de
+// tiempo/costo depende de DEMO_MINUTOS_SUPUESTOS, no de una medición real.
+function vistaEjecutivaHtml(m){
+  const costoHora = Number(state.costoHoraDemo);
+  const costoEvitado = Number.isFinite(costoHora) && costoHora>0 ? m.horasPersonaLiberadas*costoHora : null;
+  return `<div class="vista-ejecutiva">
+    <div class="vista-ejecutiva-kicker">${ic('clipboard')} Este turno, de un vistazo</div>
+    <p class="ahorro-tesis">Antes, el mozo hacía todo. Ahora Rabieta resuelve lo digital solo y el mozo se queda con lo físico: entregar, llevar extras y resolver excepciones.</p>
+    <div class="vista-ejecutiva-total"><b>${m.momentosTotales}</b><span>momentos de servicio</span></div>
+    <div class="vista-ejecutiva-desglose">
+      <div class="vej-item vej-good"><b>${m.resueltosPorRabieta}</b><span>resueltos completamente por Rabieta</span></div>
+      <div class="vej-item vej-warn"><b>${m.tareasFisicas}</b><span>tareas físicas</span></div>
+      <div class="vej-item vej-alert"><b>${m.intervencionesHumanas}</b><span>intervenciones humanas / excepciones</span></div>
+    </div>
+    <div class="vista-ejecutiva-metrics">
+      <div class="vej-metric"><span>Autoservicio</span><b>${m.momentosTotales?m.autoservicioPct+'%':'—'}</b></div>
+      <div class="vej-metric"><span>Tiempo humano potencialmente liberado</span><b>${m.horasPersonaLiberadas.toFixed(1)} h</b></div>
+      <div class="vej-metric"><span>Costo potencialmente evitado</span><b>${costoEvitado!==null?money(Math.round(costoEvitado)):'sin costo/hora'}</b></div>
+    </div>
+  </div>`;
+}
+function toggleDetalleAuditable(){ state.detalleAuditableAbierto=!state.detalleAuditableAbierto; render(); }
+// Auditable: cada fila es un contador crudo de analytics.autoservicio, sin
+// ninguna cuenta nueva — el dueño tiene que poder creerle al número, y para
+// eso tiene que poder ver exactamente de qué eventos sale.
+function detalleAuditableHtml(m){
+  const filas = [
+    ['Pedidos sin mozo', m.a.pedidosSinMozo],
+    ['Segundas rondas sin mozo', m.a.rondasAdicionalesSinMozo],
+    ['Consultas resueltas', m.a.consultasResueltas],
+    ['Cuentas autónomas', m.a.cuentasSinMozo],
+    ['Pagos autónomos', m.a.pagosSinMozo],
+    ['Extras físicos solicitados', m.a.extrasFisicos],
+    ['Llamados al mozo', m.a.llamadosMozo],
+    ['Pagos con caja', m.a.pagosConCaja],
+    ['Excepciones/reclamos', m.a.excepcionesReclamos],
+  ];
+  return `<div class="card detalle-auditable">
+    <div class="detalle-auditable-kicker">${ic('clipboard')} Cada número sale de un evento real registrado en esta sesión — nada estimado en esta lista.</div>
+    <div class="detalle-auditable-grid">${filas.map(([label,valor])=>`<div class="detalle-fila"><span>${escapeHtml(label)}</span><b>${valor}</b></div>`).join('')}</div>
+  </div>`;
+}
 function ahorroOperativoHtml(analytics, mesasOcupadas){
   const m = metricasAutoservicio(analytics);
   const costoHora = Number(state.costoHoraDemo);
@@ -1852,10 +1971,11 @@ function ahorroOperativoHtml(analytics, mesasOcupadas){
   const pedidosPorHoraSistema = m.a.pedidosSinMozo/horasTurno;
   const {saturada} = estadoSaturacionSalon();
   return `<span class="dueno-hero-kicker">Ahorro operativo</span>
+    ${vistaEjecutivaHtml(m)}
     <p class="ahorro-tesis">Mismo volumen o más, con menos carga humana. Esto es lo que el cliente resolvió solo en esta sesión, y lo que todavía necesitó una persona.</p>
     <div class="ahorro-norte">
       <span class="ahorro-norte-value">${m.horasPersonaPor100Cubiertos.toFixed(2)}<small>h</small></span>
-      <span class="ahorro-norte-label">Horas-persona ahorradas por 100 cubiertos<small>estimado — ver supuestos abajo</small></span>
+      <span class="ahorro-norte-label">Horas-persona ahorradas por 100 cubiertos reales<small>${m.cubiertosReales} cubierto(s) cargado(s) esta sesión — nunca ítems vendidos</small></span>
     </div>
     <div class="grid cols-4 ahorro-grid">
       ${statTile('Pedidos sin mozo', String(m.a.pedidosSinMozo), 'incluye rondas adicionales', null)}
@@ -1865,9 +1985,9 @@ function ahorroOperativoHtml(analytics, mesasOcupadas){
     </div>
     <div class="grid cols-4 ahorro-grid" style="margin-top:10px;">
       ${statTile('Pagos sin mozo/caja', String(m.a.pagosSinMozo), null, null)}
-      ${statTile('Interacciones cliente', String(m.interaccionesCliente), 'total esta sesión', null)}
-      ${statTile('Intervenciones humanas', String(m.intervencionesHumanas), 'llamados + reclamos/extras + cobro con caja', null)}
-      ${statTile('% autoservicio', m.interaccionesCliente?m.autoservicioPct+'%':'—', null, null)}
+      ${statTile('Momentos de servicio', String(m.momentosTotales), 'total esta sesión', null)}
+      ${statTile('Intervenciones humanas', String(m.intervencionesHumanas), 'llamados + excepciones + cobro con caja', null)}
+      ${statTile('% autoservicio', m.momentosTotales?m.autoservicioPct+'%':'—', null, null)}
     </div>
     <div class="grid cols-3 ahorro-grid" style="margin-top:10px;">
       ${statTile('Intervenciones por mesa', mesasOcupadas?intervencionesPorMesa.toFixed(1):'—', null, null)}
@@ -1885,9 +2005,13 @@ function ahorroOperativoHtml(analytics, mesasOcupadas){
         </div>
       </div>
     </div>
-    <div class="cola-estado ${saturada?'saturada':'ok'}" style="margin-top:10px;">${saturada?ic('warning'):ic('checkring')} ${saturada?'Con la dotación actual, el salón ya está saturado.':'Con la dotación actual, el salón todavía absorbe la operación.'}</div>
-    <button class="btn dark sm" style="margin-top:10px;" onclick="toggleSimulador()">${ic('chart')} ${state.simuladorAbierto?'Cerrar simulador de dotación':'Simular operación con otra dotación'}</button>
-    ${state.simuladorAbierto?simuladorDotacionHtml():''}`;
+    <div class="cola-estado ${saturada?'saturada':'ok'}" style="margin-top:10px;">${senalCargaSalonHtml(saturada)}</div>
+    <div class="ahorro-toggles" style="margin-top:10px;">
+      <button class="btn dark sm" onclick="toggleSimulador()">${ic('chart')} ${state.simuladorAbierto?'Cerrar simulador de dotación':'Simular operación con otra dotación'}</button>
+      <button class="btn ghost sm" onclick="toggleDetalleAuditable()">${ic('clipboard')} ${state.detalleAuditableAbierto?'Cerrar detalle auditable':'Ver detalle auditable'}</button>
+    </div>
+    ${state.simuladorAbierto?simuladorDotacionHtml():''}
+    ${state.detalleAuditableAbierto?detalleAuditableHtml(m):''}`;
 }
 function duenoAhoraHtml(analytics, mesasOcupadas, preparacionPromedio, ticketPromedio){
   return `<span class="dueno-hero-kicker">Ahora en Lomitas</span>

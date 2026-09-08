@@ -113,6 +113,18 @@ async function loginAs(role) {
   return response.json();
 }
 
+// El login de staff tiene rate limit por IP (ver STAFF_LOGIN_RATE_LIMIT_MAX);
+// todos los tests de este archivo comparten la misma IP de loopback contra
+// baseUrl. Los tokens duran horas (STAFF_TOKEN_TTL_MS), así que varios tests
+// que solo necesitan "un token de tal rol" pueden compartir uno en vez de
+// pedir uno nuevo cada vez — evita acumular logins innecesarios contra el
+// límite compartido con el resto de la suite.
+const cachedRoleTokens = {};
+async function loginAsCached(role) {
+  if (!cachedRoleTokens[role]) cachedRoleTokens[role] = await loginAs(role);
+  return cachedRoleTokens[role];
+}
+
 function tokenForMesa(secret, mesa) {
   return crypto.createHmac('sha256', secret).update(`mesa:${mesa}`).digest('hex');
 }
@@ -176,7 +188,14 @@ before(async () => {
   const port = await reservePort();
   baseUrl = `http://127.0.0.1:${port}`;
   serverProcess = spawn(process.execPath, ['server.js'], {
-    cwd: root, env: { ...process.env, DATABASE_URL: '', PORT: String(port), STAFF_PIN: testPin }, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: root,
+    // STAFF_LOGIN_RATE_LIMIT_MAX subido acá (default de producción: 20/min):
+    // todos los tests de este archivo comparten la misma IP de loopback contra
+    // este único server, y la propia suite ya hace decenas de logins legítimos
+    // — el rate limit real se sigue probando aparte, contra su propio server
+    // aislado, en 'rate limiting devuelve 429...'.
+    env: { ...process.env, DATABASE_URL: '', PORT: String(port), STAFF_PIN: testPin, STAFF_LOGIN_RATE_LIMIT_MAX: '200' },
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
   serverProcess.stdout.on('data', chunk => { serverOutput += chunk; });
   serverProcess.stderr.on('data', chunk => { serverOutput += chunk; });
@@ -1075,6 +1094,347 @@ test('reintentar una solicitud de ayuda no duplica la alerta de salón', async (
   assert.equal(mesa.alertas.length, 1);
   assert.equal(mesa.alertas[0].solicitudId, solicitud.solicitudId);
   assert.equal((await action({ ...solicitud, solicitudId: 'espacio no valido' })).status, 400);
+});
+
+test('cubiertos reales: solo Encargado los carga, quedan acotados 1-50 (0 no cuenta como cargado) y se acumulan al liberar la mesa dejando registro de las que se liberaron sin cargarlos', async () => {
+  await resetState();
+  const mozo = await loginAsCached('mozo');
+  const cocina = await loginAsCached('cocina');
+  const dueno = await loginAsCached('dueno');
+  const encargado = await loginAsCached('encargado');
+
+  // Solo Encargado puede tocar el número de personas reales de una mesa.
+  assert.equal((await action({ type: 'mesa_cubiertos_actualizar', mesa: 1, cubiertos: 2 })).status, 401);
+  assert.equal((await action({ type: 'mesa_cubiertos_actualizar', mesa: 1, cubiertos: 2 }, mozo.token)).status, 403);
+  assert.equal((await action({ type: 'mesa_cubiertos_actualizar', mesa: 1, cubiertos: 2 }, cocina.token)).status, 403);
+  assert.equal((await action({ type: 'mesa_cubiertos_actualizar', mesa: 1, cubiertos: 2 }, dueno.token)).status, 403);
+
+  // Validación: entero, 1-50, nunca un decimal ni un string. 0 queda
+  // explícitamente afuera: "cargado" implica al menos una persona sentada;
+  // "sin cargar todavía" ya lo representa null, no 0.
+  assert.equal((await action({ type: 'mesa_cubiertos_actualizar', mesa: 1, cubiertos: 0 }, encargado.token)).status, 400);
+  assert.equal((await action({ type: 'mesa_cubiertos_actualizar', mesa: 1, cubiertos: -1 }, encargado.token)).status, 400);
+  assert.equal((await action({ type: 'mesa_cubiertos_actualizar', mesa: 1, cubiertos: 51 }, encargado.token)).status, 400);
+  assert.equal((await action({ type: 'mesa_cubiertos_actualizar', mesa: 1, cubiertos: 2.5 }, encargado.token)).status, 400);
+  assert.equal((await action({ type: 'mesa_cubiertos_actualizar', mesa: 1, cubiertos: '3' }, encargado.token)).status, 400);
+  assert.equal((await getState()).mesas[0].cubiertos, null);
+
+  assert.equal((await action({ type: 'mesa_cubiertos_actualizar', mesa: 1, cubiertos: 1 }, encargado.token)).status, 200);
+  assert.equal((await getState()).mesas[0].cubiertos, 1);
+  assert.equal((await action({ type: 'mesa_cubiertos_actualizar', mesa: 1, cubiertos: 50 }, encargado.token)).status, 200);
+  assert.equal((await getState()).mesas[0].cubiertos, 50);
+  assert.equal((await action({ type: 'mesa_cubiertos_actualizar', mesa: 1, cubiertos: null }, encargado.token)).status, 200);
+  assert.equal((await getState()).mesas[0].cubiertos, null);
+
+  // Mesa 1: se cargan cubiertos reales, se vende y se libera con ellos puestos.
+  assert.equal((await action({ type: 'mesa_cubiertos_actualizar', mesa: 1, cubiertos: 3 }, encargado.token)).status, 200);
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'hummus-rabieta' }] })).status, 200);
+  assert.equal((await action({ type: 'pedir_cuenta', mesa: 1 })).status, 200);
+  assert.equal((await action({ type: 'pago_demo_confirmar', mesa: 1 }, encargado.token)).status, 200);
+  assert.equal((await action({ type: 'mesa_liberar', mesa: 1 }, encargado.token)).status, 200);
+
+  let analytics = (await getStaffState()).analytics;
+  assert.equal(analytics.cubiertosAcumulados, 3);
+  assert.equal(analytics.mesasLiberadas, 1);
+  assert.equal(analytics.mesasLiberadasSinCubiertos, 0);
+  assert.equal((await getState()).mesas[0].cubiertos, null); // se limpia al liberar, para la próxima mesa
+
+  // Mesa 2: se vende SIN cargar cubiertos — no debe sumar 0 en silencio: tiene
+  // que quedar visible como una mesa liberada sin cubiertos registrados.
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 2, items: [{ productoId: 'hummus-rabieta' }] })).status, 200);
+  assert.equal((await action({ type: 'pedir_cuenta', mesa: 2 })).status, 200);
+  assert.equal((await action({ type: 'pago_demo_confirmar', mesa: 2 }, encargado.token)).status, 200);
+  assert.equal((await action({ type: 'mesa_liberar', mesa: 2 }, encargado.token)).status, 200);
+
+  analytics = (await getStaffState()).analytics;
+  assert.equal(analytics.cubiertosAcumulados, 3);
+  assert.equal(analytics.mesasLiberadas, 2);
+  assert.equal(analytics.mesasLiberadasSinCubiertos, 1);
+  await resetState();
+});
+
+test('cubiertosTotalesSesion (public/app.js): una mesa libre con cubiertos cargados por error no cuenta, y liberar la mesa no duplica lo acumulado', async () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  const cubiertosSource = source.match(/function cubiertosTotalesSesion\(analytics\)\{[\s\S]*?\r?\n\}\r?\n/)[0];
+  assert.ok(cubiertosSource, 'debe existir cubiertosTotalesSesion');
+  const ctx = { state: { mesas: [] } };
+  vm.createContext(ctx);
+  vm.runInContext(cubiertosSource, ctx);
+  const cubiertosTotalesSesion = vm.runInContext('cubiertosTotalesSesion', ctx);
+  // Alimenta la función pura del cliente con el estado REAL que devuelve el
+  // servidor en cada paso — así el test verifica el número que vería Dueño,
+  // no solo un fixture sintético.
+  const calcular = async () => {
+    const staffState = await getStaffState();
+    ctx.state.mesas = staffState.mesas;
+    return cubiertosTotalesSesion(staffState.analytics);
+  };
+
+  await resetState();
+  const encargado = await loginAsCached('encargado');
+
+  // A) Mesa libre (nadie pidió nada todavía) con cubiertos=4 cargados por
+  // error → NO debe sumar en el total en vivo.
+  assert.equal((await action({ type: 'mesa_cubiertos_actualizar', mesa: 5, cubiertos: 4 }, encargado.token)).status, 200);
+  assert.equal((await getStaffState()).mesas[4].ocupada, false);
+  assert.equal(await calcular(), 0);
+
+  // B) La misma mesa, ahora realmente ocupada (primer pedido) → sus 4
+  // cubiertos sí cuentan.
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 5, items: [{ productoId: 'hummus-rabieta' }] })).status, 200);
+  assert.equal((await getStaffState()).mesas[4].ocupada, true);
+  assert.equal(await calcular(), 4);
+
+  // C) Al liberarla, esos 4 pasan a cubiertosAcumulados UNA sola vez: la
+  // mesa deja de sumar como activa (cubiertos vuelve a null) y el total
+  // sigue siendo 4, no 8.
+  assert.equal((await action({ type: 'pedir_cuenta', mesa: 5 })).status, 200);
+  assert.equal((await action({ type: 'pago_demo_confirmar', mesa: 5 }, encargado.token)).status, 200);
+  assert.equal((await action({ type: 'mesa_liberar', mesa: 5 }, encargado.token)).status, 200);
+  let staffState = await getStaffState();
+  assert.equal(staffState.analytics.cubiertosAcumulados, 4);
+  assert.equal(staffState.mesas[4].cubiertos, null);
+  assert.equal(staffState.mesas[4].ocupada, false);
+  assert.equal(await calcular(), 4);
+
+  // D) Repetir la liberación (o cualquier reintento) sobre la misma mesa no
+  // puede duplicar la acumulación: sin un pago nuevo que confirmar, el
+  // servidor la rechaza (409) y el total no se mueve.
+  assert.equal((await action({ type: 'mesa_liberar', mesa: 5 }, encargado.token)).status, 409);
+  staffState = await getStaffState();
+  assert.equal(staffState.analytics.cubiertosAcumulados, 4);
+  assert.equal(await calcular(), 4);
+
+  await resetState();
+});
+
+test('el escenario de demo carga cubiertos reales en varias mesas (modo comercial: no es un caso aislado)', async () => {
+  await resetState();
+  const encargado = await loginAsCached('encargado');
+  assert.equal((await action({ type: 'demo_escenario_cargar' }, encargado.token)).status, 200);
+  // getState() sólo devuelve la mesa 1 (vista de cliente); acá hace falta el
+  // snapshot completo de salón.
+  const conCubiertos = (await getStaffState()).mesas.filter(m => Number.isInteger(m.cubiertos) && m.cubiertos > 0);
+  assert.ok(conCubiertos.length >= 5, 'el escenario demo debe mostrar cubiertos reales en varias mesas, no en una sola');
+  await resetState();
+});
+
+test('consulta_registrar es idempotente por interactionId (recarga/retry no infla "consultas resueltas") y exige un id válido', async () => {
+  await resetState();
+  const registro = { type: 'consulta_registrar', mesa: 1, interactionId: 'consulta-retry-1' };
+  assert.equal((await action(registro)).status, 200);
+  assert.equal((await action(registro)).status, 200);
+  assert.equal((await action(registro)).status, 200);
+  let analytics = (await getStaffState()).analytics;
+  assert.equal(analytics.autoservicio.consultasResueltas, 1);
+
+  assert.equal((await action({ type: 'consulta_registrar', mesa: 1, interactionId: 'consulta-retry-2' })).status, 200);
+  analytics = (await getStaffState()).analytics;
+  assert.equal(analytics.autoservicio.consultasResueltas, 2);
+
+  assert.equal((await action({ type: 'consulta_registrar', mesa: 1 })).status, 400);
+  assert.equal((await action({ type: 'consulta_registrar', mesa: 1, interactionId: '' })).status, 400);
+  assert.equal((await action({ type: 'consulta_registrar', mesa: 1, interactionId: 'con espacio no valido' })).status, 400);
+  analytics = (await getStaffState()).analytics;
+  assert.equal(analytics.autoservicio.consultasResueltas, 2);
+  await resetState();
+});
+
+test('el cliente (public/app.js) hace nacer el interactionId al iniciar una consulta real y lo reutiliza para ESA MISMA consulta hasta que el servidor la confirma — una consulta lógica = un interactionId', async () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  const nuevoIdSource = source.match(/function nuevoIdInteraccion\(\)\{[\s\S]*?\r?\n\}\r?\n/)[0];
+  const registrarSource = source.match(/function registrarRespuestaAsistente\(consulta, respuesta\)\{[\s\S]*?\r?\n\}\r?\n/)[0];
+  const enviarSource = source.match(/async function enviarConsultaPendiente\(\)\{[\s\S]*?\r?\n\}\r?\n/)[0];
+  assert.ok(nuevoIdSource && registrarSource && enviarSource, 'deben existir nuevoIdInteraccion, registrarRespuestaAsistente y enviarConsultaPendiente');
+
+  const sentCalls = [];
+  let nextOk = false;
+  const ctx = {
+    state: {
+      role: 'cliente', clienteMesa: 7, clienteAsistenteRespuesta: null, clienteAsistenteHistorial: [],
+      clienteAsistenteConsultaMostrada: '', clienteAsistenteConsultaPendiente: null, clienteAsistenteConsulta: '',
+    },
+    send: body => { sentCalls.push(body); return Promise.resolve({ ok: nextOk }); },
+  };
+  vm.createContext(ctx);
+  vm.runInContext(`${nuevoIdSource}\n${registrarSource}\n${enviarSource}`, ctx);
+  const registrarRespuestaAsistente = vm.runInContext('registrarRespuestaAsistente', ctx);
+  const enviarConsultaPendiente = vm.runInContext('enviarConsultaPendiente', ctx);
+  const flush = () => new Promise(resolve => setTimeout(resolve, 0));
+
+  // 1) Arranca una consulta real: nace un interactionId y se manda — pero el
+  // servidor no responde bien (red caída).
+  nextOk = false;
+  registrarRespuestaAsistente('una pizza barata', { message: 'ok', items: [] });
+  assert.equal(sentCalls.length, 1);
+  const primerId = ctx.state.clienteAsistenteConsultaPendiente.interactionId;
+  assert.equal(sentCalls[0].interactionId, primerId);
+  await flush();
+  // Falló: sigue pendiente, con el MISMO id (no se pierde ni se regenera).
+  // (comparación campo a campo, no deepEqual: el objeto viene de un contexto
+  // vm distinto y deepEqual lo trataría como de otra clase — mismo criterio
+  // que en el test de mesasQueNecesitanAtencion.)
+  assert.ok(ctx.state.clienteAsistenteConsultaPendiente);
+  assert.equal(ctx.state.clienteAsistenteConsultaPendiente.interactionId, primerId);
+
+  // 2) Reintento explícito de ESA MISMA consulta (p. ej. al reconectar):
+  // reusa el id pendiente, nunca genera uno nuevo.
+  await enviarConsultaPendiente();
+  assert.equal(sentCalls.length, 2);
+  assert.equal(sentCalls[1].interactionId, primerId);
+  assert.ok(ctx.state.clienteAsistenteConsultaPendiente);
+  assert.equal(ctx.state.clienteAsistenteConsultaPendiente.interactionId, primerId);
+
+  // 3) Esta vez el servidor confirma: recién ahí se limpia el pendiente.
+  nextOk = true;
+  await enviarConsultaPendiente();
+  assert.equal(sentCalls.length, 3);
+  assert.equal(sentCalls[2].interactionId, primerId);
+  assert.equal(ctx.state.clienteAsistenteConsultaPendiente, null);
+
+  // 4) Una consulta lógica DISTINTA (pregunta nueva) sí recibe un id nuevo.
+  registrarRespuestaAsistente('algo liviano', { message: 'ok', items: [] });
+  assert.equal(sentCalls.length, 4);
+  const segundoId = sentCalls[3].interactionId;
+  assert.notEqual(segundoId, primerId);
+  await flush();
+  assert.equal(ctx.state.clienteAsistenteConsultaPendiente, null); // nextOk sigue true
+
+  // El servidor no guarda texto de consulta ni de respuesta: solo mesa e interactionId.
+  for (const call of sentCalls) {
+    assert.deepEqual(Object.keys(call).sort(), ['interactionId', 'mesa', 'type']);
+  }
+});
+
+test('pago por caja y pago autónomo se cuentan en contadores distintos (medio=staff vs. sandbox del cliente)', async () => {
+  await resetState();
+  const encargado = await loginAsCached('encargado');
+
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'hummus-rabieta' }] })).status, 200);
+  assert.equal((await action({ type: 'pedir_cuenta', mesa: 1 })).status, 200);
+  assert.equal((await action({ type: 'pago_sandbox_confirmar', mesa: 1, medio: 'tarjeta' })).status, 200);
+
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 2, items: [{ productoId: 'hummus-rabieta' }] })).status, 200);
+  assert.equal((await action({ type: 'pedir_cuenta', mesa: 2 })).status, 200);
+  assert.equal((await action({ type: 'pago_demo_confirmar', mesa: 2 }, encargado.token)).status, 200);
+
+  const analytics = (await getStaffState()).analytics;
+  assert.equal(analytics.autoservicio.pagosSinMozo, 1);
+  assert.equal(analytics.autoservicio.pagosConCaja, 1);
+  await resetState();
+});
+
+test('el % de autoservicio usa un solo universo de eventos: pedidos autónomos, consulta IA, cuenta, pago autónomo, pago por caja, llamado al mozo, extra físico y reclamo suman el mismo total', async () => {
+  await resetState();
+  const encargado = await loginAsCached('encargado');
+
+  // Mesa 1: pedido, segunda ronda, consulta IA, cuenta y pago autónomo — todo sin mozo.
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'hummus-rabieta' }] })).status, 200);
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'papas-rabieta' }] })).status, 200);
+  assert.equal((await action({ type: 'consulta_registrar', mesa: 1, interactionId: 'formula-consulta-1' })).status, 200);
+  assert.equal((await action({ type: 'pedir_cuenta', mesa: 1 })).status, 200);
+  assert.equal((await action({ type: 'pago_sandbox_confirmar', mesa: 1, medio: 'tarjeta' })).status, 200);
+
+  // Mesa 2: pedido, cuenta y pago cobrado por staff (caja).
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 2, items: [{ productoId: 'hummus-rabieta' }] })).status, 200);
+  assert.equal((await action({ type: 'pedir_cuenta', mesa: 2 })).status, 200);
+  assert.equal((await action({ type: 'pago_demo_confirmar', mesa: 2 }, encargado.token)).status, 200);
+
+  // Mesa 3: llamado al mozo, extra físico (agua) y un reclamo real.
+  assert.equal((await action({ type: 'llamar_mozo', mesa: 3 })).status, 200);
+  assert.equal((await action({ type: 'ayuda', mesa: 3, categoria: 'agua' })).status, 200);
+  assert.equal((await action({ type: 'ayuda', mesa: 3, categoria: 'incorrecto' })).status, 200);
+
+  const a = (await getStaffState()).analytics.autoservicio;
+  assert.deepEqual(a, {
+    pedidosSinMozo: 3, rondasAdicionalesSinMozo: 1, consultasResueltas: 1, cuentasSinMozo: 2,
+    pagosSinMozo: 1, pagosConCaja: 1, llamadosMozo: 1, extrasFisicos: 1, excepcionesReclamos: 1,
+  });
+
+  // La misma partición que usa metricasAutoservicio en public/app.js: el
+  // universo total (momentosTotales) tiene que coincidir exactamente con la
+  // suma de las tres categorías, sin dejar pagosConCaja afuera del total
+  // (el bug original) ni contarlo dos veces.
+  const momentosTotales = a.pedidosSinMozo + a.consultasResueltas + a.cuentasSinMozo + a.pagosSinMozo + a.pagosConCaja + a.llamadosMozo + a.extrasFisicos + a.excepcionesReclamos;
+  const resueltosPorRabieta = a.pedidosSinMozo + a.consultasResueltas + a.cuentasSinMozo + a.pagosSinMozo;
+  const tareasFisicas = a.extrasFisicos;
+  const intervencionesHumanas = a.llamadosMozo + a.excepcionesReclamos + a.pagosConCaja;
+  assert.equal(momentosTotales, 11);
+  assert.equal(resueltosPorRabieta + tareasFisicas + intervencionesHumanas, momentosTotales);
+  await resetState();
+});
+
+test('la taxonomía de ayuda (HELP_CATEGORIES_EXTRA / HELP_CATEGORIES_RECLAMO) cubre cada categoría de HELP_CATEGORIES exactamente una vez', () => {
+  const source = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
+  const categoriasSource = source.match(/const HELP_CATEGORIES = \{[\s\S]*?\n\};/)[0];
+  const extraSource = source.match(/const HELP_CATEGORIES_EXTRA = new Set\(\[[^\]]*\]\);/)[0];
+  const reclamoSource = source.match(/const HELP_CATEGORIES_RECLAMO = new Set\(\[[^\]]*\]\);/)[0];
+  assert.ok(categoriasSource && extraSource && reclamoSource, 'deben existir HELP_CATEGORIES, HELP_CATEGORIES_EXTRA y HELP_CATEGORIES_RECLAMO');
+
+  const ctx = {};
+  vm.createContext(ctx);
+  vm.runInContext(`${categoriasSource}\n${extraSource}\n${reclamoSource}`, ctx);
+  const categorias = Object.keys(vm.runInContext('HELP_CATEGORIES', ctx));
+  const extra = vm.runInContext('HELP_CATEGORIES_EXTRA', ctx);
+  const reclamo = vm.runInContext('HELP_CATEGORIES_RECLAMO', ctx);
+  assert.ok(categorias.length > 0);
+  for (const categoria of categorias) {
+    assert.notEqual(extra.has(categoria), reclamo.has(categoria), `"${categoria}" debe estar en exactamente uno de los dos baldes`);
+  }
+  assert.equal(extra.size + reclamo.size, categorias.length);
+});
+
+test('metricasAutoservicio (public/app.js) parte los 8 contadores en un solo universo, incluyendo pago por caja en el total, y nunca divide por cero', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  const constantesSource = source.match(/const DEMO_MINUTOS_SUPUESTOS = \{[\s\S]*?\};/)[0];
+  const cubiertosSource = source.match(/function cubiertosTotalesSesion\(analytics\)\{[\s\S]*?\r?\n\}\r?\n/)[0];
+  const metricasSource = source.match(/function metricasAutoservicio\(analytics\)\{[\s\S]*?\r?\n\}\r?\n/)[0];
+  assert.ok(constantesSource && cubiertosSource && metricasSource, 'deben existir DEMO_MINUTOS_SUPUESTOS, cubiertosTotalesSesion y metricasAutoservicio');
+
+  const ctx = {
+    // ocupada modela el estado real de la mesa: una mesa LIBRE con cubiertos
+    // cargados (por error, o que quedó pegado) no representa gente sentada
+    // ahora mismo y no debe sumar en el total en vivo (ver mesa 4 abajo).
+    state: { mesas: [
+      { ocupada: true, cubiertos: 4 },
+      { ocupada: true, cubiertos: null },
+      { ocupada: true, cubiertos: 6 },
+      { ocupada: false, cubiertos: 9 },
+    ] },
+    analyticsConDatos: {
+      cubiertosAcumulados: 20,
+      autoservicio: {
+        pedidosSinMozo: 10, rondasAdicionalesSinMozo: 3, consultasResueltas: 5, cuentasSinMozo: 4,
+        pagosSinMozo: 2, pagosConCaja: 3, llamadosMozo: 6, extrasFisicos: 7, excepcionesReclamos: 1,
+      },
+    },
+    analyticsVacio: {
+      cubiertosAcumulados: 0,
+      autoservicio: {
+        pedidosSinMozo: 0, rondasAdicionalesSinMozo: 0, consultasResueltas: 0, cuentasSinMozo: 0,
+        pagosSinMozo: 0, pagosConCaja: 0, llamadosMozo: 0, extrasFisicos: 0, excepcionesReclamos: 0,
+      },
+    },
+  };
+  vm.createContext(ctx);
+  vm.runInContext(`${constantesSource}\n${cubiertosSource}\n${metricasSource}`, ctx);
+
+  const m = vm.runInContext('metricasAutoservicio(analyticsConDatos)', ctx);
+  assert.equal(m.momentosTotales, 38); // 10+5+4+2+3+6+7+1
+  assert.equal(m.resueltosPorRabieta + m.tareasFisicas + m.intervencionesHumanas, m.momentosTotales);
+  assert.equal(m.resueltosPorRabieta, 21); // pedidosSinMozo+consultasResueltas+cuentasSinMozo+pagosSinMozo
+  assert.equal(m.tareasFisicas, 7); // extrasFisicos
+  assert.equal(m.intervencionesHumanas, 10); // llamadosMozo+excepcionesReclamos+pagosConCaja — pagosConCaja SÍ entra acá y en el total (el bug original lo dejaba afuera del total)
+  assert.equal(m.autoservicioPct, 55); // round(21/38*100)
+  assert.equal(m.cubiertosReales, 30); // 20 acumulados + (4+6) de mesas OCUPADAS con cubiertos cargados; la mesa sin cubiertos y la mesa 4 (libre con cubiertos=9 cargados por error) no suman
+  assert.equal(m.horasPersonaLiberadas, 56 / 60); // (10-3)*3 + 3*3 + 5*2 + 4*2 + 2*4 minutos, sobre 60
+  assert.equal(m.horasPersonaPor100Cubiertos, (56 / 60) / 30 * 100);
+
+  const vacio = vm.runInContext('metricasAutoservicio(analyticsVacio)', ctx);
+  assert.equal(vacio.momentosTotales, 0);
+  assert.equal(vacio.autoservicioPct, 0); // nunca NaN por dividir por cero
+  assert.equal(vacio.cubiertosReales, 10); // sigue sumando cubiertos de mesas activas aunque no haya acumulados
+  assert.equal(vacio.horasPersonaPor100Cubiertos, 0);
 });
 
 test('allowlist, mesa y estados inválidos dan 4xx sin mutar estado', async () => {
