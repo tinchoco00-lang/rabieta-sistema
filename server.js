@@ -75,9 +75,10 @@ const STAFF_TOKEN_TTL_MS = Number.isFinite(configuredTokenTtl) && configuredToke
 const STAFF_TOKENS = new Map();
 const MESA_TOKEN_SECRET = process.env.MESA_TOKEN_SECRET || null;
 const MAX_BODY_BYTES = 32 * 1024;
-const PUBLIC_ACTIONS = new Set(['pedido_nuevo', 'llamar_mozo', 'pedir_cuenta', 'ayuda', 'resena_enviar', 'pago_sandbox_confirmar', 'pago_mercadopago_iniciar']);
-const STAFF_ACTIONS = new Set(['pedido_estado', 'alerta_atender', 'alerta_resolver', 'pago_demo_confirmar', 'mesa_liberar', 'demo_escenario_cargar', 'reset_demo']);
-const MESA_ACTIONS = new Set(['pedido_nuevo', 'pedido_estado', 'llamar_mozo', 'pedir_cuenta', 'ayuda', 'resena_enviar', 'pago_sandbox_confirmar', 'pago_demo_confirmar', 'mesa_liberar', 'pago_mercadopago_iniciar']);
+const PUBLIC_ACTIONS = new Set(['pedido_nuevo', 'llamar_mozo', 'pedir_cuenta', 'ayuda', 'resena_enviar', 'pago_sandbox_confirmar', 'pago_mercadopago_iniciar', 'consulta_registrar']);
+const STAFF_ACTIONS = new Set(['pedido_estado', 'alerta_atender', 'alerta_resolver', 'pago_demo_confirmar', 'mesa_liberar', 'demo_escenario_cargar', 'reset_demo', 'mesa_cubiertos_actualizar']);
+const MESA_ACTIONS = new Set(['pedido_nuevo', 'pedido_estado', 'llamar_mozo', 'pedir_cuenta', 'ayuda', 'resena_enviar', 'pago_sandbox_confirmar', 'pago_demo_confirmar', 'mesa_liberar', 'pago_mercadopago_iniciar', 'consulta_registrar', 'mesa_cubiertos_actualizar']);
+const MAX_CUBIERTOS_POR_MESA = 50; // límite razonable de sanidad, no una capacidad real del local
 const PAGO_SANDBOX_MEDIOS = new Set(['tarjeta', 'mercado_pago']);
 // Preparación honesta de la integración real de Mercado Pago (Fase 3 del roadmap):
 // solo exponemos al Dueño si cada credencial existe como variable de entorno,
@@ -110,7 +111,30 @@ const HELP_CATEGORIES = {
   cambiar: { label: 'Quiero cambiar algo', prioridad: 'importante' },
   cuenta: { label: 'Quiero pedir la cuenta', prioridad: 'importante' },
   otro: { label: 'Reclamo', prioridad: null },
+  // Extras de un solo toque (objetivo operativo: el cliente resuelve esto
+  // sin tener que llamar al mozo y esperar que alguien pase cerca). Cada una
+  // genera igual una tarea física real para salón — la diferencia es que
+  // nadie tuvo que levantar la mano para pedirla.
+  agua: { label: 'Quiere agua', prioridad: 'normal' },
+  hielo: { label: 'Quiere hielo', prioridad: 'normal' },
+  servilletas: { label: 'Faltan servilletas', prioridad: 'normal' },
+  cubiertos: { label: 'Faltan cubiertos', prioridad: 'normal' },
+  salsa: { label: 'Quiere salsa o aderezo', prioridad: 'normal' },
+  vaso: { label: 'Quiere un vaso', prioridad: 'normal' },
+  retirar: { label: 'Retirar algo de la mesa', prioridad: 'normal' },
 };
+// Taxonomía única para "Ahorro operativo" (ver metricasAutoservicio en
+// public/app.js): toda categoría de HELP_CATEGORIES cae en exactamente uno
+// de los dos baldes de abajo, nunca en ninguno, nunca en los dos — así la
+// suma de categorías 'ayuda' siempre coincide con extrasFisicos+excepcionesReclamos
+// sin dejar eventos sin clasificar ni contarlos dos veces.
+// EXTRA físico: el cliente resolvió solo qué necesitaba (un toque, sin
+// reclamo) y lo único pendiente es que alguien de salón lo acerque físicamente.
+const HELP_CATEGORIES_EXTRA = new Set(['agua', 'hielo', 'servilletas', 'cubiertos', 'salsa', 'vaso', 'retirar']);
+// RECLAMO/EXCEPCIÓN: algo no salió como debía, o el cliente pidió
+// explícitamente a una persona (mozo/cuenta) porque el self-service no
+// alcanzó — requiere criterio humano, no solo una tarea física mecánica.
+const HELP_CATEGORIES_RECLAMO = new Set(['no_llego', 'incorrecto', 'falta', 'mozo', 'cambiar', 'cuenta', 'otro']);
 const KEYWORDS_URGENTE = ['no llegó', 'no llego', 'frío', 'fria', 'crudo', 'cruda', 'alerg', 'mal estado', 'equivocado', 'equivocada'];
 const KEYWORDS_IMPORTANTE = ['falta', 'cambiar', 'sin ', 'error', 'cuenta'];
 // Configuración inicial para la demo: las bebidas se muestran en Barra y el
@@ -147,6 +171,37 @@ function seedAnalytics() {
       cocina: { itemsListos: 0, tiempoPreparacionTotalSec: 0 },
       barra: { itemsListos: 0, tiempoPreparacionTotalSec: 0 },
     },
+    // Instrumentación de la tesis "menos horas-persona por el mismo volumen":
+    // cada contador cuenta una interacción real, no una estimación. Lo que
+    // SÍ es una estimación (minutos ahorrados, costo evitado) se calcula del
+    // lado del cliente a partir de estos números, con supuestos marcados
+    // explícitamente como de demostración — ver DEMO_MINUTOS_SUPUESTOS en
+    // public/app.js.
+    //
+    // TAXONOMÍA ÚNICA (ver metricasAutoservicio en public/app.js): estos 8
+    // contadores son la partición completa de "momentos de servicio" de la
+    // sesión — cada evento real cae en exactamente uno, nunca en cero ni en
+    // dos, así el % de autoservicio siempre se calcula sobre el mismo universo.
+    autoservicio: {
+      pedidosSinMozo: 0,           // pedido_nuevo (incluye rondas adicionales)
+      rondasAdicionalesSinMozo: 0, // subconjunto informativo de arriba: ronda >= 2 (no se suma aparte al total)
+      consultasResueltas: 0,       // el asistente respondió sin involucrar staff
+      cuentasSinMozo: 0,           // pedir_cuenta iniciado por el cliente
+      pagosSinMozo: 0,             // pago confirmado sin que staff lo cobre (tarjeta/MP)
+      pagosConCaja: 0,             // pago confirmado por staff (caja/efectivo)
+      llamadosMozo: 0,             // el cliente sí necesitó un mozo físicamente
+      extrasFisicos: 0,            // ayuda: agua/hielo/servilletas/etc. — tarea física, no un reclamo
+      excepcionesReclamos: 0,      // ayuda: no_llego/incorrecto/falta/cambiar/otro/mozo/cuenta — requiere criterio humano
+    },
+    // Cubiertos REALES por turno (personas efectivamente sentadas), nunca
+    // aproximados con itemsVendidos u otro proxy — ver mesa.cubiertos,
+    // cargado por Encargado al sentar la mesa. Se acumula acá recién al
+    // liberar la mesa (cuando ese cubierto ya terminó su sesión); los
+    // cubiertos de mesas todavía ocupadas se suman en vivo del lado del
+    // cliente sobre state.mesas (ver cubiertosTotalesSesion en public/app.js).
+    cubiertosAcumulados: 0,
+    mesasLiberadas: 0,
+    mesasLiberadasSinCubiertos: 0, // honestidad: cuántas mesas se liberaron sin haber cargado cubiertos
     productos: {},
     resenas: [],
     crmContactos: [],
@@ -168,7 +223,12 @@ function registrarActividad(analytics, tipo, texto, clock) {
 function seedState() {
   const mesas = [];
   for (let i = 1; i <= MESAS_TOTAL; i++) {
-    mesas.push({ numero: i, mozo: MOZOS[i % MOZOS.length], ocupada: false, pedido: null, cuentaPedida: false, cuentaPedidaTs: null, pago: null, resenaEnviada: false, alertas: [] });
+    mesas.push({
+      numero: i, mozo: MOZOS[i % MOZOS.length], ocupada: false, pedido: null, cuentaPedida: false, cuentaPedidaTs: null,
+      pago: null, resenaEnviada: false, alertas: [],
+      cubiertos: null, // personas reales sentadas; null = todavía no cargado por Encargado (ver mesa_cubiertos_actualizar)
+      consultasVistas: [], // interactionId de consulta_registrar ya contados en esta sesión de mesa — evita inflar por recarga/retry
+    });
   }
   return { clockMs: 0, mesas, analytics: seedAnalytics(), presentacionCargada: false };
 }
@@ -433,6 +493,11 @@ function etiquetaMedioPago(modo, medio) {
 function confirmarPagoMesa(m, { modo, medio, total, referencia }) {
   m.pago = { modo, estado: 'confirmado', medio, total, referencia, confirmadoTs: state.clockMs };
   recordPaymentAnalytics(m);
+  // "staff" es el único medio que representa un cobro mediado por una
+  // persona (caja/efectivo); tarjeta demo y Mercado Pago —sandbox o real—
+  // los cierra el propio cliente sin que nadie de salón intervenga.
+  if (medio === 'staff') state.analytics.autoservicio.pagosConCaja++;
+  else state.analytics.autoservicio.pagosSinMozo++;
   registrarActividad(state.analytics, 'pago', `Mesa ${m.numero} pagó $${total.toLocaleString('es-AR')} ${etiquetaMedioPago(modo, medio)}`, state.clockMs);
   m.alertas.forEach(alertaCuenta => {
     if (alertaCuenta.tipo === 'cuenta' && alertaCuenta.estado !== 'resuelto') alertaCuenta.estado = 'resuelto';
@@ -461,6 +526,7 @@ function normalizeAnalytics(value) {
   for (const field of [
     'pagosConfirmados', 'ventasDemo', 'tiempoPagoTotalSec', 'itemsVendidos',
     'itemsListos', 'itemsEntregados', 'tiempoPreparacionTotalSec', 'tiempoPaseTotalSec',
+    'cubiertosAcumulados', 'mesasLiberadas', 'mesasLiberadasSinCubiertos',
   ]) {
     if (Number.isFinite(value[field]) && value[field] >= 0) analytics[field] = value[field];
   }
@@ -471,6 +537,14 @@ function normalizeAnalytics(value) {
       for (const field of ['itemsListos', 'tiempoPreparacionTotalSec']) {
         if (Number.isFinite(metrics[field]) && metrics[field] >= 0) analytics.destinos[destino][field] = metrics[field];
       }
+    }
+  }
+  if (value.autoservicio && typeof value.autoservicio === 'object' && !Array.isArray(value.autoservicio)) {
+    for (const field of [
+      'pedidosSinMozo', 'rondasAdicionalesSinMozo', 'consultasResueltas', 'cuentasSinMozo',
+      'pagosSinMozo', 'pagosConCaja', 'llamadosMozo', 'extrasFisicos', 'excepcionesReclamos',
+    ]) {
+      if (Number.isFinite(value.autoservicio[field]) && value.autoservicio[field] >= 0) analytics.autoservicio[field] = value.autoservicio[field];
     }
   }
   if (value.productos && typeof value.productos === 'object' && !Array.isArray(value.productos)) {
@@ -530,6 +604,10 @@ function normalizeRecoveredState(recoveredState) {
   });
   recoveredState.mesas.forEach(mesa => {
     mesa.resenaEnviada = mesa.resenaEnviada === true;
+    mesa.cubiertos = Number.isInteger(mesa.cubiertos) && mesa.cubiertos >= 1 && mesa.cubiertos <= MAX_CUBIERTOS_POR_MESA ? mesa.cubiertos : null;
+    mesa.consultasVistas = Array.isArray(mesa.consultasVistas)
+      ? mesa.consultasVistas.filter(id => typeof id === 'string' && id).slice(-200)
+      : [];
     mesa.alertas.forEach(alerta => {
       if (Number.isInteger(alerta.id) && alerta.id > highestId) highestId = alerta.id;
     });
@@ -599,6 +677,14 @@ async function seedPresentationScenario() {
   const advance = (mesa, itemId, estado) => run({ type: 'pedido_estado', mesa, itemId, estado });
 
   state.clockMs = 15;
+  // Cubiertos reales del turno sintético — cargados por Encargado al sentar
+  // cada mesa, igual que en el flujo real. Nunca se calculan a partir de
+  // ítems pedidos (ver FASE 9 — cubiertos reales).
+  for (const [mesaNumero, cubiertos] of [[1, 2], [2, 4], [3, 1], [4, 2], [5, 2], [6, 3], [7, 2], [8, 2]]) {
+    const result = await run({ type: 'mesa_cubiertos_actualizar', mesa: mesaNumero, cubiertos });
+    if (!result.ok) return result;
+  }
+
   let result = await run({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'hummus-rabieta' }, { productoId: 'agua' }] });
   if (!result.ok) return result;
   const mesaUno = findMesa(1);
@@ -632,6 +718,11 @@ async function seedPresentationScenario() {
   const papasMesaDosId = mesaDos.pedido.items.find(item => item.productoId === 'papas-rabieta').id;
   result = await advance(2, papasMesaDosId, 'preparando');
   if (!result.ok) return result;
+  // FASE 9 — modo comercial: un extra físico de un toque (no es un reclamo)
+  // para que "Ahorro operativo" tenga un caso real de extrasFisicos, distinto
+  // de las excepciones/reclamos de Mesa 4 y Mesa 6.
+  result = await run({ type: 'ayuda', mesa: 2, categoria: 'servilletas' });
+  if (!result.ok) return result;
 
   state.clockMs = 145;
   result = await run({ type: 'pedido_nuevo', mesa: 3, items: [{ productoId: 'hummus-rabieta' }] });
@@ -659,7 +750,7 @@ async function seedPresentationScenario() {
   result = await advance(5, mesaCincoItem, 'entregado'); if (!result.ok) return result;
   result = await run({ type: 'pedir_cuenta', mesa: 5 }); if (!result.ok) return result;
   state.clockMs = 285;
-  result = await run({ type: 'pago_demo_confirmar', mesa: 5 }); if (!result.ok) return result;
+  result = await run({ type: 'pago_sandbox_confirmar', mesa: 5, medio: 'tarjeta' }); if (!result.ok) return result;
   result = await run({
     type: 'resena_enviar', mesa: 5, puntuacion: 5, comentario: 'Escenario de presentación listo',
     crmConsentimiento: true, crmCanal: 'email', crmContacto: 'demo@rabieta.local', crmNombre: 'Cliente demo',
@@ -690,6 +781,18 @@ async function seedPresentationScenario() {
   // cocina, sino la antigüedad que ya tendría a esta altura del turno.
   const papasMesaDos = mesaDos.pedido.items.find(item => item.productoId === 'papas-rabieta');
   if (papasMesaDos && papasMesaDos.estadoTs) papasMesaDos.estadoTs.preparando = -400;
+
+  // FASE 8 — escenario comercial: dos mesas le preguntan al asistente antes
+  // de pedir (Mesa 9 y 10 quedan libres a propósito, mostrando que ni
+  // siquiera hace falta ocupar la mesa para resolver una consulta), y el
+  // pago de Mesa 5 pasa a ser autoservicio (tarjeta demo) en vez de
+  // "cobrado por staff" — para que el panel de Ahorro Operativo tenga algo
+  // real que mostrar en consultas resueltas y pagos sin mozo/caja, no ceros.
+  result = await run({ type: 'consulta_registrar', mesa: 9, interactionId: 'demo-consulta-mesa9' });
+  if (!result.ok) return result;
+  result = await run({ type: 'consulta_registrar', mesa: 10, interactionId: 'demo-consulta-mesa10' });
+  if (!result.ok) return result;
+
   state.presentacionCargada = true;
   return actionOk();
 }
@@ -783,6 +886,7 @@ async function handleAction(msg) {
         if (!built.ok) return built;
         items.push({ ...built.item, id: uid(), ronda, estado: 'enviado', enviadoTs: state.clockMs, estadoTs: { enviado: state.clockMs } });
       }
+      const eraRondaAdicional = Boolean(m.pedido);
       m.ocupada = true;
       if (m.pedido) {
         m.pedido.items.push(...items);
@@ -790,6 +894,8 @@ async function handleAction(msg) {
       } else {
         m.pedido = { items, estado: 'enviado', enviadoTs: state.clockMs };
       }
+      state.analytics.autoservicio.pedidosSinMozo++;
+      if (eraRondaAdicional) state.analytics.autoservicio.rondasAdicionalesSinMozo++;
       registrarActividad(state.analytics, 'pedido', `Mesa ${m.numero} pidió ${items.length} ítem${items.length === 1 ? '' : 's'}`, state.clockMs);
       break;
     }
@@ -813,6 +919,7 @@ async function handleAction(msg) {
     case 'llamar_mozo': {
       if (!m) return;
       m.alertas.push({ id: uid(), tipo: 'mozo', label: 'Llamado al mozo', prioridad: 'normal', mensaje: '', estado: 'recibido', creadoTs: state.clockMs, escalado: false });
+      state.analytics.autoservicio.llamadosMozo++;
       registrarActividad(state.analytics, 'alerta', `Mesa ${m.numero} llamó al mozo`, state.clockMs);
       break;
     }
@@ -822,6 +929,7 @@ async function handleAction(msg) {
       m.cuentaPedida = true;
       m.cuentaPedidaTs = state.clockMs;
       m.alertas.push({ id: uid(), tipo: 'cuenta', label: 'Pidió la cuenta', prioridad: 'importante', mensaje: '', estado: 'recibido', creadoTs: state.clockMs, escalado: false });
+      state.analytics.autoservicio.cuentasSinMozo++;
       registrarActividad(state.analytics, 'cuenta', `Mesa ${m.numero} pidió la cuenta`, state.clockMs);
       break;
     }
@@ -837,7 +945,48 @@ async function handleAction(msg) {
       const category = HELP_CATEGORIES[msg.categoria];
       const prioridad = category.prioridad || clasificarTextoLibre(message.value);
       m.alertas.push({ id: uid(), solicitudId: solicitudId.value || null, tipo: msg.categoria, label: category.label, prioridad, mensaje: message.value, estado: 'recibido', creadoTs: state.clockMs, escalado: false });
+      // Taxonomía única (ver HELP_CATEGORIES_EXTRA/HELP_CATEGORIES_RECLAMO):
+      // cada categoría de ayuda cae en exactamente uno de los dos baldes que
+      // alimentan "Ahorro operativo", nunca en los dos ni en ninguno.
+      if (HELP_CATEGORIES_EXTRA.has(msg.categoria)) state.analytics.autoservicio.extrasFisicos++;
+      else state.analytics.autoservicio.excepcionesReclamos++;
       registrarActividad(state.analytics, 'alerta', `Mesa ${m.numero}: ${category.label}`, state.clockMs);
+      break;
+    }
+    case 'consulta_registrar': {
+      // El asistente/recomendador corre 100% en el cliente (público/carta) y
+      // nunca inventa datos; esto solo instrumenta que una consulta se
+      // resolvió sin involucrar a nadie de salón. No guarda el texto de la
+      // consulta ni la respuesta — es un contador, no un log de conversación.
+      //
+      // Idempotencia: el cliente manda un interactionId único por consulta
+      // real. Si el mismo id llega dos veces (recarga, retry de red, doble
+      // tap), el contador sube una sola vez — no confiamos en que el cliente
+      // se comporte, el servidor es quien decide si ya lo vio.
+      const interactionId = normalizeOptionalText(msg.interactionId, 'Identificador de interacción', 80);
+      if (!interactionId.ok) return interactionId;
+      if (!interactionId.value) return actionError(400, 'interactionId es obligatorio');
+      if (!/^[a-zA-Z0-9_-]+$/.test(interactionId.value)) return actionError(400, 'interactionId inválido');
+      if (!Array.isArray(m.consultasVistas)) m.consultasVistas = [];
+      if (m.consultasVistas.includes(interactionId.value)) break; // ya contado — ignorar silenciosamente, no es un error
+      m.consultasVistas.push(interactionId.value);
+      if (m.consultasVistas.length > 200) m.consultasVistas.splice(0, m.consultasVistas.length - 200);
+      state.analytics.autoservicio.consultasResueltas++;
+      break;
+    }
+    case 'mesa_cubiertos_actualizar': {
+      // Cubiertos REALES (personas sentadas), editable solo por Encargado
+      // (ver STAFF_ACTIONS/staffRoleCan) — nunca un proxy calculado a partir
+      // de ítems pedidos. null limpia el campo (p. ej. si se cargó mal).
+      // 1-50 (no 0): una mesa con cubiertos "cargados" implica al menos una
+      // persona sentada — 0 no es un valor real, es "todavía no se cargó",
+      // y eso ya lo representa null. Aceptar 0 permitiría que una mesa
+      // quedara marcada como "cubiertos ya registrados" sin serlo.
+      if (msg.cubiertos === null) { m.cubiertos = null; break; }
+      if (!Number.isInteger(msg.cubiertos) || msg.cubiertos < 1 || msg.cubiertos > MAX_CUBIERTOS_POR_MESA) {
+        return actionError(400, 'Cubiertos inválidos');
+      }
+      m.cubiertos = msg.cubiertos;
       break;
     }
     case 'alerta_atender': {
@@ -933,7 +1082,16 @@ async function handleAction(msg) {
       if (!pagoConfirmado(m.pago)) {
         return actionError(409, 'La mesa solo puede liberarse después de confirmar el pago');
       }
+      // Cubiertos reales: se acumulan recién ahora (la sesión de esa mesa
+      // terminó). Si Encargado nunca los cargó, la mesa cuenta como "sin
+      // registrar" en vez de sumar 0 en silencio — así el faltante queda
+      // visible en vez de subestimar cubiertosPor100 sin que nadie lo note.
+      const cubiertosDeEstaMesa = Number.isInteger(m.cubiertos) ? m.cubiertos : 0;
+      state.analytics.cubiertosAcumulados += cubiertosDeEstaMesa;
+      state.analytics.mesasLiberadas++;
+      if (!Number.isInteger(m.cubiertos)) state.analytics.mesasLiberadasSinCubiertos++;
       m.ocupada = false; m.pedido = null; m.cuentaPedida = false; m.cuentaPedidaTs = null; m.pago = null; m.resenaEnviada = false; m.alertas = [];
+      m.cubiertos = null; m.consultasVistas = [];
       registrarActividad(state.analytics, 'mesa', `Mesa ${m.numero} se liberó`, state.clockMs);
       break;
     }
