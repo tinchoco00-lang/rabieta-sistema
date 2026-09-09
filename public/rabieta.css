@@ -711,6 +711,35 @@
   .simulador-resultado .i-ic{flex:0 0 auto;margin-top:2px;}
   .simulador-resultado b{color:var(--gold);}
   @media(max-width:640px){.simulador-inputs{grid-template-columns:1fr 1fr;}.simulador-fila{grid-template-columns:1fr 80px 80px;}}
+
+  /* Command Center V1 (Dueño) — misma identidad de bar/pub que el resto del
+     sistema: negro real, crema, ámbar, sin cards genéricas ni degradés.
+     El bloque no lleva fondo/borde propio: agrupa AHORRO HOY, PAYBACK
+     RABIETA, PULSO EN VIVO y REQUIERE TU ATENCIÓN, cada uno ya con su
+     propia superficie (.card / .ahorro-* / mesasAtencionHtml). */
+  .command-center .dueno-hero-kicker{font-family:var(--font-display);font-size:26px;letter-spacing:.03em;color:var(--ink-1);text-transform:none;margin:0 0 6px;}
+  .command-center .section-h{margin-top:22px;}
+  .command-center .section-h:first-of-type{margin-top:10px;}
+  .periodos{margin-top:14px;padding:14px 16px;border:1px dashed var(--line-strong);border-radius:var(--radius);background:var(--bg-panel);}
+  .periodos-kicker{font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--gold);margin-bottom:10px;display:flex;align-items:center;gap:6px;}
+  .periodo-fila{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line);font-size:12.5px;}
+  .periodo-fila:last-child{border-bottom:none;}
+  .periodo-fila b{flex:1;color:var(--ink-2);font-weight:600;}
+  .periodo-fila span:last-child{font-family:var(--font-mono);color:var(--ink-1);font-size:13px;}
+  .periodo-fila.vacio span:last-child{font-family:var(--font-body);color:var(--ink-muted);font-size:12px;}
+  .periodo-fila .pill.real{background:rgba(76,175,109,0.18);color:#7fd89a;}
+  .periodo-fila .pill.proyeccion{background:rgba(224,162,51,0.18);color:#f0b555;}
+  .payback-card{margin-top:0;}
+  .baseline-card{margin-top:0;}
+  .baseline-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px 16px;margin-top:10px;}
+  .baseline-campo{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--ink-muted);}
+  .baseline-campo input{padding:8px 10px;font-size:13px;}
+  .detalle-formulas{display:flex;flex-direction:column;gap:8px;}
+  .detalle-formula{padding:8px 0;border-bottom:1px solid var(--line);font-size:12px;line-height:1.5;}
+  .detalle-formula b{display:block;color:var(--ink-1);font-size:12.5px;margin-bottom:2px;}
+  .detalle-formula span{color:var(--ink-muted);}
+  .detalle-formula:last-child{border-bottom:none;}
+  @media(max-width:640px){.baseline-grid{grid-template-columns:1fr;}.command-center .dueno-hero-kicker{font-size:22px;}}
   .fallback3d{width:100%;height:100%;position:absolute;inset:0;display:flex;align-items:flex-end;justify-content:center;overflow:hidden;}
   .fallback3d[hidden]{display:none;}
   .fallback3d img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.72;}

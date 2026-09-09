@@ -159,6 +159,24 @@ function emptyAnalytics(){
     productos:{},resenas:[],crmContactos:[],actividad:[]
   };
 }
+// Línea base manual del local (Command Center, Fase D) — ver seedBaseline en
+// server.js. Todo arranca en null: nunca se inventa un valor de referencia
+// del restaurante, y cada campo se muestra rotulado "DATO CARGADO POR EL
+// LOCAL", nunca como una métrica real medida por Rabieta.
+function emptyBaseline(){
+  return {
+    horasPersonaPor100CubiertosBaseline:null, intervencionesHumanasPorMesaBaseline:null,
+    cubiertosPorHoraPersonaBaseline:null, ventasPorHoraPersonaBaseline:null,
+    costoLaboralPorCubiertoBaseline:null, actualizadoTs:null,
+  };
+}
+const BASELINE_CAMPOS = [
+  {key:'horasPersonaPor100CubiertosBaseline', label:'Horas-persona por 100 cubiertos', unidad:'h'},
+  {key:'intervencionesHumanasPorMesaBaseline', label:'Intervenciones humanas por mesa', unidad:''},
+  {key:'cubiertosPorHoraPersonaBaseline', label:'Cubiertos por hora-persona', unidad:''},
+  {key:'ventasPorHoraPersonaBaseline', label:'Ventas por hora-persona', unidad:'$'},
+  {key:'costoLaboralPorCubiertoBaseline', label:'Costo laboral por cubierto', unidad:'$'},
+];
 
 let state = {
   clockMs:0, mesas:[], analytics:emptyAnalytics(), integraciones:null, mercadoPagoDisponible:false,
@@ -181,6 +199,11 @@ let state = {
   simuladorAbierto:false,
   detalleAuditableAbierto:false,
   simulador:{cubiertos:100, mesas:22, turnoHoras:5, mozosTradicional:6, mozosConRabieta:3, costoHora:''},
+  // Command Center — Payback: costo mensual de Rabieta, SIEMPRE en blanco al
+  // cargar (nunca un precio precargado); solo vive en este navegador, igual
+  // que costoHoraDemo, para no inventar un plan/precio real todavía.
+  costoMensualRabietaDemo:'',
+  baseline:emptyBaseline(),
 };
 
 function money(n){ return n===null || n===undefined ? 'A confirmar' : '$'+n.toLocaleString('es-AR'); }
@@ -280,6 +303,7 @@ function aplicarMensajeRealtime(data, onFirstSnapshot){
     state.mesas = msg.state.mesas;
     state.analytics = msg.state.analytics || emptyAnalytics();
     state.presentacionCargada = msg.state.presentacionCargada === true;
+    state.baseline = msg.state.baseline || emptyBaseline();
     if(typeof msg.mercadoPagoDisponible==='boolean') state.mercadoPagoDisponible = msg.mercadoPagoDisponible;
     if(msg.integraciones) state.integraciones = msg.integraciones;
     if(msg.role) STAFF_ROLE = msg.role;
@@ -1697,6 +1721,27 @@ function actualizarCubiertosMesa(numero,valor){
   if(!Number.isInteger(n) || n<1 || n>50) return;
   send({type:'mesa_cubiertos_actualizar', mesa:numero, cubiertos:n});
 }
+// Línea base manual del local — un campo a la vez, igual que cubiertos: el
+// servidor solo toca el campo enviado (ver baseline_actualizar), así el
+// local puede completar la línea base de a poco sin pisar lo ya cargado.
+function actualizarBaseline(campo,valor){
+  const texto=String(valor==null?'':valor).trim();
+  if(texto===''){ send({type:'baseline_actualizar', [campo]:null}); return; }
+  const n=Number(texto);
+  if(!Number.isFinite(n) || n<0) return;
+  send({type:'baseline_actualizar', [campo]:n});
+}
+function baselineFormHtml(){
+  const b = state.baseline || emptyBaseline();
+  return `<div class="card baseline-card">
+    <div class="detalle-auditable-kicker">${ic('clipboard')} DATO CARGADO POR EL LOCAL — línea base de tu operación ANTES de Rabieta, para comparar en un futuro piloto. Nada de esto lo calcula ni lo inventa el sistema.</div>
+    <div class="baseline-grid">
+      ${BASELINE_CAMPOS.map(c=>`<label class="baseline-campo"><span>${c.label}${c.unidad?' ('+c.unidad+')':''}</span>
+        <input type="text" inputmode="decimal" class="nota" placeholder="Sin cargar" value="${b[c.key]===null?'':escapeHtml(String(b[c.key]))}" onchange="actualizarBaseline('${c.key}',this.value)"></label>`).join('')}
+    </div>
+    ${b.actualizadoTs!==null?`<div class="empty">Última carga hace ${fmtSec(timeAgoSec(b.actualizadoTs))}.</div>`:'<div class="empty">Todavía no se cargó ninguna línea base.</div>'}
+  </div>`;
+}
 
 /* ---------------- ENCARGADO ---------------- */
 function viewEncargado(){
@@ -1721,6 +1766,8 @@ function viewEncargado(){
         <label class="mesa-cubiertos"><span>Cubiertos reales</span><input type="number" inputmode="numeric" min="1" max="50" placeholder="Sin cargar" value="${Number.isInteger(m.cubiertos)?m.cubiertos:''}" onchange="actualizarCubiertosMesa(${m.numero},this.value)"></label>
         ${cuentaActionsHtml(m)}</div>`;
     }).join('')}</div>
+    <div class="section-h">Línea base (para comparar con Rabieta)</div>
+    ${baselineFormHtml()}
     <div class="section-h">Administración</div>
     <button class="btn primary sm" onclick="cargarEscenarioDemo()">${ic('clipboard')} Volver a cargar escenario de presentación</button>
     <button class="btn ghost sm" onclick="resetTodo()">${ic('refresh')} Reiniciar todo (afecta a todos los dispositivos conectados)</button>`;
@@ -1956,9 +2003,25 @@ function detalleAuditableHtml(m){
     ['Pagos con caja', m.a.pagosConCaja],
     ['Excepciones/reclamos', m.a.excepcionesReclamos],
   ];
+  // FASE E — Auditabilidad: si el dueño pregunta "¿de dónde sacaste este
+  // número?", esta es la respuesta exacta. Contadores crudos arriba,
+  // fórmulas en texto plano acá abajo — ninguna cuenta nueva, todo ya
+  // corrido en este mismo archivo (metricasAutoservicio, proyectarValor).
+  const costoHora = Number(state.costoHoraDemo);
+  const formulas = [
+    ['% autoservicio', 'resueltosPorRabieta ÷ momentosTotales × 100 (los 9 contadores de arriba forman un único universo, sin superposición)'],
+    ['Horas-persona liberadas', 'suma de minutos evitados por acción (supuesto de simulación, no medido) ÷ 60'],
+    ['Horas-persona por 100 cubiertos', 'horas-persona liberadas ÷ cubiertos reales × 100'],
+    ['Costo potencialmente evitado', costoHora>0 ? `horas-persona liberadas × $${costoHora}/h (costo/hora que vos cargaste)` : 'requiere que cargues un costo/hora — sin eso, nunca se muestra un monto'],
+    ['Proyección 7/30 días', '(valor de hoy ÷ segundos reales transcurridos hoy) × segundos del período — SIEMPRE una extrapolación, nunca una medición'],
+    ['Payback Rabieta', 'valor potencial liberado del mes − costo mensual que vos cargaste; el multiplicador es valor potencial ÷ costo, ambos sobre datos que vos ingresás'],
+    ['Ventas registradas (Pulso en vivo)', 'cobrado (pagos confirmados) + pendiente de cobro (cuentas pedidas sin pago) — ninguna otra fuente'],
+  ];
   return `<div class="card detalle-auditable">
     <div class="detalle-auditable-kicker">${ic('clipboard')} Cada número sale de un evento real registrado en esta sesión — nada estimado en esta lista.</div>
     <div class="detalle-auditable-grid">${filas.map(([label,valor])=>`<div class="detalle-fila"><span>${escapeHtml(label)}</span><b>${valor}</b></div>`).join('')}</div>
+    <div class="detalle-auditable-kicker" style="margin-top:12px;">${ic('chart')} Cómo se calcula cada número del Command Center</div>
+    <div class="detalle-formulas">${formulas.map(([label,formula])=>`<div class="detalle-formula"><b>${escapeHtml(label)}</b><span>${escapeHtml(formula)}</span></div>`).join('')}</div>
   </div>`;
 }
 function ahorroOperativoHtml(analytics, mesasOcupadas){
@@ -2013,6 +2076,169 @@ function ahorroOperativoHtml(analytics, mesasOcupadas){
     ${state.simuladorAbierto?simuladorDotacionHtml():''}
     ${state.detalleAuditableAbierto?detalleAuditableHtml(m):''}`;
 }
+
+/* ============== COMMAND CENTER V1 (Dueño) ==============
+   Todo lo de acá abajo alimenta commandCenterHtml() más abajo: AHORRO HOY
+   (ya cubierto por ahorroOperativoHtml, arriba, + proyeccionHtml para 7/30
+   días), PAYBACK RABIETA, PULSO EN VIVO y la línea base manual del local.
+   Ningún número nuevo se inventa acá — todo sale de metricasAutoservicio,
+   de state.mesas/state.analytics reales, o de lo que el dueño/encargado
+   carga a mano, siempre rotulado como tal. */
+
+// Extrapolación lineal simple del ritmo de HOY a 7/30 días — nunca una
+// medición real. Con muy poco tiempo transcurrido no proyecta nada: un
+// ritmo medido en pocos minutos, multiplicado por un mes entero, da
+// números físicamente imposibles (más horas-persona "liberadas" que horas
+// tiene el período) y eso es peor que no mostrar nada. 1800s (30 min) es un
+// piso conservador — todavía una extrapolación, nunca una medición, pero ya
+// no un ruido de arranque. Con el escenario de demo (que fija clockMs a un
+// puñado de minutos para simular un turno, no tiempo real transcurrido)
+// esto cae por debajo del umbral a propósito: mejor "todavía estamos
+// construyendo tu línea base" que un número de demo inflado 1000x.
+const PROYECCION_UMBRAL_SEG = 1800;
+function proyectarValor(valorHoy, segundosTranscurridos){
+  if(!Number.isFinite(valorHoy) || !Number.isFinite(segundosTranscurridos) || segundosTranscurridos<PROYECCION_UMBRAL_SEG) return null;
+  const porSegundo = valorHoy/segundosTranscurridos;
+  return {dia7:porSegundo*7*86400, dia30:porSegundo*30*86400};
+}
+// HOY / 7 DÍAS / 30 DÍAS (Fase C): clockMs son segundos reales transcurridos
+// desde el último reset (ver startClock en server.js), así que si ya pasaron
+// 7 o 30 días de ESE tipo, los totales acumulados (m.horasPersonaLiberadas,
+// etc.) ya SON el dato real de ese período completo — no hay que fabricar
+// historial por día. Si todavía no pasó ese tiempo, se muestra la
+// proyección extrapolada de hoy, siempre rotulada como tal.
+function proyeccionHtml(m){
+  const diasOperados = state.clockMs/86400;
+  const tiene7 = diasOperados>=7;
+  const tiene30 = diasOperados>=30;
+  const costoHora = Number(state.costoHoraDemo);
+  const tieneCosto = Number.isFinite(costoHora) && costoHora>0;
+  const costoEvitadoHoy = tieneCosto ? m.horasPersonaLiberadas*costoHora : null;
+  const proyHoras = proyectarValor(m.horasPersonaLiberadas, state.clockMs);
+  const proyCosto = tieneCosto ? proyectarValor(costoEvitadoHoy, state.clockMs) : null;
+  const fila = (label, valorReal, valorProy, tieneReal, formatear) => {
+    if(tieneReal) return `<div class="periodo-fila"><span class="pill real">REAL</span><b>${label}</b><span>${formatear(valorReal)}</span></div>`;
+    if(valorProy!==null) return `<div class="periodo-fila"><span class="pill proyeccion">PROYECCIÓN</span><b>${label}</b><span>${formatear(valorProy)}</span></div>`;
+    return `<div class="periodo-fila vacio"><b>${label}</b><span>Todavía estamos construyendo tu línea base.</span></div>`;
+  };
+  return `<div class="periodos">
+    <div class="periodos-kicker">${ic('chart')} Más allá de hoy</div>
+    ${fila('Horas-persona liberadas · 7 días', m.horasPersonaLiberadas, proyHoras?proyHoras.dia7:null, tiene7, v=>v.toFixed(1)+' h')}
+    ${fila('Horas-persona liberadas · 30 días', m.horasPersonaLiberadas, proyHoras?proyHoras.dia30:null, tiene30, v=>v.toFixed(1)+' h')}
+    ${tieneCosto ? fila('Valor potencial liberado · 7 días', costoEvitadoHoy, proyCosto?proyCosto.dia7:null, tiene7, v=>money(Math.round(v))) : ''}
+    ${tieneCosto ? fila('Valor potencial liberado · 30 días', costoEvitadoHoy, proyCosto?proyCosto.dia30:null, tiene30, v=>money(Math.round(v))) : ''}
+  </div>`;
+}
+// Valor mensual potencial para el payback: si ya operamos 30+ días reales,
+// es el total real acumulado; si no, es la proyección de 30 días — siempre
+// marcado cuál de los dos es.
+function valorPotencialMensual(m, costoHora){
+  if(!Number.isFinite(costoHora) || costoHora<=0) return null;
+  const costoEvitadoHoy = m.horasPersonaLiberadas*costoHora;
+  if(state.clockMs/86400>=30) return {valor:costoEvitadoHoy, real:true};
+  const proy = proyectarValor(costoEvitadoHoy, state.clockMs);
+  return proy ? {valor:proy.dia30, real:false} : null;
+}
+function actualizarCostoMensualRabietaDemo(value){ state.costoMensualRabietaDemo=value; render(); }
+// PAYBACK RABIETA: costo mensual SIEMPRE en blanco al cargar (nunca un plan
+// ni un precio precargado) — el dueño lo escribe si quiere ver el cálculo.
+function paybackRabietaHtml(m){
+  const costoHora = Number(state.costoHoraDemo);
+  const costoRabieta = Number(state.costoMensualRabietaDemo);
+  const tieneCostoRabieta = Number.isFinite(costoRabieta) && costoRabieta>0;
+  const potencial = valorPotencialMensual(m, costoHora);
+  return `<div class="card payback-card">
+    <div class="detalle-auditable-kicker">${ic('chart')} SIMULACIÓN — nunca un precio de Rabieta ni un sueldo inventado por el sistema; los dos montos los cargás vos.</div>
+    <label class="baseline-campo"><span>Costo mensual estimado de Rabieta (opcional)</span>
+      <input type="text" inputmode="decimal" class="nota" placeholder="Ingresá tu plan" value="${escapeHtml(state.costoMensualRabietaDemo)}" oninput="actualizarCostoMensualRabietaDemo(this.value)"></label>
+    ${!potencial ? `<div class="empty">Cargá un costo/hora en Ahorro hoy — y esperá un poco más de actividad — para ver el valor potencial mensual.</div>` : `
+      <div class="detalle-auditable-grid" style="margin-top:10px;">
+        <div class="detalle-fila"><span>Valor potencial liberado / mes</span><b>${money(Math.round(potencial.valor))}</b></div>
+        ${tieneCostoRabieta?`<div class="detalle-fila"><span>Costo Rabieta / mes</span><b>${money(Math.round(costoRabieta))}</b></div>
+        <div class="detalle-fila"><span>Resultado neto potencial</span><b>${money(Math.round(potencial.valor-costoRabieta))}</b></div>
+        <div class="detalle-fila"><span>Multiplicador de retorno</span><b>${(potencial.valor/costoRabieta).toFixed(1)}×</b></div>`
+        :`<div class="empty">Ingresá el costo mensual de Rabieta para ver el payback.</div>`}
+      </div>
+      <div class="empty" style="margin-top:6px;">${potencial.real?'Valor REAL — operación de 30 días o más.':'PROYECCIÓN — extrapolado del ritmo de hoy, no un ahorro medido.'}</div>`}
+  </div>`;
+}
+// PULSO EN VIVO: el estado operativo de ESTE momento, sin ninguna cuenta
+// nueva — cada campo sale directo de state.mesas/state.analytics o de una
+// suma exacta y documentada (ver detalleAuditableHtml → "Cómo se calcula").
+function itemsEnProduccionPorDestino(){
+  const counts = {cocina:0, barra:0};
+  state.mesas.forEach(mesa=>{
+    if(!mesa.pedido) return;
+    mesa.pedido.items.forEach(item=>{
+      if(item.estado==='enviado' || item.estado==='preparando') counts[itemDestino(item)]++;
+    });
+  });
+  return counts;
+}
+// Cubiertos REALMENTE sentados ahora mismo (solo mesas ocupadas) — distinto
+// de cubiertosTotalesSesion, que además suma lo ya acumulado de mesas
+// liberadas en esta sesión. Ver el mismo criterio de "ocupada" en
+// cubiertosTotalesSesion, arriba.
+function cubiertosActivosAhora(){
+  return state.mesas.reduce((suma,mesa)=>suma+(mesa.ocupada && Number.isInteger(mesa.cubiertos)?mesa.cubiertos:0),0);
+}
+function pulsoEnVivoHtml(analytics, mesasOcupadas){
+  const cubiertosActivos = cubiertosActivosAhora();
+  const pedidosAbiertos = state.mesas.filter(mesa=>mesa.pedido && !mesa.pago).length;
+  const produccion = itemsEnProduccionPorDestino();
+  const itemsListos = itemsListosParaEntregar(null).length;
+  const alertasAbiertasN = todasAlertasAbiertas().length;
+  const cuentasPendientes = state.mesas.filter(mesa=>mesa.cuentaPedida && !mesa.pago).length;
+  const cobrado = analytics.ventasDemo;
+  const pendienteDeCobro = state.mesas.reduce((suma,mesa)=>suma+(mesa.cuentaPedida && !mesa.pago?pedidoTotal(mesa):0),0);
+  const ventasRegistradas = cobrado+pendienteDeCobro;
+  return `<div class="grid cols-4 ahorro-grid">
+    ${statTile('Mesas ocupadas', mesasOcupadas+' / '+MESAS_TOTAL, null, null)}
+    ${statTile('Cubiertos activos', String(cubiertosActivos), 'personas sentadas ahora', null)}
+    ${statTile('Pedidos abiertos', String(pedidosAbiertos), null, null)}
+    ${statTile('Cuentas pendientes', String(cuentasPendientes), 'pidieron la cuenta, sin cobrar', cuentasPendientes?'downAlert':null)}
+  </div>
+  <div class="grid cols-4 ahorro-grid" style="margin-top:10px;">
+    ${statTile('Ítems en cocina', String(produccion.cocina), 'enviado o preparando', null)}
+    ${statTile('Ítems en barra', String(produccion.barra), 'enviado o preparando', null)}
+    ${statTile('Listos para entregar', String(itemsListos), null, itemsListos?'downAlert':null)}
+    ${statTile('Alertas abiertas', String(alertasAbiertasN), null, alertasAbiertasN?'downAlert':null)}
+  </div>
+  <div class="grid cols-3 ahorro-grid" style="margin-top:10px;">
+    ${statTile('Cobrado', money(cobrado), null, null)}
+    ${statTile('Pendiente de cobro', money(pendienteDeCobro), null, null)}
+    ${statTile('Ventas registradas', money(ventasRegistradas), 'cobrado + pendiente', null)}
+  </div>`;
+}
+// Línea base del local (Fase D): solo lectura acá — se carga desde el panel
+// de Encargado (ver baselineFormHtml/actualizarBaseline). Dueño la ve, no la
+// edita, para no duplicar el punto de carga de un dato operativo.
+function baselineResumenHtml(){
+  const b = state.baseline || emptyBaseline();
+  const cargado = BASELINE_CAMPOS.some(c=>b[c.key]!==null);
+  if(!cargado) return `<div class="empty">Todavía no hay línea base cargada por el local — se carga desde el panel de Encargado, para comparar ANTES DE RABIETA vs CON RABIETA en un futuro piloto.</div>`;
+  return `<div class="card baseline-card">
+    <div class="detalle-auditable-kicker">${ic('clipboard')} DATO CARGADO POR EL LOCAL — línea base de referencia, no una métrica medida por Rabieta.</div>
+    <div class="detalle-auditable-grid">${BASELINE_CAMPOS.map(c=>`<div class="detalle-fila"><span>${escapeHtml(c.label)}</span><b>${b[c.key]===null?'—':(c.unidad==='$'?money(b[c.key]):b[c.key]+(c.unidad?' '+c.unidad:''))}</b></div>`).join('')}</div>
+  </div>`;
+}
+function commandCenterHtml(analytics, mesasOcupadas){
+  const m = metricasAutoservicio(analytics);
+  return `<div class="command-center">
+    <span class="dueno-hero-kicker">RABIETA LOMITAS · EN VIVO</span>
+    <div class="section-h">Ahorro hoy</div>
+    ${ahorroOperativoHtml(analytics, mesasOcupadas)}
+    ${proyeccionHtml(m)}
+    <div class="section-h">Tu línea base</div>
+    ${baselineResumenHtml()}
+    <div class="section-h">Payback Rabieta</div>
+    ${paybackRabietaHtml(m)}
+    <div class="section-h">Pulso en vivo</div>
+    ${pulsoEnVivoHtml(analytics, mesasOcupadas)}
+    ${mesasAtencionHtml()}
+  </div>`;
+}
+
 function duenoAhoraHtml(analytics, mesasOcupadas, preparacionPromedio, ticketPromedio){
   return `<span class="dueno-hero-kicker">Ahora en Lomitas</span>
     <div class="dueno-hero">
@@ -2059,9 +2285,7 @@ function viewDueno(){
     <p class="view-sub">Panel de negocio de esta sesión. ${productosPendientes} productos todavía sin precio confirmado.</p>
     ${state.presentacionCargada?`<div class="mock-banner">${ic('checkring')} Escenario sintético de presentación activo. Estas métricas no corresponden a clientes ni ventas reales.</div>`:''}
     <div class="mock-banner">${ic('clipboard')} Los cobros son confirmaciones de demostración acumuladas por este sistema. No hay caja, POS ni dinero real conectado.</div>
-    ${ahorroOperativoHtml(analytics, mesasOcupadas)}
-    ${duenoAhoraHtml(analytics, mesasOcupadas, preparacionPromedio, ticketPromedio)}
-    ${mesasAtencionHtml()}
+    ${commandCenterHtml(analytics, mesasOcupadas)}
     <div class="section-h">Embudo operativo ahora</div>
     <div class="owner-funnel">
       ${flujo.map((paso,index)=>`<div class="funnel-step ${paso.value?'active':''}"><span class="funnel-index">${index+1}</span><div><b>${paso.label}</b><small>${paso.hint}</small></div><strong>${paso.value}</strong></div>`).join('')}
