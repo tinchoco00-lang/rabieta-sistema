@@ -76,7 +76,7 @@ const STAFF_TOKENS = new Map();
 const MESA_TOKEN_SECRET = process.env.MESA_TOKEN_SECRET || null;
 const MAX_BODY_BYTES = 32 * 1024;
 const PUBLIC_ACTIONS = new Set(['pedido_nuevo', 'llamar_mozo', 'pedir_cuenta', 'ayuda', 'resena_enviar', 'pago_sandbox_confirmar', 'pago_mercadopago_iniciar', 'consulta_registrar']);
-const STAFF_ACTIONS = new Set(['pedido_estado', 'alerta_atender', 'alerta_resolver', 'pago_demo_confirmar', 'mesa_liberar', 'demo_escenario_cargar', 'reset_demo', 'mesa_cubiertos_actualizar']);
+const STAFF_ACTIONS = new Set(['pedido_estado', 'alerta_atender', 'alerta_resolver', 'pago_demo_confirmar', 'mesa_liberar', 'demo_escenario_cargar', 'reset_demo', 'mesa_cubiertos_actualizar', 'baseline_actualizar']);
 const MESA_ACTIONS = new Set(['pedido_nuevo', 'pedido_estado', 'llamar_mozo', 'pedir_cuenta', 'ayuda', 'resena_enviar', 'pago_sandbox_confirmar', 'pago_demo_confirmar', 'mesa_liberar', 'pago_mercadopago_iniciar', 'consulta_registrar', 'mesa_cubiertos_actualizar']);
 const MAX_CUBIERTOS_POR_MESA = 50; // límite razonable de sanidad, no una capacidad real del local
 const PAGO_SANDBOX_MEDIOS = new Set(['tarjeta', 'mercado_pago']);
@@ -220,6 +220,35 @@ function registrarActividad(analytics, tipo, texto, clock) {
   if (analytics.actividad.length > 20) analytics.actividad.length = 20;
 }
 
+// Línea base manual del local (Command Center, Fase D): SOLO lo que el
+// restaurante carga a mano sobre su operación ANTES de Rabieta, para poder
+// comparar ANTES vs CON RABIETA en un futuro piloto. Nunca se inventa un
+// valor acá — todo arranca en null y cada campo se etiqueta en el panel de
+// Dueño como "DATO CARGADO POR EL LOCAL", nunca como una métrica real medida
+// por el sistema.
+const BASELINE_FIELDS = [
+  'horasPersonaPor100CubiertosBaseline',
+  'intervencionesHumanasPorMesaBaseline',
+  'cubiertosPorHoraPersonaBaseline',
+  'ventasPorHoraPersonaBaseline',
+  'costoLaboralPorCubiertoBaseline',
+];
+function seedBaseline() {
+  const baseline = { actualizadoTs: null };
+  BASELINE_FIELDS.forEach(field => { baseline[field] = null; });
+  return baseline;
+}
+function normalizeBaseline(value) {
+  const baseline = seedBaseline();
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return baseline;
+  BASELINE_FIELDS.forEach(field => {
+    if (value[field] === null) return;
+    if (Number.isFinite(value[field]) && value[field] >= 0) baseline[field] = value[field];
+  });
+  if (Number.isFinite(value.actualizadoTs) && value.actualizadoTs >= 0) baseline.actualizadoTs = value.actualizadoTs;
+  return baseline;
+}
+
 function seedState() {
   const mesas = [];
   for (let i = 1; i <= MESAS_TOTAL; i++) {
@@ -230,7 +259,7 @@ function seedState() {
       consultasVistas: [], // interactionId de consulta_registrar ya contados en esta sesión de mesa — evita inflar por recarga/retry
     });
   }
-  return { clockMs: 0, mesas, analytics: seedAnalytics(), presentacionCargada: false };
+  return { clockMs: 0, mesas, analytics: seedAnalytics(), presentacionCargada: false, baseline: seedBaseline() };
 }
 let state = seedState();
 let mutationQueue = Promise.resolve();
@@ -594,6 +623,7 @@ function normalizeRecoveredState(recoveredState) {
   const hadAnalytics = recoveredState.analytics && typeof recoveredState.analytics === 'object';
   recoveredState.analytics = normalizeAnalytics(recoveredState.analytics);
   recoveredState.presentacionCargada = recoveredState.presentacionCargada === true;
+  recoveredState.baseline = normalizeBaseline(recoveredState.baseline);
   let highestId = 0;
   const normalizedItemIds = new Set();
   recoveredState.analytics.resenas.forEach(review => {
@@ -1093,6 +1123,26 @@ async function handleAction(msg) {
       m.ocupada = false; m.pedido = null; m.cuentaPedida = false; m.cuentaPedidaTs = null; m.pago = null; m.resenaEnviada = false; m.alertas = [];
       m.cubiertos = null; m.consultasVistas = [];
       registrarActividad(state.analytics, 'mesa', `Mesa ${m.numero} se liberó`, state.clockMs);
+      break;
+    }
+    case 'baseline_actualizar': {
+      // Cada campo es opcional e independiente: null borra ese campo puntual
+      // sin tocar los demás, así el local puede completar la línea base de a
+      // poco. Solo Encargado (ver staffRoleCan) — mismo criterio que
+      // mesa_cubiertos_actualizar: dato operativo, no algo que se autocarga.
+      const siguiente = { ...state.baseline };
+      let huboCampo = false;
+      for (const campo of BASELINE_FIELDS) {
+        if (!(campo in msg)) continue;
+        huboCampo = true;
+        const valor = msg[campo];
+        if (valor === null) { siguiente[campo] = null; continue; }
+        if (!Number.isFinite(valor) || valor < 0) return actionError(400, `Baseline inválida: ${campo}`);
+        siguiente[campo] = valor;
+      }
+      if (!huboCampo) return actionError(400, 'No se envió ningún campo de línea base');
+      siguiente.actualizadoTs = state.clockMs;
+      state.baseline = siguiente;
       break;
     }
     case 'demo_escenario_cargar': {
