@@ -2272,3 +2272,283 @@ test('dueño ve en 10 segundos qué mesas concretas necesitan atención, con la 
   assert.match(source, /class="attention-list"/);
   assert.match(source, /Ninguna mesa necesita atención ahora mismo/);
 });
+
+/* ============== COMMAND CENTER V1 (Fase G) ==============
+   12 criterios pedidos: proyección nunca real; sin costo/hora no hay ahorro
+   monetario; sin precio de Rabieta no hay payback inventado; cubiertos
+   libres no inflan; cero denominadores no rompe; % autoservicio sigue
+   cerrando (cubierto por el test de metricasAutoservicio, sin tocar);
+   valor laboral correcto; proyección 7/30 correcta; baseline manual
+   distinta de lo medido; Dueño no rompe sin actividad; demo marcada como
+   demo; nada financiero inventado por default. */
+
+function extractFn(source, signatureRegexSource) {
+  const match = source.match(new RegExp(signatureRegexSource + '[\\s\\S]*?\\r?\\n\\}\\r?\\n'));
+  assert.ok(match, `no se encontró la función: ${signatureRegexSource}`);
+  return match[0];
+}
+
+test('proyectarValor (public/app.js) extrapola linealmente 7/30 días y nunca inventa un número con poca señal (cero denominador incluido)', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  const umbralSource = source.match(/const PROYECCION_UMBRAL_SEG = \d+;/)[0];
+  const fnSource = extractFn(source, 'function proyectarValor\\(valorHoy, segundosTranscurridos\\)\\{');
+  const ctx = {};
+  vm.createContext(ctx);
+  vm.runInContext(`${umbralSource}\n${fnSource}`, ctx);
+  const proyectarValor = vm.runInContext('proyectarValor', ctx);
+
+  // Cero denominador (sin tiempo transcurrido) o muy poca señal: null, nunca NaN/Infinity.
+  assert.equal(proyectarValor(100, 0), null);
+  assert.equal(proyectarValor(100, 1799), null);
+  assert.equal(proyectarValor(NaN, 3600), null);
+
+  // Matemática exacta: ritmo de hoy (valor/seg) × segundos del período.
+  const r = proyectarValor(120, 3600); // 120 en 1 hora = 1/30 por segundo
+  assert.equal(r.dia7, (120 / 3600) * 7 * 86400);
+  assert.equal(r.dia30, (120 / 3600) * 30 * 86400);
+  assert.ok(Number.isFinite(r.dia7) && Number.isFinite(r.dia30));
+});
+
+test('valorPotencialMensual (public/app.js) para PAYBACK RABIETA: sin costo/hora no hay ningún monto, y a los 30+ días reales de operación usa el total real en vez de proyectar', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  const umbralSource = source.match(/const PROYECCION_UMBRAL_SEG = \d+;/)[0];
+  const proyectarSource = extractFn(source, 'function proyectarValor\\(valorHoy, segundosTranscurridos\\)\\{');
+  const valorSource = extractFn(source, 'function valorPotencialMensual\\(m, costoHora\\)\\{');
+  const ctx = { state: { clockMs: 3600 } };
+  vm.createContext(ctx);
+  vm.runInContext(`${umbralSource}\n${proyectarSource}\n${valorSource}`, ctx);
+  const valorPotencialMensual = vm.runInContext('valorPotencialMensual', ctx);
+
+  // Sin costo/hora (undefined, 0, negativo, texto vacío vía Number('')=0): nunca un monto.
+  assert.equal(valorPotencialMensual({ horasPersonaLiberadas: 5 }, NaN), null);
+  assert.equal(valorPotencialMensual({ horasPersonaLiberadas: 5 }, 0), null);
+  assert.equal(valorPotencialMensual({ horasPersonaLiberadas: 5 }, -10), null);
+
+  // Con costo/hora pero poca actividad/tiempo: todavía no hay señal para proyectar.
+  ctx.state.clockMs = 10;
+  assert.equal(valorPotencialMensual({ horasPersonaLiberadas: 0.01 }, 1000), null);
+
+  // Con costo/hora y suficiente tiempo, pero menos de 30 días reales: PROYECCIÓN.
+  ctx.state.clockMs = 3600; // 1 hora real, muy lejos de 30 días
+  const proyectado = valorPotencialMensual({ horasPersonaLiberadas: 2 }, 1000); // costoEvitadoHoy = 2000
+  assert.equal(proyectado.real, false);
+  assert.equal(proyectado.valor, (2000 / 3600) * 30 * 86400);
+
+  // A partir de 30 días reales de operación (clockMs), el total acumulado YA
+  // es el dato real del período completo — no se multiplica ni se extrapola.
+  ctx.state.clockMs = 31 * 86400;
+  const real = valorPotencialMensual({ horasPersonaLiberadas: 40 }, 1000); // costoEvitadoHoy = 40000, real acumulado
+  assert.equal(real.real, true);
+  assert.equal(real.valor, 40000);
+});
+
+test('cubiertosActivosAhora (public/app.js) — Pulso en vivo: solo cuenta mesas realmente ocupadas, igual criterio que cubiertosTotalesSesion', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  const fnSource = extractFn(source, 'function cubiertosActivosAhora\\(\\)\\{');
+  const ctx = {
+    state: { mesas: [
+      { ocupada: true, cubiertos: 4 },
+      { ocupada: true, cubiertos: null },
+      { ocupada: false, cubiertos: 9 }, // libre con cubiertos cargados por error: no cuenta
+      { ocupada: true, cubiertos: 6 },
+    ] },
+  };
+  vm.createContext(ctx);
+  vm.runInContext(fnSource, ctx);
+  const cubiertosActivosAhora = vm.runInContext('cubiertosActivosAhora', ctx);
+  assert.equal(cubiertosActivosAhora(), 10); // 4 + 6, nunca los 9 de la mesa libre
+  ctx.state.mesas = [];
+  assert.equal(cubiertosActivosAhora(), 0); // cero mesas: no rompe, no da NaN
+});
+
+test('itemsEnProduccionPorDestino (public/app.js) — Pulso en vivo: cuenta ítems enviado/preparando por cocina y barra, ignora entregado/listo', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  const fnSource = extractFn(source, 'function itemsEnProduccionPorDestino\\(\\)\\{');
+  const ctx = {
+    itemDestino: item => item.destino,
+    state: { mesas: [
+      { pedido: { items: [
+        { estado: 'enviado', destino: 'cocina' },
+        { estado: 'preparando', destino: 'cocina' },
+        { estado: 'listo', destino: 'cocina' },
+        { estado: 'enviado', destino: 'barra' },
+        { estado: 'entregado', destino: 'barra' },
+      ] } },
+      { pedido: null },
+    ] },
+  };
+  vm.createContext(ctx);
+  vm.runInContext(fnSource, ctx);
+  const itemsEnProduccionPorDestino = vm.runInContext('itemsEnProduccionPorDestino', ctx);
+  // comparación por JSON: el resultado viene de un contexto vm distinto, deepEqual lo trataría como de otra clase
+  assert.equal(JSON.stringify(itemsEnProduccionPorDestino()), JSON.stringify({ cocina: 2, barra: 1 }));
+});
+
+test('paybackRabietaHtml (public/app.js) nunca muestra un monto sin costo/hora, y nunca un payback sin costo de Rabieta cargado por el dueño', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  const umbralSource = source.match(/const PROYECCION_UMBRAL_SEG = \d+;/)[0];
+  const proyectarSource = extractFn(source, 'function proyectarValor\\(valorHoy, segundosTranscurridos\\)\\{');
+  const valorSource = extractFn(source, 'function valorPotencialMensual\\(m, costoHora\\)\\{');
+  const actualizarSource = extractFn(source, 'function actualizarCostoMensualRabietaDemo\\(value\\)\\{');
+  const paybackSource = extractFn(source, 'function paybackRabietaHtml\\(m\\)\\{');
+  const ctx = {
+    ic: () => '', escapeHtml: s => String(s), money: n => '$' + n,
+    render() {},
+    state: { clockMs: 3600, costoHoraDemo: '', costoMensualRabietaDemo: '' },
+  };
+  vm.createContext(ctx);
+  vm.runInContext(`${umbralSource}\n${proyectarSource}\n${valorSource}\n${actualizarSource}\n${paybackSource}`, ctx);
+  const paybackRabietaHtml = vm.runInContext('paybackRabietaHtml', ctx);
+  const m = { horasPersonaLiberadas: 5 };
+
+  // 1) Sin costo/hora cargado: ningún monto de payback, solo el pedido de más datos.
+  let html = paybackRabietaHtml(m);
+  assert.doesNotMatch(html, /Valor potencial liberado/);
+  assert.match(html, /Cargá un costo\/hora/);
+
+  // 2) Con costo/hora pero SIN costo de Rabieta: se ve el valor potencial, pero
+  // nunca un "Resultado neto" ni un multiplicador — eso sería inventar el payback.
+  ctx.state.costoHoraDemo = '1000';
+  html = paybackRabietaHtml(m);
+  assert.match(html, /Valor potencial liberado/);
+  assert.doesNotMatch(html, /Resultado neto potencial/);
+  assert.doesNotMatch(html, /Multiplicador de retorno/);
+  assert.match(html, /Ingresá el costo mensual de Rabieta/);
+
+  // 3) Con ambos cargados: recién ahí aparece el payback completo.
+  ctx.state.costoMensualRabietaDemo = '50000';
+  html = paybackRabietaHtml(m);
+  assert.match(html, /Resultado neto potencial/);
+  assert.match(html, /Multiplicador de retorno/);
+  assert.match(html, /PROYECCIÓN/); // 1h de clockMs está lejísimos de 30 días reales
+});
+
+test('pulsoEnVivoHtml (public/app.js) no rompe (ni da NaN) con el salón completamente vacío, y refleja mesas/cubiertos/cuentas reales cuando hay actividad', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  const cubiertosActivosSource = extractFn(source, 'function cubiertosActivosAhora\\(\\)\\{');
+  const produccionSource = extractFn(source, 'function itemsEnProduccionPorDestino\\(\\)\\{');
+  const pulsoSource = extractFn(source, 'function pulsoEnVivoHtml\\(analytics, mesasOcupadas\\)\\{');
+  const ctx = {
+    itemDestino: item => item.destino,
+    pedidoTotal: m => m.pedido ? m.pedido.items.reduce((sum, item) => sum + (item.precio || 0), 0) : 0,
+    itemsListosParaEntregar: () => [],
+    todasAlertasAbiertas: () => [],
+    statTile: (label, value) => `<div>${label}:${value}</div>`,
+    money: n => '$' + n,
+    MESAS_TOTAL: 0,
+    state: { mesas: [] },
+  };
+  vm.createContext(ctx);
+  vm.runInContext(`${cubiertosActivosSource}\n${produccionSource}\n${pulsoSource}`, ctx);
+  const pulsoEnVivoHtml = vm.runInContext('pulsoEnVivoHtml', ctx);
+
+  // Salón vacío: no debe tirar excepción ni escribir NaN/undefined/Infinity en ningún tile.
+  const vacio = pulsoEnVivoHtml({ ventasDemo: 0 }, 0);
+  assert.doesNotMatch(vacio, /NaN|undefined|Infinity/);
+  assert.match(vacio, /Mesas ocupadas:0/);
+  assert.match(vacio, /Cobrado:\$0/);
+
+  // Con una mesa ocupada con cubiertos y una cuenta pedida sin pagar todavía:
+  ctx.state.mesas = [
+    { ocupada: true, cubiertos: 3, pedido: { items: [{ precio: 5000 }, { precio: 2000, estado: 'preparando', destino: 'cocina' }] }, cuentaPedida: true, pago: null },
+  ];
+  const conActividad = pulsoEnVivoHtml({ ventasDemo: 12000 }, 1);
+  assert.match(conActividad, /Cubiertos activos:3/);
+  assert.match(conActividad, /Pendiente de cobro:\$7000/); // pedidoTotal de la única mesa con cuenta pedida y sin pago
+  assert.match(conActividad, /Ventas registradas:\$19000/); // 12000 cobrado + 7000 pendiente
+});
+
+test('baselineResumenHtml (public/app.js) rotula la línea base como "DATO CARGADO POR EL LOCAL", nunca como una métrica medida por Rabieta', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  const emptyBaselineSource = extractFn(source, 'function emptyBaseline\\(\\)\\{');
+  const camposSource = source.match(/const BASELINE_CAMPOS = \[[\s\S]*?\];/)[0];
+  const fnSource = extractFn(source, 'function baselineResumenHtml\\(\\)\\{');
+  const ctx = {
+    ic: () => '', escapeHtml: s => String(s), money: n => '$' + n,
+    state: {},
+  };
+  vm.createContext(ctx);
+  vm.runInContext(`${emptyBaselineSource}\n${camposSource}\n${fnSource}`, ctx);
+  const baselineResumenHtml = vm.runInContext('baselineResumenHtml', ctx);
+
+  // Sin baseline cargada: estado honesto, ningún número inventado.
+  let html = baselineResumenHtml();
+  assert.match(html, /Todavía no hay línea base cargada/);
+
+  // Con baseline cargada: se distingue explícitamente de una métrica real medida.
+  ctx.state.baseline = { horasPersonaPor100CubiertosBaseline: 12.5, intervencionesHumanasPorMesaBaseline: null, cubiertosPorHoraPersonaBaseline: null, ventasPorHoraPersonaBaseline: null, costoLaboralPorCubiertoBaseline: null, actualizadoTs: 500 };
+  html = baselineResumenHtml();
+  assert.match(html, /DATO CARGADO POR EL LOCAL/);
+  assert.match(html, /12\.5/);
+});
+
+test('baseline_actualizar (server.js): solo Encargado la carga, valida números ≥0, actualiza un campo por vez sin pisar los demás, y separa la línea base del resto de analytics', async () => {
+  await resetState();
+  const mozo = await loginAsCached('mozo');
+  const dueno = await loginAsCached('dueno');
+  const encargado = await loginAsCached('encargado');
+
+  assert.equal((await action({ type: 'baseline_actualizar', horasPersonaPor100CubiertosBaseline: 10 })).status, 401);
+  assert.equal((await action({ type: 'baseline_actualizar', horasPersonaPor100CubiertosBaseline: 10 }, mozo.token)).status, 403);
+  assert.equal((await action({ type: 'baseline_actualizar', horasPersonaPor100CubiertosBaseline: 10 }, dueno.token)).status, 403);
+
+  assert.equal((await action({ type: 'baseline_actualizar', horasPersonaPor100CubiertosBaseline: -1 }, encargado.token)).status, 400);
+  assert.equal((await action({ type: 'baseline_actualizar' }, encargado.token)).status, 400); // ningún campo enviado
+
+  let staffState = await getStaffState();
+  assert.equal(staffState.baseline.horasPersonaPor100CubiertosBaseline, null);
+  assert.equal(staffState.baseline.actualizadoTs, null);
+
+  assert.equal((await action({ type: 'baseline_actualizar', horasPersonaPor100CubiertosBaseline: 8.5 }, encargado.token)).status, 200);
+  staffState = await getStaffState();
+  assert.equal(staffState.baseline.horasPersonaPor100CubiertosBaseline, 8.5);
+  assert.equal(staffState.baseline.ventasPorHoraPersonaBaseline, null); // los demás campos no se tocaron
+  assert.ok(Number.isFinite(staffState.baseline.actualizadoTs));
+
+  // Cargar otro campo no pisa el primero.
+  assert.equal((await action({ type: 'baseline_actualizar', ventasPorHoraPersonaBaseline: 25000 }, encargado.token)).status, 200);
+  staffState = await getStaffState();
+  assert.equal(staffState.baseline.horasPersonaPor100CubiertosBaseline, 8.5);
+  assert.equal(staffState.baseline.ventasPorHoraPersonaBaseline, 25000);
+
+  // La línea base es independiente del resto de analytics: no la toca ninguna venta/pedido real.
+  assert.equal((await action({ type: 'pedido_nuevo', mesa: 1, items: [{ productoId: 'hummus-rabieta' }] })).status, 200);
+  staffState = await getStaffState();
+  assert.equal(staffState.baseline.horasPersonaPor100CubiertosBaseline, 8.5);
+
+  // null limpia un campo puntual, igual que mesa_cubiertos_actualizar.
+  assert.equal((await action({ type: 'baseline_actualizar', horasPersonaPor100CubiertosBaseline: null }, encargado.token)).status, 200);
+  staffState = await getStaffState();
+  assert.equal(staffState.baseline.horasPersonaPor100CubiertosBaseline, null);
+  await resetState();
+});
+
+test('reset_demo deja la línea base en blanco (nada financiero ni operativo inventado por default) y ningún cliente/mozo/cocina ve la baseline', async () => {
+  await resetState();
+  const encargado = await loginAsCached('encargado');
+  const cocina = await loginAsCached('cocina');
+  assert.equal((await action({ type: 'baseline_actualizar', costoLaboralPorCubiertoBaseline: 900 }, encargado.token)).status, 200);
+  await resetState();
+  const staffState = await getStaffState();
+  assert.deepEqual(Object.keys(staffState.baseline).sort(), [
+    'actualizadoTs', 'costoLaboralPorCubiertoBaseline', 'cubiertosPorHoraPersonaBaseline',
+    'horasPersonaPor100CubiertosBaseline', 'intervencionesHumanasPorMesaBaseline', 'ventasPorHoraPersonaBaseline',
+  ].sort());
+  Object.values(staffState.baseline).forEach(value => assert.equal(value, null));
+
+  // Cocina (y por extensión mozo/cliente, que reciben aún menos estado) no
+  // recibe baseline ni analytics — visibleState los limita a clockMs/mesas.
+  const cocinaState = (await getStaffStateWithToken(cocina.token)).state;
+  assert.equal(cocinaState.baseline, undefined);
+  assert.equal(cocinaState.analytics, undefined);
+});
+
+test('commandCenterHtml / viewDueno (public/app.js) mantienen el aviso de escenario sintético cuando la demo está cargada — nunca se presenta como dato real', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  // El aviso de "Escenario sintético de presentación activo" sigue arriba de
+  // commandCenterHtml (que agrupa Ahorro hoy / Payback / Pulso en vivo /
+  // Requiere tu atención) en viewDueno — ninguna cifra del Command Center se
+  // muestra sin ese aviso cuando la demo está activa.
+  assert.match(source, /presentacionCargada\?`<div class="mock-banner">.*Escenario sintético de presentación activo[\s\S]*?\$\{commandCenterHtml\(analytics, mesasOcupadas\)\}/);
+  assert.match(source, /RABIETA LOMITAS · EN VIVO/);
+});
