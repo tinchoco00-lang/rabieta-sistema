@@ -1777,14 +1777,62 @@ test('el panel de staff genera QR de mesa localmente y conserva un enlace utiliz
   assert.match(source, /target="_blank" rel="noopener"/);
   assert.match(source, /Imprimir todos los QR/);
   assert.match(source, /Impresión bloqueada sin identidad segura/);
+  assert.match(source, /function descargarMesaQr\(numero\)/);
+  assert.match(source, /rabieta-mesa-\$\{String\(numero\)\.padStart\(2,'0'\)\}\.svg/);
+  assert.match(source, /new Blob\(\[contenido\],\{type:'image\/svg\+xml;charset=utf-8'\}\)/);
+  assert.match(source, /URL\.revokeObjectURL\(url\)/);
+  assert.match(source, /links\.secure\?`onclick="descargarMesaQr\(\$\{mesa\.numero\}\)"`:'disabled'/);
+  assert.match(source, /Descargar SVG/);
+  assert.match(source, /Descarga bloqueada/);
   assert.match(source, /document\.body\.classList\.add\('printing-qrs'\)/);
   assert.match(source, /window\.addEventListener\('afterprint'/);
   assert.match(styles, /@media print/);
   assert.match(styles, /grid-template-columns:repeat\(3,1fr\)/);
+  assert.match(styles, /\.qr-actions\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
   assert.match(staffHtml, /\/vendor\/qrcode\.js/);
   assert.doesNotMatch(staffHtml, /cdnjs|unpkg/);
   assert.match(qrLicense, /MIT License/);
   assert.doesNotMatch(source, /api\.qrserver|chart\.googleapis/);
+
+  const downloadImplementation = source.match(/function descargarMesaQr\(numero\)\{[\s\S]*?\n\}/);
+  assert.ok(downloadImplementation, 'debe existir la descarga local de un QR individual');
+  let selected = '';
+  let mounted = false;
+  let xmlns = null;
+  let appended = false;
+  let clicked = false;
+  let removed = false;
+  let revoked = '';
+  let createdBlob = null;
+  const clone = { setAttribute(name, value) { if(name === 'xmlns') xmlns = value; } };
+  const link = { href: '', download: '', click() { clicked = true; }, remove() { removed = true; } };
+  vm.runInNewContext(`${downloadImplementation[0]}; descargarMesaQr(7)`, {
+    state: { mesaLinks: { secure: true } },
+    montarMesaQrs() { mounted = true; },
+    document: {
+      querySelector(value) { selected = value; return { cloneNode() { return clone; } }; },
+      createElement(name) { assert.equal(name, 'a'); return link; },
+      body: { appendChild(value) { assert.equal(value, link); appended = true; } },
+    },
+    XMLSerializer: class { serializeToString(value) { assert.equal(value, clone); return '<svg />'; } },
+    Blob: class { constructor(parts, options) { this.parts = parts; this.type = options.type; createdBlob = this; } },
+    URL: {
+      createObjectURL(value) { assert.equal(value, createdBlob); return 'blob:mesa-7'; },
+      revokeObjectURL(value) { revoked = value; },
+    },
+    setTimeout(callback) { callback(); },
+  });
+  assert.equal(mounted, true);
+  assert.equal(selected, '#mesaQr7 svg');
+  assert.equal(xmlns, 'http://www.w3.org/2000/svg');
+  assert.equal(createdBlob.type, 'image/svg+xml;charset=utf-8');
+  assert.match(createdBlob.parts[0], /<\?xml version="1\.0" encoding="UTF-8"\?>/);
+  assert.equal(link.href, 'blob:mesa-7');
+  assert.equal(link.download, 'rabieta-mesa-07.svg');
+  assert.equal(appended, true);
+  assert.equal(clicked, true);
+  assert.equal(removed, true);
+  assert.equal(revoked, 'blob:mesa-7');
 });
 
 test('el asistente ofrece consulta libre local, resultados accionables y declara su alcance', () => {
