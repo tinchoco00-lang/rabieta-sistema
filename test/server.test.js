@@ -1595,6 +1595,28 @@ test('cliente ve estado y tiempo realtime de cada ítem del pedido', () => {
   assert.match(source, /class="customer-order-meta"[\s\S]*itemElapsedLabel\(it\)/);
 });
 
+test('cliente ve si Cocina o Barra prepara cada producto y el resumen del recorrido', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  const itemDestinoSource = source.match(/function itemDestino\(it\)\{[^\n]+\}/)[0];
+  const resumenSource = source.match(/function resumenProduccionCliente\(items\)\{[\s\S]*?\r?\n\}/)[0];
+  const ctx = { DESTINO_LABELS: { cocina:'Cocina', barra:'Barra' } };
+  vm.createContext(ctx);
+  vm.runInContext(itemDestinoSource, ctx);
+  vm.runInContext(resumenSource, ctx);
+  ctx.items = [{destino:'cocina'},{destino:'barra'},{destino:'barra'},{destino:'legacy'}];
+  const resumen = JSON.parse(vm.runInContext('JSON.stringify(resumenProduccionCliente(items))', ctx));
+  assert.deepEqual(resumen, [
+    {destino:'cocina',label:'Cocina',cantidad:2},
+    {destino:'barra',label:'Barra',cantidad:2},
+  ]);
+  assert.match(source, /class="customer-production-route"/);
+  assert.match(source, /Cada sector actualiza sus productos en vivo/);
+  assert.match(source, /Lo prepara \$\{DESTINO_LABELS\[itemDestino\(it\)\]\}/);
+  const css = fs.readFileSync(path.join(root, 'public', 'rabieta.css'), 'utf8');
+  assert.match(css, /\.customer-production-route\{/);
+  assert.match(css, /\.customer-order-station\.barra\{/);
+});
+
 test('la sesión de personal se guarda localmente y sobrevive a un reload; vence de forma segura ante un 401', () => {
   const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
   const sessionBlock = source.match(/function setStaffToken\(token\)\{[\s\S]*?\nfunction staffLogout\(\)\{[\s\S]*?\r?\n\}\r?\n/);

@@ -290,6 +290,22 @@ function resumenPedidoCliente(pedido){
   return {cantidades,total,entregados,progreso:total?Math.round(entregados/total*100):0,tono,titulo,detalle};
 }
 function itemEstadoClass(estado){ return estado==='enviado'?'importante':estado==='preparando'?'normal':'libre'; }
+function resumenProduccionCliente(items){
+  const cantidades={cocina:0,barra:0};
+  (Array.isArray(items)?items:[]).forEach(item=>{ cantidades[itemDestino(item)]++; });
+  return ['cocina','barra']
+    .filter(destino=>cantidades[destino]>0)
+    .map(destino=>({destino,label:DESTINO_LABELS[destino],cantidad:cantidades[destino]}));
+}
+function produccionClienteHtml(items){
+  const resumen=resumenProduccionCliente(items);
+  if(!resumen.length) return '';
+  const mixto=resumen.length>1;
+  return `<div class="customer-production-route" aria-label="Recorrido de preparación del pedido">
+    <div><strong>${mixto?'Cocina + Barra':'Preparación en '+resumen[0].label}</strong><span>${mixto?'Cada sector actualiza sus productos en vivo.':'Este sector actualiza cada producto en vivo.'}</span></div>
+    <div class="customer-production-counts">${resumen.map(grupo=>`<span class="${grupo.destino}"><b>${grupo.label}</b>${grupo.cantidad} ${grupo.cantidad===1?'producto':'productos'}</span>`).join('')}</div>
+  </div>`;
+}
 function pedidoTotal(m){ return m.pedido ? m.pedido.items.reduce((sum,item)=>sum+(item.precio||0),0) : 0; }
 function resumenCuentaEnVivo(mesa){
   const items=mesa && mesa.pedido && Array.isArray(mesa.pedido.items) ? mesa.pedido.items : [];
@@ -1204,6 +1220,7 @@ function viewCliente(){
           : '';
     pedidoStatusHtml = `<div class="card" id="customer-order-status">
       <div style="font-weight:800;font-size:13.5px;margin-bottom:4px;">Tu pedido</div>
+      ${produccionClienteHtml(mesa.pedido.items)}
       <div class="customer-live-summary ${resumen.tono}" role="status" aria-live="polite">
         <div class="customer-live-copy"><span>EN VIVO</span><strong>${resumen.titulo}</strong><small>${resumen.detalle}</small></div>
         <div class="customer-live-progress" role="progressbar" aria-label="Ítems entregados" aria-valuemin="0" aria-valuemax="${resumen.total}" aria-valuenow="${resumen.entregados}"><i style="--customer-progress:${resumen.progreso}%"></i></div>
@@ -1212,7 +1229,7 @@ function viewCliente(){
         </div>
       </div>
       <ul class="customer-order-items">
-        ${mesa.pedido.items.map(it=>`<li><div>${variasRondas?`<span class="item-round">Ronda ${it.ronda||1}</span>`:''}${escapeHtml(it.nombre)}${it.notas?` — "${escapeHtml(it.notas)}"`:''}</div>
+        ${mesa.pedido.items.map(it=>`<li><div class="customer-order-name">${variasRondas?`<span class="item-round">Ronda ${it.ronda||1}</span>`:''}${escapeHtml(it.nombre)}${it.notas?` — "${escapeHtml(it.notas)}"`:''}<small class="customer-order-station ${itemDestino(it)}">Lo prepara ${DESTINO_LABELS[itemDestino(it)]}</small></div>
           <div class="customer-order-meta"><span class="pill ${itemEstadoClass(it.estado)}">${PEDIDO_LABELS[it.estado]}</span><span>${itemElapsedLabel(it)}</span></div></li>`).join('')}
       </ul>${cuentaEnVivoHtml(mesa)}${!mesa.cuentaPedida?`<div class="repeat-order-row"><button class="btn ghost sm" onclick="repetirUltimaRonda()">${ic('refresh')} Agregar última ronda al carrito</button><span aria-live="polite">${escapeHtml(state.clienteRepetirAviso)}</span></div>`:''}${pagoHtml}</div>`;
   }
