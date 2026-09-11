@@ -787,11 +787,26 @@ function descargarMesaQr(numero){
 }
 function imprimirMesaQrs(){
   if(!state.mesaLinks || !state.mesaLinks.secure) return;
+  limpiarImpresionMesaQrs();
   montarMesaQrs();
   document.body.classList.add('printing-qrs');
   window.print();
 }
-window.addEventListener('afterprint',()=>document.body.classList.remove('printing-qrs'));
+function limpiarImpresionMesaQrs(){
+  document.body.classList.remove('printing-qrs','printing-single-qr');
+  document.querySelector('.qr-print-target')?.classList.remove('qr-print-target');
+}
+function imprimirMesaQr(numero){
+  if(!state.mesaLinks || !state.mesaLinks.secure || !mesaLink(numero)) return;
+  montarMesaQrs();
+  const card=document.querySelector(`[data-qr-mesa="${numero}"]`);
+  if(!card) return;
+  limpiarImpresionMesaQrs();
+  card.classList.add('qr-print-target');
+  document.body.classList.add('printing-qrs','printing-single-qr');
+  window.print();
+}
+window.addEventListener('afterprint',limpiarImpresionMesaQrs);
 function lanBannerHtml(){
   const esLocalhost = location.hostname==='localhost' || location.hostname==='127.0.0.1';
   if(!esLocalhost) return '';
@@ -812,13 +827,14 @@ function viewMesaQrs(){
     <div class="${links.secure?'secure-banner':'mock-banner'}">${ic(links.secure?'lock':'warning')} ${links.secure?'Identidad segura activa: cada QR queda vinculado a una sola mesa.':'Modo compatible: activá la identidad segura de mesas antes de imprimir los QR definitivos.'}</div>
     ${lanBannerHtml()}
     <div class="qr-toolbar"><div><strong>Señalética lista para las ${links.mesas.length} mesas</strong><span>Genera una hoja A4 limpia, sin controles internos, para imprimir o guardar como PDF.</span></div><button class="btn primary" ${links.secure?'onclick="imprimirMesaQrs()"':'disabled'}>${ic('receipt')} ${links.secure?'Imprimir todos los QR':'Impresión bloqueada sin identidad segura'}</button></div>
-    <div class="qr-grid">${links.mesas.map(mesa=>`<article class="qr-card">
+    <div class="qr-grid">${links.mesas.map(mesa=>`<article class="qr-card" data-qr-mesa="${mesa.numero}">
       <div class="qr-title"><strong>Mesa ${mesa.numero}</strong><span>${escapeHtml(mesa.mozo)}</span></div><div class="qr-print-only qr-instruction">Escaneá para ver la carta, pedir y llamar al salón.</div>
       <div class="qr-code" id="mesaQr${mesa.numero}"><span>Generando QR…</span></div>
       <div class="qr-state"><span class="pill ${mesa.ocupada?'ocupada':'libre'}">${mesa.ocupada?'Ocupada':'Libre'}</span></div>
       <div class="qr-actions"><button class="btn primary sm" data-copy-mesa="${mesa.numero}" onclick="copiarMesaLink(${mesa.numero},'${mesa.path}')">Copiar enlace</button>
       <a class="btn ghost sm" href="${mesa.path}" target="_blank" rel="noopener">Abrir mesa</a>
-      <button class="btn ghost sm" ${links.secure?`onclick="descargarMesaQr(${mesa.numero})"`:'disabled'}>${links.secure?'Descargar SVG':'Descarga bloqueada'}</button></div>
+      <button class="btn ghost sm" ${links.secure?`onclick="descargarMesaQr(${mesa.numero})"`:'disabled'}>${links.secure?'Descargar SVG':'Descarga bloqueada'}</button>
+      <button class="btn ghost sm qr-print-one" ${links.secure?`onclick="imprimirMesaQr(${mesa.numero})"`:'disabled'}>${ic('receipt')} ${links.secure?'Imprimir esta mesa':'Impresión bloqueada'}</button></div>
     </article>`).join('')}</div></section>`;
 }
 

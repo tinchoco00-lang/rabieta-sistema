@@ -1776,6 +1776,10 @@ test('el panel de staff genera QR de mesa localmente y conserva un enlace utiliz
   assert.match(source, /Copiar enlace/);
   assert.match(source, /target="_blank" rel="noopener"/);
   assert.match(source, /Imprimir todos los QR/);
+  assert.match(source, /function imprimirMesaQr\(numero\)/);
+  assert.match(source, /Imprimir esta mesa/);
+  assert.match(source, /data-qr-mesa="\$\{mesa\.numero\}"/);
+  assert.match(source, /classList\.add\('printing-qrs','printing-single-qr'\)/);
   assert.match(source, /Impresión bloqueada sin identidad segura/);
   assert.match(source, /function descargarMesaQr\(numero\)/);
   assert.match(source, /rabieta-mesa-\$\{String\(numero\)\.padStart\(2,'0'\)\}\.svg/);
@@ -1785,10 +1789,11 @@ test('el panel de staff genera QR de mesa localmente y conserva un enlace utiliz
   assert.match(source, /Descargar SVG/);
   assert.match(source, /Descarga bloqueada/);
   assert.match(source, /document\.body\.classList\.add\('printing-qrs'\)/);
-  assert.match(source, /window\.addEventListener\('afterprint'/);
+  assert.match(source, /window\.addEventListener\('afterprint',limpiarImpresionMesaQrs\)/);
   assert.match(styles, /@media print/);
   assert.match(styles, /grid-template-columns:repeat\(3,1fr\)/);
   assert.match(styles, /\.qr-actions\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.match(styles, /body\.printing-single-qr \.qr-card\.qr-print-target/);
   assert.match(staffHtml, /\/vendor\/qrcode\.js/);
   assert.doesNotMatch(staffHtml, /cdnjs|unpkg/);
   assert.match(qrLicense, /MIT License/);
