@@ -25,6 +25,8 @@ const crypto = require('crypto');
 const { URL } = require('url');
 const { createPersistence } = require('./persistence');
 const { createClientIpResolver, createRateLimiters, errorFields, logEvent } = require('./operational');
+const { createTrustStore, TrustLedger, canQueryTrustLedger } = require('./trust');
+const { buildStaffActor, buildMesaActor, newAuthSessionId } = require('./trust/identity');
 
 const MENU_DATA = JSON.parse(fs.readFileSync(path.join(__dirname, 'menu-rabieta.json'), 'utf8'));
 const MESAS_TOTAL = MENU_DATA._meta.mesas.placeholder_sugerido; // ver _meta.mesas — número real pendiente de confirmar con el local
@@ -74,6 +76,27 @@ const STAFF_TOKEN_TTL_MS = Number.isFinite(configuredTokenTtl) && configuredToke
   : 8 * 60 * 60 * 1000;
 const STAFF_TOKENS = new Map();
 const MESA_TOKEN_SECRET = process.env.MESA_TOKEN_SECRET || null;
+
+// Trust Event Contract V1 — fundación separada del estado operativo.
+// tenantId/localId vienen SIEMPRE de config del servidor, nunca del body de
+// un request (así un cliente no puede escribir eventos "en nombre de" otro
+// local). Hoy es un solo local (Rabieta Lomitas); el diseño soporta
+// multi-local futuro sin cambiar el contrato.
+const TENANT_ID = process.env.TENANT_ID || 'rabieta';
+const LOCAL_ID = process.env.LOCAL_ID || 'lomitas';
+// Identifica una corrida de datos sintéticos (demo_escenario_cargar) para
+// que nunca se confunda con actividad operativa real en el ledger.
+const DEMO_RUN_ID = crypto.randomUUID();
+const trustStore = createTrustStore();
+const trustLedger = new TrustLedger(trustStore);
+function recordTrustEvent(input) {
+  // Fire-and-forget deliberado en los puntos donde no hay un `await`
+  // natural disponible sin reestructurar el flujo existente: una falla acá
+  // nunca debe tumbar una acción operativa. Se loguea si falla.
+  return trustLedger.record(input).catch(error => {
+    logEvent('error', 'trust_ledger_error', { action: input && input.action, ...errorFields(error) });
+  });
+}
 const MAX_BODY_BYTES = 32 * 1024;
 const PUBLIC_ACTIONS = new Set(['pedido_nuevo', 'llamar_mozo', 'pedir_cuenta', 'ayuda', 'resena_enviar', 'pago_sandbox_confirmar', 'pago_mercadopago_iniciar', 'consulta_registrar']);
 const STAFF_ACTIONS = new Set(['pedido_estado', 'alerta_atender', 'alerta_resolver', 'pago_demo_confirmar', 'mesa_liberar', 'demo_escenario_cargar', 'reset_demo', 'mesa_cubiertos_actualizar', 'baseline_actualizar']);
@@ -257,6 +280,7 @@ function seedState() {
       pago: null, resenaEnviada: false, alertas: [],
       cubiertos: null, // personas reales sentadas; null = todavía no cargado por Encargado (ver mesa_cubiertos_actualizar)
       consultasVistas: [], // interactionId de consulta_registrar ya contados en esta sesión de mesa — evita inflar por recarga/retry
+      mesaSessionId: null, // Trust Event Contract: UUID nuevo por cada ocupación real (ver pedido_nuevo/mesa_liberar)
     });
   }
   return { clockMs: 0, mesas, analytics: seedAnalytics(), presentacionCargada: false, baseline: seedBaseline() };
@@ -634,6 +658,9 @@ function normalizeRecoveredState(recoveredState) {
   });
   recoveredState.mesas.forEach(mesa => {
     mesa.resenaEnviada = mesa.resenaEnviada === true;
+    // Estado recuperado de antes de #45A no tiene mesaSessionId — se declara
+    // explícitamente null en vez de inventar una sesión retroactiva.
+    mesa.mesaSessionId = typeof mesa.mesaSessionId === 'string' && mesa.mesaSessionId ? mesa.mesaSessionId : null;
     mesa.cubiertos = Number.isInteger(mesa.cubiertos) && mesa.cubiertos >= 1 && mesa.cubiertos <= MAX_CUBIERTOS_POR_MESA ? mesa.cubiertos : null;
     mesa.consultasVistas = Array.isArray(mesa.consultasVistas)
       ? mesa.consultasVistas.filter(id => typeof id === 'string' && id).slice(-200)
@@ -700,7 +727,9 @@ async function seedPresentationScenario() {
   const previousState = state;
   state = seedState();
   const run = async message => {
-    const result = await handleAction(message);
+    // Todo lo que arma este escenario es sintético: se etiqueta como tal en
+    // el ledger para que nunca se confunda con actividad real del local.
+    const result = await handleAction(message, { dataClass: 'demo', demoRunId: DEMO_RUN_ID });
     if (!result.ok) state = previousState;
     return result;
   };
@@ -896,12 +925,27 @@ async function crearPreferenciaMercadoPago(m, total, externalReference) {
   return { ok: true, preferenceId: String(payload.id), checkoutUrl };
 }
 
-async function handleAction(msg) {
+async function handleAction(msg, context = {}) {
+  const dataClass = context.dataClass || 'operational';
+  const demoRunId = dataClass === 'demo' ? (context.demoRunId || DEMO_RUN_ID) : null;
   if (!msg || typeof msg !== 'object' || Array.isArray(msg)) return actionError(400, 'Acción inválida');
   if (!PUBLIC_ACTIONS.has(msg.type) && !STAFF_ACTIONS.has(msg.type)) return actionError(400, 'Tipo de acción inválido');
 
   if (MESA_ACTIONS.has(msg.type) && !validMesaNumber(msg.mesa)) return actionError(400, 'Mesa inválida');
   const m = MESA_ACTIONS.has(msg.type) ? findMesa(msg.mesa) : null;
+
+  // Protección contra replay entre ocupaciones (Trust Foundation #45A P0-1):
+  // si quien llama indica a qué mesaSessionId cree estar hablando y la mesa
+  // está ocupada por una sesión distinta (p. ej. A fue liberada y B ocupó la
+  // misma mesa física), la mutación se rechaza en vez de aplicarse contra la
+  // ocupación equivocada. Es opt-in: si no se manda mesaSessionId, no hay
+  // nada que comparar y el comportamiento pre-existente no cambia — ver
+  // docs/SECURITY.md ("Trust Foundation — #45A") para el alcance real de esta protección hoy
+  // (el cliente móvil público todavía no la envía en todas las acciones).
+  if (m && typeof msg.mesaSessionId === 'string' && msg.mesaSessionId
+      && m.ocupada && m.mesaSessionId && msg.mesaSessionId !== m.mesaSessionId) {
+    return actionError(409, 'La sesión de esta mesa ya no es válida: fue liberada y/o vuelta a ocupar');
+  }
 
   switch (msg.type) {
     case 'pedido_nuevo': {
@@ -917,7 +961,27 @@ async function handleAction(msg) {
         items.push({ ...built.item, id: uid(), ronda, estado: 'enviado', enviadoTs: state.clockMs, estadoTs: { enviado: state.clockMs } });
       }
       const eraRondaAdicional = Boolean(m.pedido);
+      const eraNuevaOcupacion = !m.ocupada;
       m.ocupada = true;
+      if (eraNuevaOcupacion) {
+        // Cada ocupación real de la mesa es una sesión propia — UUID nuevo
+        // acá, y persiste sin cambiar hasta que mesa_liberar la cierra.
+        m.mesaSessionId = crypto.randomUUID();
+        const mesaActor = buildMesaActor(m.numero, m.mesaSessionId, Boolean(MESA_TOKEN_SECRET));
+        await recordTrustEvent({
+          tenantId: TENANT_ID,
+          localId: LOCAL_ID,
+          actor: mesaActor,
+          mesa: m.numero,
+          mesaSessionId: m.mesaSessionId,
+          entity: { type: 'mesa_session', id: m.mesaSessionId },
+          action: 'mesa_session_started',
+          after: { mesa: m.numero, mesaSessionId: m.mesaSessionId },
+          source: 'pedido_nuevo',
+          dataClass,
+          demoRunId,
+        });
+      }
       if (m.pedido) {
         m.pedido.items.push(...items);
         syncPedidoEstado(m.pedido);
@@ -1120,9 +1184,29 @@ async function handleAction(msg) {
       state.analytics.cubiertosAcumulados += cubiertosDeEstaMesa;
       state.analytics.mesasLiberadas++;
       if (!Number.isInteger(m.cubiertos)) state.analytics.mesasLiberadasSinCubiertos++;
+      const mesaSessionIdQueCierra = m.mesaSessionId;
       m.ocupada = false; m.pedido = null; m.cuentaPedida = false; m.cuentaPedidaTs = null; m.pago = null; m.resenaEnviada = false; m.alertas = [];
-      m.cubiertos = null; m.consultasVistas = [];
+      m.cubiertos = null; m.consultasVistas = []; m.mesaSessionId = null;
       registrarActividad(state.analytics, 'mesa', `Mesa ${m.numero} se liberó`, state.clockMs);
+      if (mesaSessionIdQueCierra && context.session) {
+        const staffActor = buildStaffActor(context.session.role);
+        await recordTrustEvent({
+          tenantId: TENANT_ID,
+          localId: LOCAL_ID,
+          actor: staffActor,
+          role: context.session.role,
+          authSessionId: context.session.authSessionId || null,
+          mesa: m.numero,
+          mesaSessionId: mesaSessionIdQueCierra,
+          entity: { type: 'mesa_session', id: mesaSessionIdQueCierra },
+          action: 'mesa_session_ended',
+          before: { mesa: m.numero, mesaSessionId: mesaSessionIdQueCierra },
+          after: { mesa: m.numero, mesaSessionId: null },
+          source: 'mesa_liberar',
+          dataClass,
+          demoRunId,
+        });
+      }
       break;
     }
     case 'baseline_actualizar': {
@@ -1271,7 +1355,20 @@ function validStaffToken(token) {
 
 function staffSession(req) {
   const token = extractBearerToken(req);
-  return token ? { token, ...STAFF_TOKENS.get(token) } : null;
+  if (!token) return null;
+  const record = STAFF_TOKENS.get(token);
+  if (!record) return null;
+  // Chequeo de expiración en el mismo lugar que validStaffToken: antes esta
+  // función devolvía el registro aunque ya hubiera vencido (solo
+  // validStaffToken lo purgaba). Como staffSession es la que decide sesión
+  // válida tanto en la pre-chequeo de /api/action como en la re-validación
+  // al momento de ejecutar dentro de la cola (Trust Foundation #45A P0-2),
+  // un token vencido no purgado todavía podía colarse como válido.
+  if (record.expiresAt <= Date.now()) {
+    STAFF_TOKENS.delete(token);
+    return null;
+  }
+  return { token, ...record };
 }
 
 function applyRateLimit(req, res, limiter, scope) {
@@ -1329,8 +1426,31 @@ function handleHttpRequest(req, res) {
       if (body.pin !== STAFF_PINS[role]) { sendJson(res, 401, { ok: false }); return; }
       pruneExpiredStaffTokens();
       const token = crypto.randomBytes(32).toString('hex');
-      STAFF_TOKENS.set(token, { expiresAt: Date.now() + STAFF_TOKEN_TTL_MS, role });
-      sendJson(res, 200, { ok: true, token, role, allowedViews: STAFF_ROLE_VIEWS[role] });
+      const authSessionId = newAuthSessionId();
+      const actor = buildStaffActor(role);
+      STAFF_TOKENS.set(token, {
+        expiresAt: Date.now() + STAFF_TOKEN_TTL_MS,
+        role,
+        authSessionId,
+        actorId: actor.actorId,
+        actorLabel: actor.label,
+        identityAssurance: actor.identityAssurance,
+      });
+      recordTrustEvent({
+        tenantId: TENANT_ID,
+        localId: LOCAL_ID,
+        actor,
+        role,
+        authSessionId,
+        entity: { type: 'auth_session', id: authSessionId },
+        action: 'staff_login',
+        after: { role },
+        source: 'staff-login',
+        dataClass: 'operational',
+        requestId: req.requestId || null,
+      }).finally(() => {
+        sendJson(res, 200, { ok: true, token, role, allowedViews: STAFF_ROLE_VIEWS[role] });
+      });
     });
     return;
   }
@@ -1342,6 +1462,32 @@ function handleHttpRequest(req, res) {
       if (client.kind === 'staff' && client.token === token) closeSseClient(client);
     });
     sendJson(res, 200, { ok: true });
+    return;
+  }
+  if (u.pathname === '/api/trust/events' && req.method === 'GET') {
+    // Query API específica del ledger — NUNCA se manda el ledger completo
+    // por SSE ni se mezcla en el estado operativo. Solo Dueño/Encargado.
+    // tenantId/localId salen SIEMPRE de config del servidor: la query string
+    // no puede pedir datos de otro local aunque lo intente.
+    const session = staffSession(req);
+    if (!session) { sendJson(res, 401, { ok: false, error: 'Autenticación requerida' }); return; }
+    if (!canQueryTrustLedger(session.role)) {
+      sendJson(res, 403, { ok: false, error: 'El rol no tiene acceso al historial de confianza' });
+      return;
+    }
+    const limitParam = Number(u.searchParams.get('limit'));
+    const afterParam = Number(u.searchParams.get('after'));
+    trustLedger.query({
+      tenantId: TENANT_ID,
+      localId: LOCAL_ID,
+      limit: Number.isFinite(limitParam) ? limitParam : undefined,
+      after: Number.isFinite(afterParam) ? afterParam : undefined,
+    }).then(result => {
+      sendJson(res, 200, { ok: true, events: result.events, nextCursor: result.nextCursor });
+    }).catch(error => {
+      logEvent('error', 'trust_ledger_query_error', errorFields(error));
+      sendJson(res, 503, { ok: false, error: 'Historial de confianza no disponible' });
+    });
     return;
   }
   if (u.pathname === '/api/mesa-links' && req.method === 'GET') {
@@ -1386,8 +1532,36 @@ function handleHttpRequest(req, res) {
         }
       }
       enqueueMutation(async () => {
+        // Instrumentación SOLO de test: permite reproducir de forma
+        // determinística la ventana entre "se validó el token" y "se ejecutó
+        // la mutación" que describe P0-2 (auth + cola). Sin esta variable de
+        // entorno el comportamiento es idéntico al de antes — no se activa
+        // en ningún ambiente real. Ver test/trust.server.test.js.
+        const testQueueDelayMs = Number(process.env.TRUST_TEST_QUEUE_DELAY_MS);
+        if (STAFF_ACTIONS.has(body.type) && Number.isFinite(testQueueDelayMs) && testQueueDelayMs > 0) {
+          await new Promise(resolve => setTimeout(resolve, testQueueDelayMs));
+        }
         const previousState = structuredClone(state);
-        const result = await handleAction(body);
+        // Re-validar autorización AL MOMENTO DE EJECUTAR, no solo al llegar
+        // el request (Trust Foundation #45A P0-2): la mutación pudo esperar
+        // en mutationQueue detrás de otras, y en ese lapso el token pudo
+        // vencer o el staff pudo desloguearse. El chequeo de arriba (antes de
+        // encolar) solo prueba que la sesión era válida EN ESE INSTANTE; acá
+        // se vuelve a pedir fresca justo antes de aplicar la mutación, y si
+        // ya no es válida la acción se aborta sin ejecutarse.
+        let staffSessionForAction = null;
+        if (STAFF_ACTIONS.has(body.type)) {
+          staffSessionForAction = staffSession(req);
+          if (!staffSessionForAction) {
+            sendJson(res, 401, { ok: false, error: 'La sesión venció o se cerró mientras la acción esperaba en cola' });
+            return;
+          }
+          if (!staffRoleCan(staffSessionForAction.role, body)) {
+            sendJson(res, 403, { ok: false, error: 'El rol no puede realizar esta acción' });
+            return;
+          }
+        }
+        const result = await handleAction(body, { session: staffSessionForAction, dataClass: 'operational' });
         if (!result.ok) {
           sendJson(res, result.status, { ok: false, error: result.error });
           return;
@@ -1545,6 +1719,7 @@ async function shutdown(signal) {
   try {
     await mutationQueue;
     await persistence.close(state);
+    try { await trustStore.close(); } catch (_) { /* best-effort: no bloquea el shutdown operativo */ }
     logEvent('log', 'shutdown_completed', { signal, persistenceMode: persistence.enabled ? 'postgresql' : 'memory' });
     process.exit(0);
   } catch (error) {

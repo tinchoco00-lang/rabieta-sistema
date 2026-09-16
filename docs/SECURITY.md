@@ -45,6 +45,114 @@ Estos riesgos describen el codigo actual. Se registran para orientar trabajo fut
 - `pago_demo_confirmar` es solamente una marca operativa de sandbox: calcula el total desde el pedido validado, no acepta datos de tarjeta, no llama a un proveedor y no representa dinero cobrado.
 - Los pagos reales futuros deben confirmar estado exclusivamente desde el proveedor mediante webhooks autenticados e idempotentes, con conciliacion y manejo explicito de estados inciertos. Una pantalla del cliente nunca sera prueba suficiente de pago.
 
+## Trust Foundation — #45A (ledger de confianza)
+
+Esta sección documenta con precisión qué garantiza y qué NO garantiza el
+Trust Event Contract V1 (`trust/`) agregado en #45A. El objetivo es no
+sobre-prometer: cada guarantee de abajo está probada por
+`test/trust.server.test.js`; lo que no está probado se lista aparte como
+pendiente.
+
+### Identidad y `shared_credential`
+
+- El staff sigue autenticándose con un PIN **compartido por rol**
+  (`STAFF_PIN`/`STAFF_PINS`), igual que documenta la sección de arriba. El
+  Trust Event Contract no cambia eso ni lo oculta: todo evento generado por
+  una sesión de staff lleva `actor.identityAssurance: 'shared_credential'`,
+  nunca un nivel de certeza mayor.
+- Qué garantiza hoy: cada login emite un `authSessionId` nuevo (UUID), así
+  que se puede distinguir "esta sesión de login" de otra, y el `actorId` es
+  estable por rol (nunca se arma con `MOZOS` ni con ningún nombre propio).
+- Qué NO garantiza hoy: que la persona detrás del PIN sea siempre la misma,
+  ni que dos empleados con el mismo rol sean distinguibles entre sí. Un
+  evento con `role: 'mozo'` dice "alguien que tenía el PIN de mozo en ese
+  momento", nunca "Fulano hizo esto". Ningún reporte ni vista debe presentar
+  esto como identidad personal.
+- Mejora de aislamiento por rol: no se implementó en #45A (requeriría PINs
+  individuales o un login real, fuera del alcance de esta PR) para no
+  romper la demo ni el flujo operativo actual. Queda como candidato de
+  #45B/#45C si el negocio lo pide.
+
+### Sesión de mesa (`mesaSessionId`) y replay entre ocupaciones
+
+- Cada ocupación real de una mesa recibe un `mesaSessionId` (UUID) nuevo,
+  estable mientras la mesa sigue ocupada, y se limpia (`null`) al liberarla.
+  Se expone en el estado de esa mesa vía SSE (`GET /events?mesa=N`), así un
+  cliente real puede conocer su propio `mesaSessionId`.
+- Protección de replay implementada: si una request de acción (`pedido_nuevo`,
+  `pedir_cuenta`, `llamar_mozo`, etc.) incluye `mesaSessionId` y la mesa está
+  ocupada por una sesión **distinta**, el servidor la rechaza con `409` en
+  vez de aplicarla — ver el test "replay: una acción vieja de la ocupación A
+  nunca puede tocar la ocupación B" en `test/trust.server.test.js`.
+- Límite honesto: esta protección es **opt-in por diseño** — solo actúa
+  cuando quien llama efectivamente manda `mesaSessionId` en el body. El
+  cliente público actual (`public/app.js`/`mesa.html`) todavía **no** lo
+  hace en todas sus acciones, así que hoy en producción esta protección
+  cierra el hueco a nivel de contrato/API pero no está siendo ejercitada
+  todavía por el cliente real end-to-end. Cerrar eso (que el cliente lea su
+  `mesaSessionId` del estado SSE y lo reenvíe en cada acción) queda
+  pendiente y se documenta como riesgo MEDIUM, no como algo ya resuelto.
+
+### Autorización y la cola de mutaciones (`enqueueMutation`)
+
+- `staffSession(req)` ahora también purga tokens vencidos (antes solo lo
+  hacía `validStaffToken`), y la validación de rol/token se repite **de
+  nuevo, en fresco**, justo antes de ejecutar la mutación encolada — no solo
+  al llegar el request. Si el token venció o el staff se deslogueó mientras
+  la acción esperaba detrás de otras en la cola, la acción se aborta con
+  `401`/`403` y nunca llega a `handleAction`.
+- Test específico: `test/trust.server.test.js` fuerza esta ventana con una
+  instrumentación de test explícita (`TRUST_TEST_QUEUE_DELAY_MS`, inactiva
+  salvo que se la configure) para volver determinística una carrera que en
+  producción normalmente dura microsegundos.
+
+### Almacenamiento separado del estado operativo
+
+- `MemoryTrustStore`/`PostgresTrustStore` viven fuera de `state`: un
+  `reset_demo` (que reemplaza `state` entero) no borra el ledger.
+- `trust_events` es una tabla independiente (ver `migrations/0001_trust_events.sql`),
+  no otro snapshot JSONB — a diferencia de `rabieta_estado`.
+
+### Postgres real: qué está probado y qué no
+
+- Los tests con `FakePool` (inyección de pool al estilo `persistence.js`)
+  prueban la forma del SQL emitido y el comportamiento del store en Node,
+  pero **no** demuestran append-only real, atomicidad, permisos de DB,
+  rollback ni que `TRUNCATE` quede efectivamente bloqueado.
+- Este sandbox de desarrollo no tiene forma de levantar un Postgres real
+  (`apt-get install postgresql` está bloqueado por la política de red del
+  entorno), así que los tests reales contra Postgres (gateados con
+  `{ skip: !process.env.DATABASE_URL }`, mismo patrón que
+  `test/postgres.integration.test.js`) **no se ejecutaron localmente**. Sí
+  se ejecutan en CI (`.github/workflows/ci.yml` levanta `postgres:16-alpine`),
+  pero eso todavía no corrió para esta rama al momento de escribir esto.
+  **Esto se reporta como limitación HIGH pendiente, no como validado.**
+- El `REVOKE UPDATE, DELETE, TRUNCATE ON trust_events FROM PUBLIC` de la
+  migración es una mitigación parcial: no protege contra el rol dueño de la
+  tabla ni contra un superusuario, que es exactamente la conexión que la
+  mayoría de los hostings gestionados usan por defecto. Ver el comentario en
+  `migrations/0001_trust_events.sql` y `trust/postgresStore.js`.
+
+### Multi-tenant: preparación, no un sistema multi-tenant
+
+- `tenantId`/`localId` existen en cada evento y se resuelven en el servidor
+  desde configuración (`TENANT_ID`/`LOCAL_ID`), nunca desde el body del
+  request — pero esto es **preparación futura únicamente**. El snapshot
+  operativo (`state`) sigue siendo un singleton: hay un solo local
+  ("Rabieta Lomitas"), sin aislamiento de datos entre tenants, sin router
+  por tenant y sin ningún otro componente multi-tenant real. No debe
+  describirse como "sistema multi-tenant" en ningún reporte.
+
+### Disciplina de lenguaje (claims)
+
+Ninguna documentación, comentario o reporte de esta feature debe usar
+"inmutable", "fraude imposible", "auditoría completa", "multi-tenant" (como
+si ya fuera un sistema multi-tenant) o "pago real auditado" salvo que esté
+efectivamente probado — hoy ninguno de esos cinco lo está en su forma
+fuerte. Los términos correctos son los usados arriba: append-only con
+límites documentados, ledger separado, preparación multi-tenant, e
+identidad con `shared_credential` explícito.
+
 ## Reglas de cambio
 
 Requieren aprobacion humana previa:
