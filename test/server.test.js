@@ -1106,6 +1106,35 @@ test('el servidor reconstruye productos y precios desde el menú', async () => {
   assert.match(appSource, /type:'cuenta-enviada'/);
 });
 
+test('el cliente resume entregas parciales sin esconder los ítems que ya avanzaron', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  const fnSource = source.match(/function resumenPedidoCliente\(pedido\)\{[\s\S]*?\r?\n\}\r?\n/)[0];
+  assert.ok(fnSource, 'debe existir resumenPedidoCliente');
+  const ctx = {
+    PEDIDO_ESTADOS: ['enviado','preparando','listo','entregado'],
+    Object,
+    Math,
+  };
+  vm.createContext(ctx);
+  vm.runInContext(fnSource, ctx);
+  const resumen = pedido => JSON.parse(JSON.stringify(vm.runInContext(`resumenPedidoCliente(${JSON.stringify(pedido)})`, ctx)));
+
+  assert.deepEqual(resumen({ items: [
+    { estado:'entregado' }, { estado:'listo' }, { estado:'preparando' }, { estado:'enviado' },
+  ] }), {
+    cantidades:{enviado:1,preparando:1,listo:1,entregado:1}, total:4, entregados:1,
+    progreso:25, tono:'ready', titulo:'1 ítem listo para servir', detalle:'1 de 4 entregados · se actualiza en vivo',
+  });
+  assert.deepEqual(resumen({ items:[{estado:'entregado'},{estado:'entregado'}] }), {
+    cantidades:{enviado:0,preparando:0,listo:0,entregado:2}, total:2, entregados:2,
+    progreso:100, tono:'done', titulo:'Todo llegó a tu mesa', detalle:'2 de 2 entregados · se actualiza en vivo',
+  });
+  assert.match(source, /class="customer-live-summary \$\{resumen\.tono\}" role="status" aria-live="polite"/);
+  assert.match(source, /role="progressbar" aria-label="Ítems entregados"/);
+  const css = fs.readFileSync(path.join(root, 'public', 'rabieta.css'), 'utf8');
+  assert.match(css, /\.customer-live-stages\{display:grid;grid-template-columns:repeat\(4,minmax\(0,1fr\)\)/);
+});
+
 test('productos, variantes y opciones inválidas no modifican estado', async () => {
   await resetState();
   const invalid = [

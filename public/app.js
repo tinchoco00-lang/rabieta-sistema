@@ -274,6 +274,21 @@ function estadoPedidoLabel(m){
   if(entregados>0 && entregados<m.pedido.items.length) return `${entregados}/${m.pedido.items.length} entregados`;
   return PEDIDO_LABELS[m.pedido.estado];
 }
+function resumenPedidoCliente(pedido){
+  const items = pedido && Array.isArray(pedido.items) ? pedido.items : [];
+  const cantidades = Object.fromEntries(PEDIDO_ESTADOS.map(estado=>[estado,0]));
+  items.forEach(item=>{ if(Object.prototype.hasOwnProperty.call(cantidades,item.estado)) cantidades[item.estado]++; });
+  const total = items.length;
+  const entregados = cantidades.entregado;
+  let tono='received', titulo='Pedido recibido';
+  if(total && entregados===total){ tono='done'; titulo='Todo llegó a tu mesa'; }
+  else if(cantidades.listo){ tono='ready'; titulo=`${cantidades.listo} ${cantidades.listo===1?'ítem listo':'ítems listos'} para servir`; }
+  else if(cantidades.preparando){ tono='active'; titulo=`${cantidades.preparando} ${cantidades.preparando===1?'ítem en preparación':'ítems en preparación'}`; }
+  const detalle = total
+    ? `${entregados} de ${total} ${total===1?'entregado':'entregados'} · se actualiza en vivo`
+    : 'Esperando los ítems del pedido';
+  return {cantidades,total,entregados,progreso:total?Math.round(entregados/total*100):0,tono,titulo,detalle};
+}
 function itemEstadoClass(estado){ return estado==='enviado'?'importante':estado==='preparando'?'normal':'libre'; }
 function pedidoTotal(m){ return m.pedido ? m.pedido.items.reduce((sum,item)=>sum+(item.precio||0),0) : 0; }
 function resumenCuentaEnVivo(mesa){
@@ -1178,7 +1193,7 @@ function viewCliente(){
 
   let pedidoStatusHtml = '';
   if(mesa.pedido){
-    const idx = PEDIDO_ESTADOS.indexOf(mesa.pedido.estado);
+    const resumen = resumenPedidoCliente(mesa.pedido);
     const variasRondas = mesa.pedido.items.some(it=>(it.ronda||1)>1);
     const pagoHtml = mesa.pago && mesa.pago.estado==='confirmado'
       ? `<div class="payment-receipt"><span>${ic('checkring')}</span><div><b>${mesa.pago.modo==='mercadopago'?'Pago con Mercado Pago aprobado':'Pago demo aprobado'}</b><small>${money(mesa.pago.total)} · ${mesa.pago.modo==='mercadopago'?'Mercado Pago':mesa.pago.medio==='mercado_pago'?'Mercado Pago (modo de prueba)':mesa.pago.medio==='tarjeta'?'Tarjeta demo •••• 4242':'Confirmado por staff'}<br>Comprobante ${escapeHtml(mesa.pago.referencia||'demo')}</small></div></div>${resenaHtml(mesa)}`
@@ -1189,9 +1204,12 @@ function viewCliente(){
           : '';
     pedidoStatusHtml = `<div class="card" id="customer-order-status">
       <div style="font-weight:800;font-size:13.5px;margin-bottom:4px;">Tu pedido</div>
-      <div class="status-stepper">${PEDIDO_ESTADOS.map((s,i)=>`
-        <div class="step ${i<idx?'done':i===idx?'current':''}"><div class="bar"></div>
-          <div class="circle">${i<idx?'✓':i+1}</div><div class="lbl">${PEDIDO_LABELS[s]}</div></div>`).join('')}
+      <div class="customer-live-summary ${resumen.tono}" role="status" aria-live="polite">
+        <div class="customer-live-copy"><span>EN VIVO</span><strong>${resumen.titulo}</strong><small>${resumen.detalle}</small></div>
+        <div class="customer-live-progress" role="progressbar" aria-label="Ítems entregados" aria-valuemin="0" aria-valuemax="${resumen.total}" aria-valuenow="${resumen.entregados}"><i style="--customer-progress:${resumen.progreso}%"></i></div>
+        <div class="customer-live-stages">
+          ${PEDIDO_ESTADOS.map(estado=>`<span class="${estado}"><b>${resumen.cantidades[estado]}</b>${PEDIDO_LABELS[estado]}</span>`).join('')}
+        </div>
       </div>
       <ul class="customer-order-items">
         ${mesa.pedido.items.map(it=>`<li><div>${variasRondas?`<span class="item-round">Ronda ${it.ronda||1}</span>`:''}${escapeHtml(it.nombre)}${it.notas?` — "${escapeHtml(it.notas)}"`:''}</div>
