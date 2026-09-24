@@ -275,6 +275,40 @@ function estadoPedidoLabel(m){
 }
 function itemEstadoClass(estado){ return estado==='enviado'?'importante':estado==='preparando'?'normal':'libre'; }
 function pedidoTotal(m){ return m.pedido ? m.pedido.items.reduce((sum,item)=>sum+(item.precio||0),0) : 0; }
+function resumenCuentaEnVivo(mesa){
+  const items=mesa && mesa.pedido && Array.isArray(mesa.pedido.items) ? mesa.pedido.items : [];
+  const rondas=new Map();
+  items.forEach(item=>{
+    const numero=Number.isInteger(item.ronda) && item.ronda>0 ? item.ronda : 1;
+    if(!rondas.has(numero)) rondas.set(numero,{numero,unidades:0,total:0,pendientes:0});
+    const ronda=rondas.get(numero);
+    ronda.unidades++;
+    if(Number.isFinite(item.precio)) ronda.total+=item.precio;
+    else ronda.pendientes++;
+  });
+  return {
+    rondas:[...rondas.values()].sort((a,b)=>a.numero-b.numero),
+    unidades:items.length,
+    total:items.reduce((sum,item)=>sum+(Number.isFinite(item.precio)?item.precio:0),0),
+    pendientes:items.filter(item=>!Number.isFinite(item.precio)).length,
+  };
+}
+function cuentaEnVivoHtml(mesa){
+  const resumen=resumenCuentaEnVivo(mesa);
+  if(!resumen.unidades) return '';
+  const totalConfirmado=resumen.total>0 ? money(resumen.total) : (resumen.pendientes?'A confirmar':money(0));
+  const titulo=mesa.pago && mesa.pago.estado==='confirmado' ? 'Cuenta pagada' : mesa.cuentaPedida ? 'Cuenta solicitada' : 'Consumo en vivo';
+  const pendienteTotal=resumen.pendientes ? `<span class="live-check-pending">+ ${resumen.pendientes} ${resumen.pendientes===1?'precio':'precios'} a confirmar</span>` : '';
+  return `<section class="live-check" aria-label="Resumen de consumo de la mesa">
+    <div class="live-check-head"><div><span>${titulo}</span><small>${resumen.unidades} ${resumen.unidades===1?'ítem':'ítems'} en ${resumen.rondas.length} ${resumen.rondas.length===1?'ronda':'rondas'}</small></div><strong>${totalConfirmado}</strong></div>
+    <div class="live-check-rounds">${resumen.rondas.map(ronda=>{
+      const precio=ronda.total>0 ? money(ronda.total) : (ronda.pendientes?'A confirmar':money(0));
+      const pendientesMixtos=ronda.pendientes && ronda.total>0 ? ` <small>+ ${ronda.pendientes} a confirmar</small>` : '';
+      return `<div><span><b>Ronda ${ronda.numero}</b><small>${ronda.unidades} ${ronda.unidades===1?'ítem':'ítems'}</small></span><strong>${precio}${pendientesMixtos}</strong></div>`;
+    }).join('')}</div>
+    <div class="live-check-foot"><span>Subtotal según los precios confirmados de la carta.</span>${pendienteTotal}</div>
+  </section>`;
+}
 function alertasAbiertas(m){ return m.alertas.filter(a=>a.estado!=='resuelto'); }
 function prioridadMax(alertas){
   if(alertas.some(a=>a.prioridad==='urgente')) return 'urgente';
@@ -1108,7 +1142,7 @@ function viewCliente(){
       <ul class="customer-order-items">
         ${mesa.pedido.items.map(it=>`<li><div>${variasRondas?`<span class="item-round">Ronda ${it.ronda||1}</span>`:''}${escapeHtml(it.nombre)}${it.notas?` — "${escapeHtml(it.notas)}"`:''}</div>
           <div class="customer-order-meta"><span class="pill ${itemEstadoClass(it.estado)}">${PEDIDO_LABELS[it.estado]}</span><span>${itemElapsedLabel(it)}</span></div></li>`).join('')}
-      </ul>${!mesa.cuentaPedida?`<div class="repeat-order-row"><button class="btn ghost sm" onclick="repetirUltimaRonda()">${ic('refresh')} Agregar última ronda al carrito</button><span aria-live="polite">${escapeHtml(state.clienteRepetirAviso)}</span></div>`:''}${pagoHtml}</div>`;
+      </ul>${cuentaEnVivoHtml(mesa)}${!mesa.cuentaPedida?`<div class="repeat-order-row"><button class="btn ghost sm" onclick="repetirUltimaRonda()">${ic('refresh')} Agregar última ronda al carrito</button><span aria-live="polite">${escapeHtml(state.clienteRepetirAviso)}</span></div>`:''}${pagoHtml}</div>`;
   }
   const openAlerts = alertasAbiertas(mesa);
   const resolvedAlerts = mesa.alertas.filter(a=>a.estado==='resuelto').slice(-2).reverse();

@@ -2227,6 +2227,47 @@ test('pulido visual: en mobile, el carrito con pocos ítems no deja media pantal
   assert.match(mobileCartBlock[0], /\.modal\.cart-modal\{height:100vh;width:calc\(100% \+ 40px\);margin-left:-20px;margin-right:-20px;/);
 });
 
+test('cliente ve el subtotal acumulado y el desglose honesto por ronda antes de pedir la cuenta', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  const fnSource = source.match(/function resumenCuentaEnVivo\(mesa\)\{[\s\S]*?\r?\n\}\r?\n/)[0];
+  const ctx = {};
+  vm.createContext(ctx);
+  vm.runInContext(fnSource, ctx);
+  const mesa = {
+    pedido: { items: [
+      { ronda: 1, precio: 4600 },
+      { ronda: 1, precio: 1500 },
+      { ronda: 2, precio: 3400 },
+      { ronda: 2, precio: null },
+    ] },
+  };
+  ctx.mesa = mesa;
+  const resumen = JSON.parse(vm.runInContext('JSON.stringify(resumenCuentaEnVivo(mesa))', ctx));
+  assert.deepEqual(resumen, {
+    rondas: [
+      { numero: 1, unidades: 2, total: 6100, pendientes: 0 },
+      { numero: 2, unidades: 2, total: 3400, pendientes: 1 },
+    ],
+    unidades: 4,
+    total: 9500,
+    pendientes: 1,
+  });
+  assert.match(source, /Consumo en vivo/);
+  assert.match(source, /Subtotal según los precios confirmados de la carta/);
+  assert.match(source, /\$\{cuentaEnVivoHtml\(mesa\)\}/);
+
+  const htmlFnSource = source.match(/function cuentaEnVivoHtml\(mesa\)\{[\s\S]*?\r?\n\}\r?\n/)[0];
+  ctx.money = value => '$' + value;
+  vm.runInContext(htmlFnSource, ctx);
+  const soloPendiente = vm.runInContext("cuentaEnVivoHtml({pedido:{items:[{ronda:1,precio:null}]},cuentaPedida:false,pago:null})", ctx);
+  assert.match(soloPendiente, /<strong>A confirmar<\/strong>/);
+  assert.doesNotMatch(soloPendiente, /A confirmar\s*<small>\+ 1 a confirmar/);
+
+  const css = fs.readFileSync(path.join(root, 'public', 'rabieta.css'), 'utf8');
+  assert.match(css, /\.live-check\{/);
+  assert.match(css, /\.live-check-rounds\{/);
+});
+
 test('dueño ve en 10 segundos qué mesas concretas necesitan atención, con la peor razón primero y sin repetir mesa', () => {
   const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
   const fnSource = source.match(/function mesasQueNecesitanAtencion\(\)\{[\s\S]*?\r?\n\}\r?\n/)[0];
