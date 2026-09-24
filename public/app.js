@@ -768,6 +768,23 @@ function montarMesaQrs(){
     target.dataset.rendered='true';
   });
 }
+function descargarMesaQr(numero){
+  if(!state.mesaLinks || !state.mesaLinks.secure) return;
+  montarMesaQrs();
+  const svg=document.querySelector(`#mesaQr${numero} svg`);
+  if(!svg) return;
+  const copia=svg.cloneNode(true);
+  copia.setAttribute('xmlns','http://www.w3.org/2000/svg');
+  const contenido='<?xml version="1.0" encoding="UTF-8"?>\n'+new XMLSerializer().serializeToString(copia);
+  const url=URL.createObjectURL(new Blob([contenido],{type:'image/svg+xml;charset=utf-8'}));
+  const enlace=document.createElement('a');
+  enlace.href=url;
+  enlace.download=`rabieta-mesa-${String(numero).padStart(2,'0')}.svg`;
+  document.body.appendChild(enlace);
+  enlace.click();
+  enlace.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),0);
+}
 function imprimirMesaQrs(){
   if(!state.mesaLinks || !state.mesaLinks.secure) return;
   montarMesaQrs();
@@ -800,7 +817,8 @@ function viewMesaQrs(){
       <div class="qr-code" id="mesaQr${mesa.numero}"><span>Generando QR…</span></div>
       <div class="qr-state"><span class="pill ${mesa.ocupada?'ocupada':'libre'}">${mesa.ocupada?'Ocupada':'Libre'}</span></div>
       <div class="qr-actions"><button class="btn primary sm" data-copy-mesa="${mesa.numero}" onclick="copiarMesaLink(${mesa.numero},'${mesa.path}')">Copiar enlace</button>
-      <a class="btn ghost sm" href="${mesa.path}" target="_blank" rel="noopener">Abrir mesa</a></div>
+      <a class="btn ghost sm" href="${mesa.path}" target="_blank" rel="noopener">Abrir mesa</a>
+      <button class="btn ghost sm" ${links.secure?`onclick="descargarMesaQr(${mesa.numero})"`:'disabled'}>${links.secure?'Descargar SVG':'Descarga bloqueada'}</button></div>
     </article>`).join('')}</div></section>`;
 }
 
