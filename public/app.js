@@ -144,6 +144,7 @@ let liveReady = false; // true mientras el stream en vivo (SSE) está conectado
 let knownAlertIds = null; // null = todavía no llegó el primer snapshot
 let conexionVistaIniciada = false;
 let conexionRecoveryTimer = null;
+let clientePedidoEstadosConocidos = null;
 let STAFF_TOKEN = null;
 let STAFF_ROLE = null;
 let STAFF_ALLOWED_VIEWS = [];
@@ -186,7 +187,7 @@ let state = {
   clienteAsistenteOpen:false, clientePreferencia:null, clienteAsistenteConsulta:'', clienteAsistenteRespuesta:null,
   clienteAsistenteHistorial:[], clienteAsistenteConsultaMostrada:'', clienteAsistenteConsultaPendiente:null,
   clienteAsistenteAgregado:null, clienteResenaError:'', clienteResenaEnviando:false,
-  clienteRepetirAviso:'', clientePedidoEnviando:false, clientePedidoError:'',
+  clienteRepetirAviso:'', clientePedidoEnviando:false, clientePedidoError:'', clientePedidoAviso:null,
   clienteServicioEnviando:false, clienteServicioError:'',
   clienteAyudaDraft:'', clienteAyudaEnviando:false, clienteAyudaError:'', clienteAyudaPendiente:null,
   clientePagoMedio:'tarjeta', clientePagoEnviando:false, clientePagoError:'',
@@ -334,6 +335,7 @@ function aplicarMensajeRealtime(data, onFirstSnapshot){
     if(!liveReady){ liveReady=true; setConnPill(true); }
     MESAS_TOTAL = msg.mesasTotal || MESAS_TOTAL;
     state.clockMs = msg.state.clockMs;
+    detectarAvancesPedidoCliente(msg.state.mesas);
     state.mesas = msg.state.mesas;
     state.analytics = msg.state.analytics || emptyAnalytics();
     state.presentacionCargada = msg.state.presentacionCargada === true;
@@ -347,6 +349,58 @@ function aplicarMensajeRealtime(data, onFirstSnapshot){
     if(!clienteEditandoFormulario()) render();
   }
   return onFirstSnapshot;
+}
+function detectarAvancesPedidoCliente(mesas){
+  if(state.role!=='cliente') return;
+  const mesa = Array.isArray(mesas) ? mesas.find(candidate=>candidate.numero===state.clienteMesa) : null;
+  const items = mesa && mesa.pedido && Array.isArray(mesa.pedido.items) ? mesa.pedido.items : [];
+  const estadosAhora = new Map(items.map(item=>[item.id,item.estado]));
+  if(clientePedidoEstadosConocidos){
+    const entregados=[];
+    const listos=[];
+    items.forEach(item=>{
+      const anterior=clientePedidoEstadosConocidos.get(item.id);
+      if(!anterior || anterior===item.estado) return;
+      const antes=PEDIDO_ESTADOS.indexOf(anterior);
+      const ahora=PEDIDO_ESTADOS.indexOf(item.estado);
+      if(antes<0 || ahora<=antes) return;
+      if(item.estado==='entregado') entregados.push(item);
+      else if(item.estado==='listo') listos.push(item);
+    });
+    const avances=entregados.length ? entregados : listos;
+    if(avances.length){
+      state.clientePedidoAviso={
+        tipo:entregados.length?'entregado':'listo',
+        nombres:avances.map(item=>item.nombre),
+      };
+    }
+  }
+  clientePedidoEstadosConocidos=estadosAhora;
+}
+function cerrarAvisoPedidoCliente(){ state.clientePedidoAviso=null; render(); }
+function verPedidoCliente(){
+  state.clientePedidoAviso=null;
+  render();
+  setTimeout(()=>{
+    const pedido=document.getElementById('customer-order-status');
+    if(pedido) pedido.scrollIntoView({behavior:'smooth',block:'start'});
+  },0);
+}
+function avisoPedidoClienteHtml(){
+  const aviso=state.clientePedidoAviso;
+  if(!aviso || !Array.isArray(aviso.nombres) || !aviso.nombres.length) return '';
+  const nombres=aviso.nombres.slice(0,2).map(escapeHtml).join(' y ');
+  const restantes=aviso.nombres.length>2 ? ` y ${aviso.nombres.length-2} más` : '';
+  const titulo=aviso.tipo==='entregado'?'Llegó a tu mesa':'Tu pedido avanzó';
+  const detalle=aviso.tipo==='entregado'
+    ? `Se marcó como entregado: ${nombres}${restantes}.`
+    : `Terminó la preparación de ${nombres}${restantes}. Salón ya puede llevarlo a tu mesa.`;
+  return `<aside class="customer-live-alert ${aviso.tipo}" role="status" aria-live="polite">
+    <span class="customer-live-alert-icon">${ic(aviso.tipo==='entregado'?'checkring':'bell')}</span>
+    <div><strong>${titulo}</strong><span>${detalle}</span></div>
+    <button class="customer-live-alert-view" onclick="verPedidoCliente()">Ver pedido</button>
+    <button class="customer-live-alert-close" aria-label="Cerrar aviso" onclick="cerrarAvisoPedidoCliente()">&times;</button>
+  </aside>`;
 }
 function clienteEditandoFormulario(){
   const active = document.activeElement;
@@ -1133,7 +1187,7 @@ function viewCliente(){
         : mesa.cuentaPedida
           ? `<div class="checkout-callout"><div><b>${ic('receipt')} Tu cuenta está lista</b><span>Total ${money(pedidoTotal(mesa))} · podés completar el flujo sin dinero real.</span></div><button class="btn primary sm" onclick="abrirCheckout()">Pagar (modo de prueba)</button></div>`
           : '';
-    pedidoStatusHtml = `<div class="card">
+    pedidoStatusHtml = `<div class="card" id="customer-order-status">
       <div style="font-weight:800;font-size:13.5px;margin-bottom:4px;">Tu pedido</div>
       <div class="status-stepper">${PEDIDO_ESTADOS.map((s,i)=>`
         <div class="step ${i<idx?'done':i===idx?'current':''}"><div class="bar"></div>
@@ -1164,6 +1218,7 @@ function viewCliente(){
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
       <span class="badge-mesa">MESA ${mesa.numero}</span>
     </div>
+    ${avisoPedidoClienteHtml()}
     ${banner3dHtml()}
     ${asistenteCartaHtml(mesa.cuentaPedida)}
     ${pedidoStatusHtml}${alertHtml}

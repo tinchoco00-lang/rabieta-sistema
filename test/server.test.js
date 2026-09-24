@@ -15,6 +15,38 @@ const testPin = '7391';
 let baseUrl, serverProcess, staffToken;
 let serverOutput = '';
 
+test('el cliente recibe un aviso visible cuando un item queda listo o llega a la mesa', () => {
+  const source = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+  const css = fs.readFileSync(path.join(root, 'public', 'rabieta.css'), 'utf8');
+  const fnSource = source.match(/function detectarAvancesPedidoCliente\(mesas\)\{[\s\S]*?\r?\n\}/)[0];
+  const ctx = {
+    state: { role: 'cliente', clienteMesa: 1, clientePedidoAviso: null },
+    PEDIDO_ESTADOS: ['enviado', 'preparando', 'listo', 'entregado'],
+    clientePedidoEstadosConocidos: null,
+  };
+  vm.createContext(ctx);
+  vm.runInContext(fnSource, ctx);
+  const snapshot = estado => [{ numero: 1, pedido: { items: [{ id: 44, nombre: 'Hummus', estado }] } }];
+
+  ctx.snapshot = snapshot('enviado');
+  vm.runInContext('detectarAvancesPedidoCliente(snapshot)', ctx);
+  assert.equal(ctx.state.clientePedidoAviso, null, 'el primer snapshot no debe anunciar pedidos viejos');
+  ctx.snapshot = snapshot('listo');
+  vm.runInContext('detectarAvancesPedidoCliente(snapshot)', ctx);
+  assert.equal(JSON.stringify(ctx.state.clientePedidoAviso), JSON.stringify({ tipo: 'listo', nombres: ['Hummus'] }));
+  ctx.snapshot = snapshot('entregado');
+  vm.runInContext('detectarAvancesPedidoCliente(snapshot)', ctx);
+  assert.equal(JSON.stringify(ctx.state.clientePedidoAviso), JSON.stringify({ tipo: 'entregado', nombres: ['Hummus'] }));
+
+  assert.match(source, /if\(item\.estado==='entregado'\) entregados\.push\(item\)/);
+  assert.match(source, /else if\(item\.estado==='listo'\) listos\.push\(item\)/);
+  assert.match(source, /role="status" aria-live="polite"/);
+  assert.match(source, /id="customer-order-status"/);
+  assert.match(source, /Ver pedido/);
+  assert.match(css, /\.customer-live-alert\{/);
+  assert.match(css, /\.customer-live-alert\.entregado/);
+});
+
 function reservePort() {
   return new Promise((resolve, reject) => {
     const probe = net.createServer();
