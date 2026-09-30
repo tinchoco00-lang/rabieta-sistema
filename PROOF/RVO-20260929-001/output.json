@@ -1,0 +1,27 @@
+{
+    "durationSeconds":  69.5411237,
+    "finishedAt":  "2026-09-30T12:42:21.5803618Z",
+    "startedAt":  "2026-09-30T12:41:12.0392381Z",
+    "commands":  [
+                     {
+                         "command":  "npm.cmd ci",
+                         "exitCode":  0
+                     },
+                     {
+                         "command":  "git diff --check",
+                         "exitCode":  0
+                     },
+                     {
+                         "command":  "node --test test/rvo.session.test.js test/trust.server.test.js",
+                         "exitCode":  0
+                     },
+                     {
+                         "command":  "npm.cmd run check",
+                         "exitCode":  0
+                     }
+                 ],
+    "testSha":  "487feb68a4f3b3d3822f0fcfcd3a2dd9387ed273",
+    "reason":  "Remote CI pending",
+    "cost":  "not available",
+    "result":  "PARTIAL"
+}
