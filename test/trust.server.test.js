@@ -414,7 +414,7 @@ test('replay de mesa: una acción vieja de la ocupación A nunca puede tocar la 
 
 test('replay de mesa: sin mesaSessionId en el body, el comportamiento pre-existente no cambia (protección opt-in)', async () => {
   // Documenta el límite real: si quien llama no manda mesaSessionId (como
-  // hoy hace el cliente público real), no hay nada que comparar y la acción
+  // puede hacer un cliente legacy), no hay nada que comparar y la acción
   // se procesa igual que antes de #45A — ver docs/SECURITY.md.
   const mesaNumero = 9;
   const response = await action({ type: 'pedido_nuevo', mesa: mesaNumero, items: [{ productoId: 'hummus-rabieta' }] });

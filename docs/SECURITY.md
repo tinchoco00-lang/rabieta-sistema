@@ -86,12 +86,16 @@ pendiente.
   nunca puede tocar la ocupación B" en `test/trust.server.test.js`.
 - Límite honesto: esta protección es **opt-in por diseño** — solo actúa
   cuando quien llama efectivamente manda `mesaSessionId` en el body. El
-  cliente público actual (`public/app.js`/`mesa.html`) todavía **no** lo
-  hace en todas sus acciones, así que hoy en producción esta protección
-  cierra el hueco a nivel de contrato/API pero no está siendo ejercitada
-  todavía por el cliente real end-to-end. Cerrar eso (que el cliente lea su
-  `mesaSessionId` del estado SSE y lo reenvíe en cada acción) queda
-  pendiente y se documenta como riesgo MEDIUM, no como algo ya resuelto.
+  cliente de esta rama (`public/app.js`) lo agrega centralmente en `send()`
+  cuando el snapshot actual contiene un ID para `payload.mesa`, sólo en rol
+  cliente. La primera orden de una mesa libre sigue funcionando sin ID.
+  Clientes legacy, requests sin ID/null/vacío y requests anteriores al primer
+  snapshot todavía pueden evitar la comparación. Un ID viejo tampoco bloquea
+  una orden contra una mesa libre: la guarda actual sólo compara mesas ocupadas.
+  SSE actualizado puede dar el ID de B a una pestaña vieja; esto no prueba que
+  quien usa la pestaña pertenezca a B. `mesaSessionId` no autentica al comensal.
+  Evidencia de test: `test/rvo.session.test.js` y `PROOF/RVO-20260929-001`.
+  No se afirma despliegue, autenticación fuerte ni protección universal de replay.
 
 ### Autorización y la cola de mutaciones (`enqueueMutation`)
 
