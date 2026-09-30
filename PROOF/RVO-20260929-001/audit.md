@@ -29,7 +29,8 @@ new tests, existing payment/review/staff suites, claims and proof content.
 4. In-flight requests serialize their ID when send() runs; the server evaluates
    that ID against state in the mutation queue. Concurrent same-occupation orders
    work; duplicate-order idempotency is outside this change.
-5. Six real PostgreSQL tests skip locally. CI must run them before readiness.
+5. Six real PostgreSQL tests skip locally. Remote CI ran all 163 tests with no
+   skips or failures; branch and PR checks both succeeded on 32114c9.
 
 RVO-003 next safe action: document a compatibility migration proposal for
 server-required session IDs and occupation membership, without changing server

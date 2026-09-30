@@ -21,7 +21,18 @@
                      }
                  ],
     "testSha":  "487feb68a4f3b3d3822f0fcfcd3a2dd9387ed273",
-    "reason":  "Remote CI pending",
+    "reason":  "Local gates and remote branch/PR CI succeeded; 163 tests pass with zero skips remotely",
     "cost":  "not available",
-    "result":  "PARTIAL"
+    "result":  "PASS",
+    "ci":  {
+               "verifiedAt":  "2026-09-30T14:25:19.5588804Z",
+               "branchRun":  "https://github.com/tinchoco00-lang/rabieta-sistema/actions/runs/36716615161",
+               "prRun":  "https://github.com/tinchoco00-lang/rabieta-sistema/actions/runs/36716724600",
+               "passed":  163,
+               "conclusion":  "success",
+               "skipped":  0,
+               "verifiedSha":  "32114c9bdfdff82a68c69a51a0a6d76ba965d2f9",
+               "failed":  0,
+               "tests":  163
+           }
 }
