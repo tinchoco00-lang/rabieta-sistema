@@ -511,6 +511,12 @@ async function consumirStream(response, onFirstSnapshot, continuar){
   return onFirstSnapshot;
 }
 function send(obj){
+  if(state.role==='cliente'){
+    const mesa = state.mesas.find(candidate=>candidate.numero===obj.mesa);
+    if(mesa && typeof mesa.mesaSessionId==='string' && mesa.mesaSessionId){
+      obj = {...obj, mesaSessionId:mesa.mesaSessionId};
+    }
+  }
   const headers = {'Content-Type':'application/json'};
   if(STAFF_TOKEN) headers.Authorization = 'Bearer ' + STAFF_TOKEN;
   if(state.role==='cliente' && MESA_TOKEN) headers['X-Mesa-Token'] = MESA_TOKEN;

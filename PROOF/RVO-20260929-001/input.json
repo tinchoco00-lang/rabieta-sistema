@@ -1,0 +1,9 @@
+{
+  "proofId": "RVO-20260929-001",
+  "baseSha": "f4aee0746beff29491dc55e2946c443dcc1e57bc",
+  "testSha": "487feb68a4f3b3d3822f0fcfcd3a2dd9387ed273",
+  "commands": ["npm.cmd ci", "git diff --check", "node --test test/rvo.session.test.js test/trust.server.test.js", "npm.cmd run check"],
+  "scenarios": ["free table first order without ID", "SSE A", "automatic second round A", "concurrent A orders", "account A", "staff pay and free A", "new occupation B differs", "concurrent A replay against B returns 409 and leaves B intact", "B succeeds", "wrong table ID", "staff without session injection", "reopened SSE snapshot", "new client snapshot", "null and empty IDs", "legacy request without ID"],
+  "fixtures": {"mesa": 1, "otherMesa": 2, "productoId": "hummus-rabieta", "role": "cliente"},
+  "cost": "not available"
+}

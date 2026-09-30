@@ -941,7 +941,7 @@ async function handleAction(msg, context = {}) {
   // ocupación equivocada. Es opt-in: si no se manda mesaSessionId, no hay
   // nada que comparar y el comportamiento pre-existente no cambia — ver
   // docs/SECURITY.md ("Trust Foundation — #45A") para el alcance real de esta protección hoy
-  // (el cliente móvil público todavía no la envía en todas las acciones).
+  // El cliente actual la propaga desde send(); clientes legacy pueden omitirla.
   if (m && typeof msg.mesaSessionId === 'string' && msg.mesaSessionId
       && m.ocupada && m.mesaSessionId && msg.mesaSessionId !== m.mesaSessionId) {
     return actionError(409, 'La sesión de esta mesa ya no es válida: fue liberada y/o vuelta a ocupar');
